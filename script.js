@@ -106,6 +106,86 @@
         let activeChapterVerses = []; 
         let generatedLyricSlides = [];
         let obsWindowRef = null;
+        let isLiveFrozen = false; // FREEZE: when true, Live/OBS/Projector output is locked and ignores Send Live
+
+        // CUSTOM HOTKEYS: optional, per-feature, user-assignable — like OBS hotkeys
+        let customHotkeys = {};
+        try { customHotkeys = JSON.parse(localStorage.getItem('ebp_custom_hotkeys') || '{}'); } catch (e) { customHotkeys = {}; }
+
+        const HOTKEY_ACTIONS = {
+            sendLive: { label: 'Send Live', fn: () => sendStagedToLiveView() },
+            freezeLive: { label: 'Freeze / Unfreeze Live', fn: () => document.getElementById('freezeLiveBtn').click() },
+            openObs: { label: 'Open OBS Window', fn: () => spawnObsProjectorWindow() },
+            toggleVoice: { label: 'Toggle Live Voice', fn: () => document.getElementById('listeningBtn').click() },
+            nextSlide: { label: 'Next Verse / Song Slide', fn: () => {
+                const isSongTabActive = document.getElementById('lyrics-tab') && document.getElementById('lyrics-tab').classList.contains('active');
+                if (isSongTabActive) { navigateSongSlide(1); } else { navigateSequentialOffsetVerses(1); sendStagedToLiveView(); }
+            } },
+            prevSlide: { label: 'Previous Verse / Song Slide', fn: () => {
+                const isSongTabActive = document.getElementById('lyrics-tab') && document.getElementById('lyrics-tab').classList.contains('active');
+                if (isSongTabActive) { navigateSongSlide(-1); } else { navigateSequentialOffsetVerses(-1); sendStagedToLiveView(); }
+            } },
+            stageAnnouncement: { label: 'Stage Announcement', fn: () => document.getElementById('stageAnnouncementBtn').click() },
+            clearAnnouncement: { label: 'Clear Announcement', fn: () => document.getElementById('clearAnnouncementBtn').click() },
+            timerStartStop: { label: 'Start / Stop Broadcast Timer', fn: () => document.getElementById('timerToggleStartBtn').click() },
+            timerReset: { label: 'Reset Broadcast Timer', fn: () => document.getElementById('timerResetBtn').click() },
+            videoPlayPause: { label: 'Play / Pause Video Background', fn: () => document.getElementById('videoPlayPauseBtn').click() }
+        };
+
+        function persistHotkeys() {
+            try { localStorage.setItem('ebp_custom_hotkeys', JSON.stringify(customHotkeys)); } catch (e) {}
+        }
+
+        function renderHotkeysList() {
+            const container = document.getElementById('hotkeysList');
+            if (!container) return;
+            container.innerHTML = '';
+            Object.keys(HOTKEY_ACTIONS).forEach(actionKey => {
+                const row = document.createElement('div');
+                row.className = 'hotkey-row';
+                const currentKey = customHotkeys[actionKey] || '';
+                row.innerHTML = `
+                    <span class="hotkey-row-label">${HOTKEY_ACTIONS[actionKey].label}</span>
+                    <div class="hotkey-row-controls">
+                        <span class="hotkey-key-display" data-action="${actionKey}">${currentKey || '— none —'}</span>
+                        <button class="btn hotkey-set-btn" data-action="${actionKey}" style="padding: 0.3rem 0.6rem; font-size: 0.7rem;">Set</button>
+                        <button class="btn hotkey-clear-btn" data-action="${actionKey}" style="padding: 0.3rem 0.6rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;">Clear</button>
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+
+            container.querySelectorAll('.hotkey-set-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const actionKey = btn.dataset.action;
+                    const display = container.querySelector(`.hotkey-key-display[data-action="${actionKey}"]`);
+                    display.innerText = 'Press a key...';
+                    display.classList.add('listening');
+                    function captureKey(e) {
+                        e.preventDefault();
+                        // Prevent assigning a key already used by another action
+                        const conflict = Object.keys(customHotkeys).find(k => customHotkeys[k] === e.key && k !== actionKey);
+                        if (conflict) {
+                            alert(`"${e.key}" is already assigned to "${HOTKEY_ACTIONS[conflict].label}". Clear that one first.`);
+                        } else {
+                            customHotkeys[actionKey] = e.key;
+                            persistHotkeys();
+                        }
+                        document.removeEventListener('keydown', captureKey, true);
+                        renderHotkeysList();
+                    }
+                    document.addEventListener('keydown', captureKey, true);
+                });
+            });
+            container.querySelectorAll('.hotkey-clear-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    delete customHotkeys[btn.dataset.action];
+                    persistHotkeys();
+                    renderHotkeysList();
+                });
+            });
+        }
+
         let importedAssetsLibrary = [];
         let executionDisplayHistory = [];
         let cachedLogoDataUrl = ""; 
@@ -130,7 +210,9 @@
             timerVisible: false, timerSolo: false, timerText: "05:00", timerPosition: "timer-top-right", timerSize: "timer-size-medium",
             timerScale: 1.0,
             videoBgUrl: "", videoBgEnabled: false, bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
-            lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false
+            lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
+            refColor: "", lowerThirdColor: "#ffffff",
+            videoOverlayMode: true
         };
         
         let liveState = { 
@@ -139,7 +221,9 @@
             timerVisible: false, timerSolo: false, timerText: "05:00", timerPosition: "timer-top-right", timerSize: "timer-size-medium",
             timerScale: 1.0,
             videoBgUrl: "", videoBgEnabled: false, bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
-            lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false
+            lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
+            refColor: "", lowerThirdColor: "#ffffff",
+            videoOverlayMode: true
         };
 
         let currentBookCode = 46; 
@@ -199,6 +283,7 @@
             fetchCurrentChapterFromAPI();
             initTimerEngine();
             initLogoSizerEngine();
+            renderHotkeysList();
         }
 
         async function enumerateAudioDevices() {
@@ -417,6 +502,41 @@
             searchDebounceTimeout = setTimeout(executeWordSearchQuery, 350);
         });
 
+        // SONG LYRICS WEB SEARCH: opens direct search links on the sites requested.
+        // Note: these sites don't offer a free public API for pulling lyrics text directly into the app
+        // (Musixmatch/Genius/Spotify require paid/auth API access, and scraping them isn't reliable or permitted),
+        // so this gives one-click search links instead of pretending to embed results.
+        function runLyricsWebSearch() {
+            const query = document.getElementById('lyricsWebSearchInput').value.trim();
+            const resultsBox = document.getElementById('lyricsWebSearchResults');
+            resultsBox.innerHTML = '';
+            if (!query) return;
+            const encoded = encodeURIComponent(query + ' lyrics');
+            const sources = [
+                { name: 'Genius', url: `https://genius.com/search?q=${encoded}` },
+                { name: 'AZLyrics (via Google)', url: `https://www.google.com/search?q=${encoded}+site:azlyrics.com` },
+                { name: 'Musixmatch', url: `https://www.musixmatch.com/search/${encodeURIComponent(query)}` },
+                { name: 'YouTube (lyric video)', url: `https://www.youtube.com/results?search_query=${encoded}` },
+                { name: 'Google Search', url: `https://www.google.com/search?q=${encoded}` }
+            ];
+            sources.forEach(src => {
+                const link = document.createElement('a');
+                link.href = src.url;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.className = 'verse-row';
+                link.style.textDecoration = 'none';
+                link.style.borderLeft = '3px solid #8b5cf6';
+                link.innerHTML = `<span class="verse-num-badge" style="background: rgba(139, 92, 246, 0.15); color: #c084fc;">🔗</span><div class="verse-preview-text">Search "${query}" on ${src.name}</div>`;
+                resultsBox.appendChild(link);
+            });
+        }
+        document.getElementById('lyricsWebSearchBtn').addEventListener('click', runLyricsWebSearch);
+        document.getElementById('lyricsWebSearchInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); runLyricsWebSearch(); }
+        });
+
+
         async function executeWordSearchQuery() {
             const query = document.getElementById('instantWordSearchInput').value.trim();
             const counterText = document.getElementById('wordSearchResultCount');
@@ -478,7 +598,7 @@
                             await fetchCurrentChapterFromAPI();
 
                             previewState.text = cleanText;
-                            previewState.ref = `${locationRef} (${currentTranslation})`;
+                            previewState.ref = `${locationRef} (${getVersionDisplayLabel(currentTranslation)})`;
                             previewState.isScrolling = false;
                             renderPreview();
                         });
@@ -493,7 +613,7 @@
                             await fetchCurrentChapterFromAPI();
 
                             previewState.text = cleanText;
-                            previewState.ref = `${locationRef} (${currentTranslation})`;
+                            previewState.ref = `${locationRef} (${getVersionDisplayLabel(currentTranslation)})`;
                             previewState.isScrolling = false;
                             renderPreview();
                             sendStagedToLiveView();
@@ -948,6 +1068,12 @@
             });
         }
 
+        // Maps an exact API translation code to the short label shown on the display (e.g. NIV2011 -> "NIV")
+        function getVersionDisplayLabel(code) {
+            const labels = { NIV2011: 'NIV' };
+            return labels[code] || code;
+        }
+
         async function fetchCurrentChapterFromAPI() {
             const targetVersion = document.getElementById('versionSelector').value;
             const dot = document.getElementById('statusDot');
@@ -1043,7 +1169,7 @@
             if (activeRow) { activeRow.classList.add('active'); activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
 
             previewState.text = foundVerse.text;
-            previewState.ref = `${currentBookName} ${currentChapter}:${foundVerse.verse} (${document.getElementById('versionSelector').value})`;
+            previewState.ref = `${currentBookName} ${currentChapter}:${foundVerse.verse} (${getVersionDisplayLabel(document.getElementById('versionSelector').value)})`;
             previewState.isScrolling = false; 
 
             renderPreview();
@@ -1120,12 +1246,8 @@
 
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
-            if (stateObject.layout === 'mode-lowerthird') {
-                canvasElement.style.backgroundColor = 'transparent'; canvasElement.style.backgroundImage = 'none';
-            } else {
-                canvasElement.style.backgroundImage = 'none';
-                canvasElement.style.backgroundColor = hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
-            }
+            canvasElement.style.backgroundImage = 'none';
+            canvasElement.style.backgroundColor = hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
 
             let contentNode = stateObject.text || '';
             if (stateObject.isScrolling && stateObject.text) {
@@ -1149,6 +1271,11 @@
             // Handle Flier Only Layout logic completely
             const flierOnlyTextHide = stateObject.layout === 'mode-flieronly' ? 'display: none !important;' : '';
 
+            // Video-alone mode: when a video background is enabled and overlay is turned off,
+            // hide text/reference/name-tag so the video plays without anything on top of it
+            const isVideoAloneMode = stateObject.videoBgEnabled && stateObject.videoBgUrl && stateObject.videoOverlayMode === false;
+            const videoAloneHide = isVideoAloneMode ? 'display: none !important;' : '';
+
             // Responsive font scaling — bigger/smaller automatically based on how much text is on the slide
             // Auto-resizing disabled per request — text now stays at the selected size and wraps to fit instead
             const autoFontScale = 1;
@@ -1163,17 +1290,17 @@
             // Lower third name tag (e.g. "Ministering: Pastor Ade")
             const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
             const nameBarHtml = `
-                <div class="canvas-namebar-node ${nameBarVisible ? 'namebar-visible' : ''}">
+                <div class="canvas-namebar-node ${nameBarVisible ? 'namebar-visible' : ''}" style="${videoAloneHide}">
                     <div class="namebar-role">${stateObject.lowerThirdRole || ''}</div>
-                    <div class="namebar-name">${stateObject.lowerThirdName || ''}</div>
+                    <div class="namebar-name" style="color: ${stateObject.lowerThirdColor || '#ffffff'};">${stateObject.lowerThirdName || ''}</div>
                 </div>
             `;
 
             canvasElement.innerHTML = `
-                <div class="text-display-box-container ${transitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide}">
+                <div class="text-display-box-container ${transitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
-                <div class="ref-out ${transitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} text-shadow: ${customShadow}; font-family: ${customFontFamily};">${stateObject.ref || ''}</div>
+                <div class="ref-out ${transitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
                 <div class="canvas-timer-node ${stateObject.timerPosition || 'timer-top-right'} ${stateObject.timerSize || 'timer-size-medium'} ${stateObject.timerVisible ? 'timer-visible' : ''}" id="${canvasElement.id}OverlayTimer">${stateObject.timerText || '00:00'}</div>
                 ${nameBarHtml}
             `;
@@ -1192,8 +1319,9 @@
                 const videoBg = document.createElement('video');
                 videoBg.className = `canvas-video-bg-node ${transitionClass}`;
                 videoBg.src = stateObject.videoBgUrl;
-                videoBg.autoplay = true; videoBg.loop = true; videoBg.muted = true; videoBg.playsInline = true;
+                videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = stateObject.videoOverlayMode !== false;
                 videoBg.style.opacity = bgOpacity / 100;
+                if (transitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
                 canvasElement.insertBefore(videoBg, canvasElement.firstChild);
                 const playPromise = videoBg.play();
                 if (playPromise && playPromise.catch) playPromise.catch(() => {});
@@ -1204,6 +1332,7 @@
                     flierLayer.className = `flier-graphic-layer ${transitionClass}`;
                     flierLayer.style.backgroundImage = `url('${targetAsset.dataUrl}')`;
                     flierLayer.style.opacity = bgOpacity / 100;
+                    if (transitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
                     canvasElement.appendChild(flierLayer);
                 }
             } else if (stateObject.layout === 'mode-flieronly') {
@@ -1255,6 +1384,7 @@
         }
 
         function sendStagedToLiveView() {
+            if (isLiveFrozen) return; // FROZEN: Live output is locked, ignore Send Live until unfrozen
             if (!previewState.text && !previewState.flierId && !previewState.textBgUrl && !previewState.timerVisible) return;
             liveState = { ...previewState };
             pushItemToHistoryDropdownLog(liveState);
@@ -1447,6 +1577,13 @@
         function setupStudioEventBindings() {
             listeningBtn.addEventListener('click', toggleListening);
             sendLiveBtn.addEventListener('click', sendStagedToLiveView);
+            document.getElementById('freezeLiveBtn').addEventListener('click', () => {
+                isLiveFrozen = !isLiveFrozen;
+                const btn = document.getElementById('freezeLiveBtn');
+                btn.classList.toggle('toggle-active', isLiveFrozen);
+                btn.innerHTML = isLiveFrozen ? '🔒 Live Frozen (click to unfreeze)' : '❄ Freeze Live';
+                document.body.classList.toggle('live-is-frozen', isLiveFrozen);
+            });
             openObsBtn.addEventListener('click', spawnObsProjectorWindow);
             manualSearchInput.addEventListener('input', () => { parseAndRouteInput(manualSearchInput.value, false); });
             versionSelector.addEventListener('change', () => { fetchCurrentChapterFromAPI(); });
@@ -1459,6 +1596,7 @@
 
             document.getElementById('bgColorPicker').addEventListener('input', () => { previewState.bgColor = document.getElementById('bgColorPicker').value; renderPreview(); });
             document.getElementById('textColorPicker').addEventListener('input', () => { previewState.textColor = document.getElementById('textColorPicker').value; renderPreview(); });
+            document.getElementById('refColorPicker').addEventListener('input', () => { previewState.refColor = document.getElementById('refColorPicker').value; renderPreview(); });
             
             document.getElementById('masterImagePicker').addEventListener('change', (e) => {
                 const file = e.target.files[0];
@@ -1483,6 +1621,21 @@
 
             document.getElementById('assetLibraryDropdown').addEventListener('change', () => {
                 applySelectedDropdownAssetToPreviewState(document.getElementById('assetLibraryDropdown').value);
+            });
+
+            document.getElementById('deleteAssetBtn').addEventListener('click', () => {
+                const dd = document.getElementById('assetLibraryDropdown');
+                const assetId = dd.value;
+                if (!assetId) return;
+                const asset = importedAssetsLibrary.find(a => a.id === assetId);
+                if (!asset) return;
+                if (!confirm(`Delete "${asset.name}" from your uploaded backgrounds? This cannot be undone.`)) return;
+                importedAssetsLibrary = importedAssetsLibrary.filter(a => a.id !== assetId);
+                if (previewState.flierId === assetId) previewState.flierId = "";
+                if (previewState.textBgUrl === asset.dataUrl) previewState.textBgUrl = "";
+                repopulateAssetDropdownUI();
+                dd.value = "";
+                renderPreview();
             });
 
             document.getElementById('stageAnnouncementBtn').addEventListener('click', () => {
@@ -1620,6 +1773,23 @@
             });
 
             // Background & Text Effects: Video Background
+            // NOTE: saved videos live only in this session's memory (not localStorage) — video files
+            // are too large to persist safely in browser storage, so this list resets on page reload.
+            let savedVideosLibrary = [];
+
+            function refreshSavedVideosDropdown() {
+                const dd = document.getElementById('savedVideosDropdown');
+                const currentVal = dd.value;
+                dd.innerHTML = '<option value="">-- Saved Videos --</option>';
+                savedVideosLibrary.forEach(v => {
+                    const opt = document.createElement('option');
+                    opt.value = v.id;
+                    opt.innerText = v.name;
+                    dd.appendChild(opt);
+                });
+                dd.value = currentVal;
+            }
+
             document.getElementById('videoBgUploadBtn').addEventListener('click', () => {
                 document.getElementById('videoBgPicker').click();
             });
@@ -1627,11 +1797,44 @@
                 const file = e.target.files[0];
                 if (!file) return;
                 const objectUrl = URL.createObjectURL(file);
+                const videoEntry = { id: 'video_' + Date.now(), name: file.name, url: objectUrl };
+                savedVideosLibrary.push(videoEntry);
+                refreshSavedVideosDropdown();
+                document.getElementById('savedVideosDropdown').value = videoEntry.id;
                 previewState.videoBgUrl = objectUrl;
                 previewState.videoBgEnabled = true;
                 document.getElementById('videoBgEnabledCheckbox').checked = true;
                 document.getElementById('videoBgFileName').innerText = `Loaded: ${file.name} (session-only)`;
                 renderPreview();
+            });
+            document.getElementById('savedVideosDropdown').addEventListener('change', (e) => {
+                const id = e.target.value;
+                if (!id) return;
+                const entry = savedVideosLibrary.find(v => v.id === id);
+                if (!entry) return;
+                previewState.videoBgUrl = entry.url;
+                previewState.videoBgEnabled = true;
+                document.getElementById('videoBgEnabledCheckbox').checked = true;
+                document.getElementById('videoBgFileName').innerText = `Loaded: ${entry.name} (session-only)`;
+                renderPreview();
+            });
+            document.getElementById('deleteSavedVideoBtn').addEventListener('click', () => {
+                const dd = document.getElementById('savedVideosDropdown');
+                const id = dd.value;
+                if (!id) return;
+                const entry = savedVideosLibrary.find(v => v.id === id);
+                if (!entry) return;
+                if (!confirm(`Remove "${entry.name}" from this session's saved videos?`)) return;
+                if (previewState.videoBgUrl === entry.url) {
+                    previewState.videoBgUrl = "";
+                    previewState.videoBgEnabled = false;
+                    document.getElementById('videoBgEnabledCheckbox').checked = false;
+                    document.getElementById('videoBgFileName').innerText = "No video selected (session-only).";
+                    renderPreview();
+                }
+                URL.revokeObjectURL(entry.url);
+                savedVideosLibrary = savedVideosLibrary.filter(v => v.id !== id);
+                refreshSavedVideosDropdown();
             });
             document.getElementById('videoBgEnabledCheckbox').addEventListener('change', (e) => {
                 previewState.videoBgEnabled = e.target.checked;
@@ -1643,8 +1846,48 @@
                 document.getElementById('videoBgEnabledCheckbox').checked = false;
                 document.getElementById('videoBgFileName').innerText = "No video selected. Videos are session-only and won't be saved to exports.";
                 document.getElementById('videoBgPicker').value = "";
+                document.getElementById('savedVideosDropdown').value = "";
                 renderPreview();
             });
+
+            // Video overlay mode: overlay (text on top, video muted) vs video-alone (video plays with sound, nothing overlays it)
+            document.getElementById('videoOverlayModeCheckbox').addEventListener('change', (e) => {
+                previewState.videoOverlayMode = e.target.checked;
+                renderPreview();
+            });
+
+            // Video transport controls — act on whichever background video is currently rendered on Preview
+            function getActivePreviewVideoEl() {
+                return document.querySelector('#previewCanvas .canvas-video-bg-node');
+            }
+            document.getElementById('videoPlayPauseBtn').addEventListener('click', () => {
+                const vid = getActivePreviewVideoEl();
+                if (!vid) return;
+                if (vid.paused) vid.play(); else vid.pause();
+            });
+            document.getElementById('videoSkipBackBtn').addEventListener('click', () => {
+                const vid = getActivePreviewVideoEl();
+                if (!vid) return;
+                vid.currentTime = Math.max(0, vid.currentTime - 10);
+            });
+            document.getElementById('videoSkipFwdBtn').addEventListener('click', () => {
+                const vid = getActivePreviewVideoEl();
+                if (!vid) return;
+                vid.currentTime = Math.min(vid.duration || vid.currentTime + 10, vid.currentTime + 10);
+            });
+            document.getElementById('videoSeekSlider').addEventListener('input', (e) => {
+                const vid = getActivePreviewVideoEl();
+                if (!vid || !vid.duration) return;
+                vid.currentTime = (parseFloat(e.target.value) / 100) * vid.duration;
+            });
+            // Keep the seek slider in sync with whichever video is currently playing on Preview
+            setInterval(() => {
+                const vid = getActivePreviewVideoEl();
+                const slider = document.getElementById('videoSeekSlider');
+                if (vid && vid.duration) {
+                    slider.value = (vid.currentTime / vid.duration) * 100;
+                }
+            }, 500);
 
             // Background & Text Effects: Opacity
             document.getElementById('bgOpacitySlider').addEventListener('input', (e) => {
@@ -1674,6 +1917,10 @@
             });
             document.getElementById('lowerThirdVisibleCheckbox').addEventListener('change', (e) => {
                 previewState.lowerThirdVisible = e.target.checked;
+                renderPreview();
+            });
+            document.getElementById('lowerThirdColorPicker').addEventListener('input', (e) => {
+                previewState.lowerThirdColor = e.target.value;
                 renderPreview();
             });
 
@@ -1731,6 +1978,16 @@
             window.addEventListener('keydown', (e) => {
                 const activeTag = document.activeElement.tagName;
                 const isWriting = (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT');
+
+                // CUSTOM HOTKEYS: user-assigned keys (Settings -> Hotkeys), never active while typing in a field
+                if (!isWriting) {
+                    const matchedAction = Object.keys(customHotkeys).find(actionKey => customHotkeys[actionKey] === e.key);
+                    if (matchedAction && HOTKEY_ACTIONS[matchedAction]) {
+                        e.preventDefault();
+                        HOTKEY_ACTIONS[matchedAction].fn();
+                        return;
+                    }
+                }
 
                 if (e.key === 'Enter') {
                     if (document.activeElement === document.getElementById('manualSearchInput')) {
@@ -1898,7 +2155,7 @@
                         .display-canvas.mode-center { justify-content: center; align-items: center; text-align: center; padding: 2.5%; }
                         .display-canvas.mode-center .text-display-box-container { margin-bottom: 1.5%; }
                         .display-canvas.mode-fullscreen { justify-content: center; align-items: center; text-align: center; padding: 2%; }
-                        .display-canvas.mode-lowerthird { justify-content: flex-end; align-items: center; text-align: center; padding: 0 4% 4% 4% !important; background-image: none !important; background-color: transparent !important; }
+                        .display-canvas.mode-lowerthird { justify-content: flex-end; align-items: center; text-align: center; padding: 0 4% 4% 4% !important; }
                         .display-canvas.mode-lowerthird .text-display-box-container { background: #0f172a; border: 2px solid rgba(255, 255, 255, 0.1); border-left: 6px solid var(--accent-primary); margin-bottom: 1%; text-shadow: none; box-shadow: 0 10px 30px rgba(0,0,0,0.7); padding: 1.2% 2%; }
                         .display-canvas.mode-lowerthird .text-out { font-size: calc(var(--canvas-font-size) * 0.85); text-shadow: none; }
                         .display-canvas.mode-lowerthird .ref-out { background: rgba(0,0,0,0.8); padding: 0.4% 1.2%; border-radius: 4px; }
@@ -1952,12 +2209,8 @@
             container.className = `display-canvas ${liveState.layout} size-${liveState.fontSize}`;
             container.style.fontFamily = customFontFamily;
 
-            if (liveState.layout === 'mode-lowerthird') {
-                container.style.backgroundColor = 'transparent'; container.style.backgroundImage = 'none';
-            } else {
-                container.style.backgroundImage = 'none';
-                container.style.backgroundColor = hexToRgbaWithOpacity(liveState.bgColor, bgOpacity);
-            }
+            container.style.backgroundImage = 'none';
+            container.style.backgroundColor = hexToRgbaWithOpacity(liveState.bgColor, bgOpacity);
             container.style.transition = getDisplayTransitionClass() ? 'background-color 0.5s ease' : 'none';
 
             let contentNode = liveState.text || '';
@@ -1971,6 +2224,10 @@
             // Apply Flier Only Layout on Projector Out
             const flierOnlyTextHide = liveState.layout === 'mode-flieronly' ? 'display: none !important;' : '';
 
+            // Video-alone mode: hide text/reference/name-tag when video background overlay is turned off
+            const isVideoAloneMode = liveState.videoBgEnabled && liveState.videoBgUrl && liveState.videoOverlayMode === false;
+            const videoAloneHide = isVideoAloneMode ? 'display: none !important;' : '';
+
             // Responsive font scaling, gradient glow, and text backing panel — mirrored from the main canvas
             // Auto-resizing disabled per request — text now stays at the selected size and wraps to fit instead
             const autoFontScale = 1;
@@ -1981,18 +2238,18 @@
             // Lower third name tag
             const nameBarVisible = liveState.lowerThirdVisible && (liveState.lowerThirdName || liveState.lowerThirdRole);
             const nameBarHtml = `
-                <div class="canvas-namebar-node ${nameBarVisible ? 'namebar-visible' : ''}">
+                <div class="canvas-namebar-node ${nameBarVisible ? 'namebar-visible' : ''}" style="${videoAloneHide}">
                     <div class="namebar-role">${liveState.lowerThirdRole || ''}</div>
-                    <div class="namebar-name">${liveState.lowerThirdName || ''}</div>
+                    <div class="namebar-name" style="color: ${liveState.lowerThirdColor || '#ffffff'};">${liveState.lowerThirdName || ''}</div>
                 </div>
             `;
 
             const projectorTransitionClass = getDisplayTransitionClass();
             container.innerHTML = `
-                <div class="text-display-box-container ${projectorTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide}">
+                <div class="text-display-box-container ${projectorTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${liveState.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
-                <div class="ref-out ${projectorTransitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} text-shadow: ${customShadow}; font-family: ${customFontFamily};">${liveState.ref || ''}</div>
+                <div class="ref-out ${projectorTransitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${liveState.refColor ? `color: ${liveState.refColor};` : ''}">${liveState.ref || ''}</div>
                 <div class="canvas-timer-node" id="projectorCanvasOverlayTimer">00:00</div>
                 ${nameBarHtml}
             `;
@@ -2015,8 +2272,9 @@
                 const videoBg = targetDoc.createElement('video');
                 videoBg.className = `canvas-video-bg-node ${projectorTransitionClass}`;
                 videoBg.src = liveState.videoBgUrl;
-                videoBg.autoplay = true; videoBg.loop = true; videoBg.muted = true; videoBg.playsInline = true;
+                videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = liveState.videoOverlayMode !== false;
                 videoBg.style.opacity = bgOpacity / 100;
+                if (projectorTransitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
                 container.insertBefore(videoBg, container.firstChild);
                 const playPromise = videoBg.play();
                 if (playPromise && playPromise.catch) playPromise.catch(() => {});
@@ -2025,6 +2283,7 @@
                 if (asset) {
                     const flierLayer = targetDoc.createElement('div'); flierLayer.className = `flier-graphic-layer ${projectorTransitionClass}`;
                     flierLayer.style.backgroundImage = `url('${asset.dataUrl}')`; flierLayer.style.opacity = bgOpacity / 100; container.appendChild(flierLayer);
+                    if (projectorTransitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
                 }
             } else if (liveState.layout === 'mode-flieronly') {
                 const placeholderLayer = targetDoc.createElement('div');
@@ -2081,7 +2340,7 @@
                     currentBookCode = importedData.bookCode; currentBookName = importedData.bookName; currentChapter = importedData.chapter; currentVerse = importedData.verse;
                     previewState = importedData.savedPreviewState; liveState = importedData.savedLiveState;
                     document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || "";
-                    fetchCurrentChapterFromAPI(); renderLive();
+                    fetchCurrentChapterFromAPI(); renderPreview();
                 } catch (err) { console.error("Import failure: ", err); }
             };
             reader.readAsText(file);
