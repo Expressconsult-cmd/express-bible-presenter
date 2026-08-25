@@ -407,7 +407,16 @@
             border-right: 1px solid var(--bg-accent);
             height: 100%;
         }
-        .screen-column.live-column { background-color: #03050a; border-right: 2px solid var(--bg-accent); }
+        .screen-column.live-column { background-color: #03050a; border-right: 2px solid var(--bg-accent); position: relative; }
+        body.live-is-frozen .screen-column.live-column { outline: 3px solid #0284c7; outline-offset: -3px; }
+        body.live-is-frozen .screen-column.live-column::before {
+            content: "❄ LIVE FROZEN";
+            position: absolute;
+            top: 8px; left: 50%; transform: translateX(-50%);
+            background: #0284c7; color: #fff; font-weight: 900; font-size: 0.7rem;
+            letter-spacing: 0.05em; padding: 0.25rem 0.7rem; border-radius: 20px; z-index: 50;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
 
         .deck-label {
             font-size: 0.7rem;
@@ -651,7 +660,7 @@
 
         .display-canvas.mode-fullscreen { justify-content: center; align-items: center; text-align: center; padding: 2%; }
 
-        .display-canvas.mode-lowerthird { justify-content: flex-end; align-items: center; text-align: center; padding: 0 4% 4% 4% !important; background-image: none !important; background-color: transparent !important; }
+        .display-canvas.mode-lowerthird { justify-content: flex-end; align-items: center; text-align: center; padding: 0 4% 4% 4% !important; }
         .display-canvas.mode-lowerthird .text-display-box-container { background-color: #0f172a; border: 2px solid rgba(255, 255, 255, 0.1); border-left: 6px solid var(--accent-primary); margin-bottom: 1%; text-shadow: none; box-shadow: 0 10px 30px rgba(0,0,0,0.7); padding: 1.2% 2%; }
         .display-canvas.mode-lowerthird .text-out { font-size: calc(var(--canvas-font-size) * 0.85); text-shadow: none; }
         .display-canvas.mode-lowerthird .ref-out { background: rgba(0,0,0,0.8); padding: 0.4% 1.2%; border-radius: 4px; }
@@ -814,6 +823,31 @@
             outline: none;
             width: 100%;
         }
+
+        .hotkey-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+            background: var(--panel-overlay-bg);
+            border: 1px solid var(--panel-overlay-border);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+        }
+        .hotkey-row-label { font-size: 0.8rem; color: var(--text-main); }
+        .hotkey-row-controls { display: flex; align-items: center; gap: 0.4rem; }
+        .hotkey-key-display {
+            min-width: 60px;
+            text-align: center;
+            font-size: 0.72rem;
+            font-weight: 800;
+            padding: 0.25rem 0.5rem;
+            background: #020408;
+            color: var(--accent-success);
+            border: 1px solid var(--bg-accent);
+            border-radius: 4px;
+        }
+        .hotkey-key-display.listening { color: #fbbf24; border-color: #fbbf24; animation: pulse 1s infinite; }
 
         .btn-copy {
             padding: 0.45rem 0.75rem;
