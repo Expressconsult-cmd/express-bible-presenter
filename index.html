@@ -46,6 +46,16 @@
                     <input type="text" id="instantWordSearchInput" placeholder="Type to search (e.g., Jesus wept)..." style="width: 100%; padding: 0.5rem;">
                     <div id="wordSearchResultCount" style="font-size: 0.65rem; color: var(--accent-primary); font-weight: 800;">Type at least 3 characters...</div>
                 </div>
+
+                <div style="padding: 0.65rem; border-bottom: 1px solid var(--bg-accent); display: flex; flex-direction: column; gap: 0.5rem; background: rgba(139,92,246,0.06);">
+                    <label style="font-size: 0.65rem; color: #a78bfa; text-transform: uppercase; font-weight:700;">🎵 Search Song Lyrics Online</label>
+                    <div style="display:flex; gap:0.4rem;">
+                        <input type="text" id="lyricsWebSearchInput" placeholder="e.g. Way Maker Nathaniel Bassey" style="flex:1; padding:0.45rem;">
+                        <button id="lyricsWebSearchBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem; background: #6d28d9; border-color: #7c3aed;">Search</button>
+                    </div>
+                    <div id="lyricsWebSearchResults" style="display:flex; flex-direction:column; gap:0.35rem;"></div>
+                </div>
+
                 <div class="verse-grid" id="wordSearchResultDeck">
                     <div class="placeholder-text">Query results will render automatically.</div>
                 </div>
@@ -108,6 +118,7 @@
 
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
                     <button id="sendLiveBtn" class="btn push-live">SEND LIVE [ENTER]</button>
+                    <button id="freezeLiveBtn" class="btn" style="background:#0369a1; border-color:#0284c7;" title="Locks the Live/OBS/Projector output so Send Live has no effect, while you keep editing Preview">❄ Freeze Live</button>
                     <button id="openObsBtn" class="btn obs-btn">Open OBS Window</button>
                     <button id="openSettingsModalBtn" class="btn settings-btn">⚙ Settings</button>
                     <div class="status-pill"><div id="statusDot" class="status-dot"></div><span id="statusText">Initializing System</span></div>
@@ -125,14 +136,15 @@
             <!-- RIBBON PANEL: TEXT -->
             <div id="ribbon-text" class="ribbon-panel active">
                 <select id="versionSelector">
-                    <option value="KJV">KJV (King James)</option>
-                    <option value="NKJV">NKJV (New King James)</option>
-                    <option value="NIV">NIV (New International)</option>
-                    <option value="AMP">AMP (Amplified Bible)</option>
-                    <option value="NLT">NLT (New Living Translation)</option>
-                    <option value="MSG">MSG (The Message)</option>
-                    <option value="ESV">ESV (English Standard Version)</option>
-                    <option value="NASB">NASB (New American Standard)</option>
+                    <option value="KJV">KJV (King James Version, 1769)</option>
+                    <option value="NKJV">NKJV (New King James Version, 1982)</option>
+                    <option value="NIV">NIV (New International Version, 1984)</option>
+                    <option value="NIV2011">NIV (New International Version, 2011)</option>
+                    <option value="AMP">AMP (Amplified Bible, 2015)</option>
+                    <option value="NLT">NLT (New Living Translation, 2015)</option>
+                    <option value="MSG">MSG (The Message, 2002)</option>
+                    <option value="ESV">ESV (English Standard Version, 2016)</option>
+                    <option value="NASB">NASB (New American Standard Bible, 1995)</option>
                 </select>
                 <input type="text" id="manualSearchInput" value="1 Cor 3" placeholder="Search reference... (e.g., Romans 12)">
                 <button id="listeningBtn" class="btn">Enable Live Voice</button>
@@ -158,6 +170,8 @@
                 </div>
 
                 <div class="control-group"><label for="textColorPicker">Text Colour:</label><input type="color" id="textColorPicker" value="#ffffff"></div>
+
+                <div class="control-group"><label for="refColorPicker" title="Colour of the Bible name/version reference shown under the text">Ref. Colour:</label><input type="color" id="refColorPicker" value="#38bdf8"></div>
 
                 <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; position: relative;">
                     <button id="textStyleToggleBtn" type="button" class="btn" style="background:#4c1d95; border-color:#6d28d9; padding: 0.4rem 0.75rem; font-size: 0.75rem;">TEXT STYLE ▾</button>
@@ -246,17 +260,33 @@
                         <option value="flierOverlay">Full Overlay</option>
                     </select>
                     <select id="assetLibraryDropdown"><option value="">-- No Image Asset --</option></select>
+                    <button id="deleteAssetBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected background image">✕</button>
                     <label for="masterImagePicker" class="file-upload-btn">Upload</label>
                     <input type="file" id="masterImagePicker" accept="image/*" class="hidden-file-input">
                 </div>
 
-                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-wrap: wrap; row-gap: 0.4rem;">
                     <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Video BG:</label>
+                    <select id="savedVideosDropdown" style="padding:0.35rem; font-size:0.7rem; max-width:130px;">
+                        <option value="">-- Saved Videos --</option>
+                    </select>
+                    <button id="deleteSavedVideoBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected saved video">✕</button>
                     <input type="file" id="videoBgPicker" accept="video/*" class="hidden-file-input">
                     <button id="videoBgUploadBtn" class="btn" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">Upload</button>
                     <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.75rem;"><input type="checkbox" id="videoBgEnabledCheckbox"> Enabled</label>
                     <button id="videoBgClearBtn" class="btn" style="padding: 0.4rem 0.75rem; font-size: 0.75rem; background:#7f1d1d; border-color:#991b1b;">Clear</button>
                     <span id="videoBgFileName" style="font-size: 0.6rem; color: var(--text-muted); max-width:140px;">No video selected (session-only).</span>
+
+                    <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="When checked: text/logo/timer show on top of the video (video is muted). When unchecked: video plays alone with sound, nothing overlays it.">
+                        <input type="checkbox" id="videoOverlayModeCheckbox" checked> Overlay text on video (video muted)
+                    </label>
+
+                    <div style="display:flex; align-items:center; gap:0.3rem; border-left: 1px solid var(--bg-accent); padding-left:0.6rem;">
+                        <button id="videoSkipBackBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Back 10s">⏪10s</button>
+                        <button id="videoPlayPauseBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Play/Pause">⏯</button>
+                        <button id="videoSkipFwdBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Forward 10s">10s⏩</button>
+                        <input type="range" id="videoSeekSlider" min="0" max="100" value="0" step="0.1" style="width:90px;" title="Seek">
+                    </div>
                 </div>
 
                 <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-direction: column; align-items: flex-start; gap:0.2rem;">
@@ -303,6 +333,7 @@
                     <button id="deleteSavedNameBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected saved name">✕</button>
                     <input type="text" id="lowerThirdRoleInput" placeholder="Ministering" style="padding:0.4rem; font-size:0.75rem; width:100px;">
                     <input type="text" id="lowerThirdNameInput" placeholder="Pastor Ade" style="padding:0.4rem; font-size:0.75rem; width:120px;">
+                    <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="Name tag text colour">🎨<input type="color" id="lowerThirdColorPicker" value="#ffffff" style="width:28px; height:28px; padding:0;"></label>
                     <button id="addSavedNameBtn" class="btn" style="padding: 0.4rem 0.6rem; font-size: 0.75rem; background:#166534; border-color:#15803d;">+ Add</button>
                     <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.75rem; white-space:nowrap;"><input type="checkbox" id="lowerThirdVisibleCheckbox"> Show</label>
                 </div>
@@ -470,6 +501,13 @@
                 </div>
 
                 <!-- Custom Aesthetic Variables Block relocated to the Text ribbon tab's "Text Style" dropdown -->
+
+                <!-- Hotkeys Card -->
+                <div class="integration-card">
+                    <h4>Hotkeys</h4>
+                    <p>Assign an optional keyboard key to any feature below, just like hotkeys in OBS. Click "Set", then press the key you want — it's entirely optional per feature and only applies when you're not typing in a text field.</p>
+                    <div id="hotkeysList" style="display:flex; flex-direction:column; gap:0.5rem;"></div>
+                </div>
 
             </div>
             
