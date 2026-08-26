@@ -212,7 +212,9 @@
             videoBgUrl: "", videoBgEnabled: false, bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
             lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
             refColor: "", lowerThirdColor: "#ffffff",
-            videoOverlayMode: true
+            videoOverlayMode: true,
+            announcementText: "", announcementVisible: false, announcementScrolling: false,
+            bgTransparent: false
         };
         
         let liveState = { 
@@ -223,7 +225,9 @@
             videoBgUrl: "", videoBgEnabled: false, bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
             lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
             refColor: "", lowerThirdColor: "#ffffff",
-            videoOverlayMode: true
+            videoOverlayMode: true,
+            announcementText: "", announcementVisible: false, announcementScrolling: false,
+            bgTransparent: false
         };
 
         let currentBookCode = 46; 
@@ -846,7 +850,7 @@
                     document.querySelectorAll('#lyricsSlidesDeck .verse-row').forEach(r => r.classList.remove('active'));
                     row.classList.add('active');
 
-                    const liveSongLabel = document.getElementById('lyricsSongLabelInput').value.trim() || 'Song Lyrics';
+                    const liveSongLabel = document.getElementById('lyricsSongLabelInput').value.trim(); // No label shown at all unless the operator typed one
                     previewState.text = textBlock;
                     previewState.ref = liveSongLabel; // Displayed without the slide number — the number is only for internal navigation
                     previewState.isScrolling = false;
@@ -858,7 +862,7 @@
                     document.querySelectorAll('#lyricsSlidesDeck .verse-row').forEach(r => r.classList.remove('active'));
                     row.classList.add('active');
 
-                    const liveSongLabel = document.getElementById('lyricsSongLabelInput').value.trim() || 'Song Lyrics';
+                    const liveSongLabel = document.getElementById('lyricsSongLabelInput').value.trim(); // No label shown at all unless the operator typed one
                     previewState.text = textBlock;
                     previewState.ref = liveSongLabel; // Displayed without the slide number — the number is only for internal navigation
                     previewState.isScrolling = false;
@@ -1240,6 +1244,11 @@
         }
 
         function buildCanvasDOM(canvasElement, stateObject, assetLibraryContext = importedAssetsLibrary, logoBlobContext = cachedLogoDataUrl, withTransition = false) {
+            // Capture any existing background video BEFORE anything rebuilds this canvas's DOM,
+            // so playback (position, paused/playing state) survives unrelated text/style changes
+            // instead of restarting from 0 every time.
+            const existingVideoEl = canvasElement.querySelector('.canvas-video-bg-node');
+
             canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize}`;
             const transitionClass = withTransition ? getDisplayTransitionClass() : '';
             canvasElement.style.transition = transitionClass ? 'background-color 0.5s ease' : 'none';
@@ -1247,7 +1256,7 @@
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
             canvasElement.style.backgroundImage = 'none';
-            canvasElement.style.backgroundColor = hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
+            canvasElement.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
 
             let contentNode = stateObject.text || '';
             if (stateObject.isScrolling && stateObject.text) {
@@ -1296,6 +1305,15 @@
                 </div>
             `;
 
+            // Announcement banner — editable, toggleable, shown UNDER the main text (never replaces it)
+            const announcementActive = stateObject.announcementVisible && stateObject.announcementText;
+            const announcementInner = stateObject.announcementScrolling
+                ? `<div class="ticker-wrapper"><div class="ticker-text">${stateObject.announcementText || ''}</div></div>`
+                : (stateObject.announcementText || '');
+            const announcementHtml = `
+                <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''}" style="${videoAloneHide}">${announcementInner}</div>
+            `;
+
             canvasElement.innerHTML = `
                 <div class="text-display-box-container ${transitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
@@ -1303,6 +1321,7 @@
                 <div class="ref-out ${transitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
                 <div class="canvas-timer-node ${stateObject.timerPosition || 'timer-top-right'} ${stateObject.timerSize || 'timer-size-medium'} ${stateObject.timerVisible ? 'timer-visible' : ''}" id="${canvasElement.id}OverlayTimer">${stateObject.timerText || '00:00'}</div>
                 ${nameBarHtml}
+                ${announcementHtml}
             `;
 
             // Text stays at the selected size and wraps; this only steps in if wrapped text would actually overflow the frame
@@ -1316,15 +1335,26 @@
 
             // Video background takes precedence over a static flier image when enabled
             if (stateObject.videoBgEnabled && stateObject.videoBgUrl) {
-                const videoBg = document.createElement('video');
-                videoBg.className = `canvas-video-bg-node ${transitionClass}`;
-                videoBg.src = stateObject.videoBgUrl;
-                videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = stateObject.videoOverlayMode !== false;
-                videoBg.style.opacity = bgOpacity / 100;
-                if (transitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
-                canvasElement.insertBefore(videoBg, canvasElement.firstChild);
-                const playPromise = videoBg.play();
-                if (playPromise && playPromise.catch) playPromise.catch(() => {});
+                if (existingVideoEl && existingVideoEl.dataset.videoSrc === stateObject.videoBgUrl) {
+                    // SAME video already playing — reuse the exact element so playback position,
+                    // paused/playing state, and buffering are never disturbed by unrelated changes.
+                    existingVideoEl.className = `canvas-video-bg-node ${transitionClass}`;
+                    existingVideoEl.style.opacity = bgOpacity / 100;
+                    existingVideoEl.muted = stateObject.videoOverlayMode !== false;
+                    canvasElement.insertBefore(existingVideoEl, canvasElement.firstChild);
+                } else {
+                    // Different (or first-time) video — create fresh
+                    const videoBg = document.createElement('video');
+                    videoBg.className = `canvas-video-bg-node ${transitionClass}`;
+                    videoBg.dataset.videoSrc = stateObject.videoBgUrl;
+                    videoBg.src = stateObject.videoBgUrl;
+                    videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = stateObject.videoOverlayMode !== false;
+                    videoBg.style.opacity = bgOpacity / 100;
+                    if (transitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
+                    canvasElement.insertBefore(videoBg, canvasElement.firstChild);
+                    const playPromise = videoBg.play();
+                    if (playPromise && playPromise.catch) playPromise.catch(() => {});
+                }
             } else if (stateObject.flierId) {
                 const targetAsset = assetLibraryContext.find(a => a.id === stateObject.flierId);
                 if (targetAsset) {
@@ -1386,9 +1416,28 @@
         function sendStagedToLiveView() {
             if (isLiveFrozen) return; // FROZEN: Live output is locked, ignore Send Live until unfrozen
             if (!previewState.text && !previewState.flierId && !previewState.textBgUrl && !previewState.timerVisible) return;
+
+            // If a background video is currently playing on Preview, carry its exact playback
+            // position over to Live so it continues in sync instead of restarting from 0.
+            const previewVideoEl = document.querySelector('#previewCanvas .canvas-video-bg-node');
+            const liveVideoElBefore = document.querySelector('#liveCanvas .canvas-video-bg-node');
+            const isSameVideoAlreadyLive = previewVideoEl && liveVideoElBefore &&
+                liveVideoElBefore.dataset.videoSrc === previewState.videoBgUrl;
+            const pendingVideoSyncTime = (previewVideoEl && !isSameVideoAlreadyLive) ? previewVideoEl.currentTime : null;
+
             liveState = { ...previewState };
             pushItemToHistoryDropdownLog(liveState);
             renderLive();
+
+            if (pendingVideoSyncTime != null) {
+                const liveVideoEl = document.querySelector('#liveCanvas .canvas-video-bg-node');
+                if (liveVideoEl) {
+                    const applySync = () => { try { liveVideoEl.currentTime = pendingVideoSyncTime; } catch (e) {} };
+                    if (liveVideoEl.readyState >= 1) applySync();
+                    else liveVideoEl.addEventListener('loadedmetadata', applySync, { once: true });
+                }
+            }
+
             transmitStatePacketToRemoteClients();
         }
 
@@ -1595,6 +1644,7 @@
             });
 
             document.getElementById('bgColorPicker').addEventListener('input', () => { previewState.bgColor = document.getElementById('bgColorPicker').value; renderPreview(); });
+            document.getElementById('bgTransparentCheckbox').addEventListener('change', (e) => { previewState.bgTransparent = e.target.checked; renderPreview(); });
             document.getElementById('textColorPicker').addEventListener('input', () => { previewState.textColor = document.getElementById('textColorPicker').value; renderPreview(); });
             document.getElementById('refColorPicker').addEventListener('input', () => { previewState.refColor = document.getElementById('refColorPicker').value; renderPreview(); });
             
@@ -1640,18 +1690,26 @@
 
             document.getElementById('stageAnnouncementBtn').addEventListener('click', () => {
                 const txt = document.getElementById('announcementInput').value.trim();
-                if(!txt) return;
-                previewState.text = txt;
-                previewState.ref = "Announcement Alert";
-                previewState.isScrolling = document.getElementById('announcementScrollToggle').checked;
+                if (!txt) return;
+                previewState.announcementText = txt;
+                previewState.announcementVisible = true;
+                previewState.announcementScrolling = document.getElementById('announcementScrollToggle').checked;
+                document.getElementById('announcementEyeToggleBtn').classList.add('toggle-active');
+                renderPreview();
+            });
+
+            document.getElementById('announcementEyeToggleBtn').addEventListener('click', () => {
+                previewState.announcementVisible = !previewState.announcementVisible;
+                document.getElementById('announcementEyeToggleBtn').classList.toggle('toggle-active', previewState.announcementVisible);
                 renderPreview();
             });
 
             document.getElementById('clearAnnouncementBtn').addEventListener('click', () => {
                 document.getElementById('announcementInput').value = "";
-                previewState.text = "";
-                previewState.ref = "";
-                previewState.isScrolling = false;
+                previewState.announcementText = "";
+                previewState.announcementVisible = false;
+                previewState.announcementScrolling = false;
+                document.getElementById('announcementEyeToggleBtn').classList.remove('toggle-active');
                 renderPreview();
             });
 
@@ -2126,7 +2184,7 @@
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>OBS CLEAN OUTPUT VIEWPORT</title>
+                    <title>Express Bible Presenter — Output (capture this window for OBS / NDI)</title>
                     <style>
                         body, html { margin:0; padding:0; overflow:hidden; background-color:#000; width:100%; height:100%; display:flex; justify-content:center; align-items:center; }
                         :root { --canvas-font-size: 34px; --accent-primary: #38bdf8; }
@@ -2173,6 +2231,8 @@
                         .canvas-namebar-node.namebar-visible { display: flex; }
                         .canvas-namebar-node .namebar-role { background: var(--accent-primary, #38bdf8); color: #04121e; font-weight: 900; font-size: calc(var(--canvas-font-size) * 0.28); text-transform: uppercase; letter-spacing: 0.04em; padding: 0.35em 0.7em; display: flex; align-items: center; white-space: nowrap; }
                         .canvas-namebar-node .namebar-name { background: rgba(4, 10, 20, 0.88); color: #ffffff; font-weight: 800; font-size: calc(var(--canvas-font-size) * 0.32); padding: 0.35em 0.9em; display: flex; align-items: center; white-space: nowrap; }
+                        .canvas-announcement-banner { display: none; position: absolute; left: 0; right: 0; bottom: 0; z-index: 8; background: linear-gradient(0deg, rgba(180, 83, 9, 0.92) 0%, rgba(180, 83, 9, 0.78) 100%); color: #fff8e7; font-weight: 800; font-size: calc(var(--canvas-font-size) * 0.32); padding: 0.5em 1em; text-align: center; text-shadow: 0 2px 6px rgba(0,0,0,0.8); box-shadow: 0 -6px 16px rgba(0,0,0,0.4); overflow: hidden; white-space: nowrap; }
+                        .canvas-announcement-banner.announcement-visible { display: block; }
                     </style>
                 </head>
                 <body><div id="projectorCanvas" class="display-canvas mode-center size-medium"></div></body>
@@ -2198,6 +2258,9 @@
             const targetDoc = obsWindowRef.document;
             const container = targetDoc.getElementById('projectorCanvas'); if (!container) return;
 
+            // Preserve any currently-playing background video across this update, same as the main canvas
+            const existingVideoEl = container.querySelector('.canvas-video-bg-node');
+
             const customFontFamily = document.getElementById('fontStyleOverrideSelector').value;
             const customShadow = document.getElementById('textShadowSelector').value;
             const isTextBold = document.getElementById('fontBoldToggleBtn').classList.contains('toggle-active');
@@ -2210,7 +2273,7 @@
             container.style.fontFamily = customFontFamily;
 
             container.style.backgroundImage = 'none';
-            container.style.backgroundColor = hexToRgbaWithOpacity(liveState.bgColor, bgOpacity);
+            container.style.backgroundColor = liveState.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(liveState.bgColor, bgOpacity);
             container.style.transition = getDisplayTransitionClass() ? 'background-color 0.5s ease' : 'none';
 
             let contentNode = liveState.text || '';
@@ -2244,6 +2307,15 @@
                 </div>
             `;
 
+            // Announcement banner — mirrored from the main canvas
+            const announcementActive = liveState.announcementVisible && liveState.announcementText;
+            const announcementInner = liveState.announcementScrolling
+                ? `<div class="ticker-wrapper"><div class="ticker-text">${liveState.announcementText || ''}</div></div>`
+                : (liveState.announcementText || '');
+            const announcementHtml = `
+                <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''}" style="${videoAloneHide}">${announcementInner}</div>
+            `;
+
             const projectorTransitionClass = getDisplayTransitionClass();
             container.innerHTML = `
                 <div class="text-display-box-container ${projectorTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
@@ -2252,6 +2324,7 @@
                 <div class="ref-out ${projectorTransitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${liveState.refColor ? `color: ${liveState.refColor};` : ''}">${liveState.ref || ''}</div>
                 <div class="canvas-timer-node" id="projectorCanvasOverlayTimer">00:00</div>
                 ${nameBarHtml}
+                ${announcementHtml}
             `;
 
             // Text stays at the selected size and wraps; this only steps in if wrapped text would actually overflow the frame
@@ -2269,15 +2342,23 @@
             }
 
             if (liveState.videoBgEnabled && liveState.videoBgUrl) {
-                const videoBg = targetDoc.createElement('video');
-                videoBg.className = `canvas-video-bg-node ${projectorTransitionClass}`;
-                videoBg.src = liveState.videoBgUrl;
-                videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = liveState.videoOverlayMode !== false;
-                videoBg.style.opacity = bgOpacity / 100;
-                if (projectorTransitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
-                container.insertBefore(videoBg, container.firstChild);
-                const playPromise = videoBg.play();
-                if (playPromise && playPromise.catch) playPromise.catch(() => {});
+                if (existingVideoEl && existingVideoEl.dataset.videoSrc === liveState.videoBgUrl) {
+                    existingVideoEl.className = `canvas-video-bg-node ${projectorTransitionClass}`;
+                    existingVideoEl.style.opacity = bgOpacity / 100;
+                    existingVideoEl.muted = liveState.videoOverlayMode !== false;
+                    container.insertBefore(existingVideoEl, container.firstChild);
+                } else {
+                    const videoBg = targetDoc.createElement('video');
+                    videoBg.className = `canvas-video-bg-node ${projectorTransitionClass}`;
+                    videoBg.dataset.videoSrc = liveState.videoBgUrl;
+                    videoBg.src = liveState.videoBgUrl;
+                    videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = liveState.videoOverlayMode !== false;
+                    videoBg.style.opacity = bgOpacity / 100;
+                    if (projectorTransitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
+                    container.insertBefore(videoBg, container.firstChild);
+                    const playPromise = videoBg.play();
+                    if (playPromise && playPromise.catch) playPromise.catch(() => {});
+                }
             } else if (liveState.flierId) {
                 const asset = importedAssetsLibrary.find(a => a.id === liveState.flierId);
                 if (asset) {
