@@ -253,6 +253,12 @@
             <div id="ribbon-background" class="ribbon-panel">
                 <div class="control-group"><label for="bgColorPicker">Solid BG:</label><input type="color" id="bgColorPicker" value="#0f172a"></div>
 
+                <div class="control-group">
+                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; white-space:nowrap; text-transform:none; letter-spacing:0;" title="No background at all behind your text — fully see-through, useful for OBS overlay-style output">
+                        <input type="checkbox" id="bgTransparentCheckbox"> Transparent background (no color)
+                    </label>
+                </div>
+
                 <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
                     <label for="imageAssetAssignmentSelector">Media:</label>
                     <select id="imageAssetAssignmentSelector" style="max-width: 100px;">
@@ -322,8 +328,10 @@
                     <input type="text" id="announcementInput" placeholder="Type announcement text..." style="min-width:160px; padding:0.35rem; border-color:rgba(217,119,6,0.3);">
                     <label style="font-size:0.7rem; font-weight:700; color:#fbbf24; display:flex; align-items:center; gap:0.25rem; white-space:nowrap; cursor:pointer;"><input type="checkbox" id="announcementScrollToggle"> Scroll</label>
                     <button id="stageAnnouncementBtn" class="btn announcement-btn">Stage Alert</button>
-                    <button id="clearAnnouncementBtn" class="btn" style="background-color: #475569; border-color: #64748b; font-size: 0.8rem; padding: 0.45rem 0.85rem;" title="Clear announcement from preview">Clear Alert</button>
+                    <button id="announcementEyeToggleBtn" class="btn" style="padding: 0.45rem 0.6rem; font-size: 0.9rem;" title="Show/hide the announcement banner without losing its text">👁</button>
+                    <button id="clearAnnouncementBtn" class="btn" style="background-color: #475569; border-color: #64748b; font-size: 0.8rem; padding: 0.45rem 0.85rem;" title="Clear announcement text entirely">Clear Alert</button>
                 </div>
+                <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">"Stage Alert" shows this as a banner under your main text — it never replaces your verse/lyrics. Edit the text any time and click Stage Alert again to update it. Use 👁 to hide/show it without deleting what you typed.</span>
 
                 <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-wrap: wrap;">
                     <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Lower Third Name Tag:</label>
@@ -498,6 +506,19 @@
                         <input type="text" id="obsBrowserSourceInput" readonly value="Session not initialized...">
                         <button class="btn-copy" onclick="copyIntegrationLink('obsBrowserSourceInput')">Copy</button>
                     </div>
+                </div>
+
+                <!-- NDI Output Card -->
+                <div class="integration-card">
+                    <h4>NDI Output (to OBS, stage monitors, secondary projection)</h4>
+                    <p>A web page can't broadcast real NDI on its own — NDI requires Vizrt's native SDK, which browsers don't expose to web pages for security reasons. The good news: you don't need HDMI/SDI or any manual IP setup either way — NDI's own network discovery handles that automatically once a real NDI sender is running. Here's the free, standard way to get this presenter onto NDI:</p>
+                    <ol style="margin: 0 0 0.6rem 1.1rem; padding: 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6;">
+                        <li>Click <strong>"Open OBS Window"</strong> above — this opens a clean, borderless output window titled "Express Bible Presenter — Output".</li>
+                        <li>Install the free <strong>NDI Tools</strong> from ndi.video (one-time, official Vizrt download) and run <strong>NDI Screen Capture</strong> (Windows/Mac).</li>
+                        <li>In NDI Screen Capture, choose <strong>"Express Bible Presenter — Output"</strong> from the window list and start it.</li>
+                        <li>That's it — any NDI receiver on your network (OBS Studio's NDI source, ProPresenter, vMix, a stage-monitor NDI decoder, another PC) will now see it appear automatically, no cables, no IP addresses to type in.</li>
+                    </ol>
+                    <p>If you'd rather go straight through OBS: install the free <strong>obs-ndi</strong> plugin in OBS Studio, add this app as a Browser Source (link above) or Window Capture of the output window, then enable "Output NDI Source" in OBS — OBS itself becomes the NDI sender for your whole scene.</p>
                 </div>
 
                 <!-- Custom Aesthetic Variables Block relocated to the Text ribbon tab's "Text Style" dropdown -->
