@@ -115,7 +115,7 @@
         const HOTKEY_ACTIONS = {
             sendLive: { label: 'Send Live', fn: () => sendStagedToLiveView() },
             freezeLive: { label: 'Freeze / Unfreeze Live', fn: () => document.getElementById('freezeLiveBtn').click() },
-            openObs: { label: 'Open OBS Window', fn: () => spawnObsProjectorWindow() },
+            openObs: { label: 'Send to Projector', fn: () => sendToProjectorAutoDetect() },
             toggleVoice: { label: 'Toggle Live Voice', fn: () => document.getElementById('listeningBtn').click() },
             nextSlide: { label: 'Next Verse / Song Slide', fn: () => {
                 const isSongTabActive = document.getElementById('lyrics-tab') && document.getElementById('lyrics-tab').classList.contains('active');
@@ -213,22 +213,14 @@
             lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
             refColor: "", lowerThirdColor: "#ffffff",
             videoOverlayMode: true,
-            announcementText: "", announcementVisible: false, announcementScrolling: false,
+            announcementText: "", announcementVisible: false, announcementEffect: "none", announcementPosition: "bottom", announcementBgColor: "#b45309",
             bgTransparent: false
         };
-        
-        let liveState = { 
-            text: "", ref: "", layout: "mode-center", fontSize: "medium", bgColor: "#0f172a", textColor: "#ffffff",
-            flierId: "", textBgUrl: "", isScrolling: false, logoPosition: "", logoSize: 6,
-            timerVisible: false, timerSolo: false, timerText: "05:00", timerPosition: "timer-top-right", timerSize: "timer-size-medium",
-            timerScale: 1.0,
-            videoBgUrl: "", videoBgEnabled: false, bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
-            lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
-            refColor: "", lowerThirdColor: "#ffffff",
-            videoOverlayMode: true,
-            announcementText: "", announcementVisible: false, announcementScrolling: false,
-            bgTransparent: false
-        };
+
+        // SINGLE SCENE: liveState is the SAME object as previewState (not a copy) — there's only
+        // one scene now, so both names just refer to it. This keeps every existing "previewState.x = y"
+        // and "liveState.x" reference throughout the app working without needing to rename them all.
+        let liveState = previewState;
 
         let currentBookCode = 46; 
         let currentBookName = "1 Corinthians";
@@ -288,6 +280,30 @@
             initTimerEngine();
             initLogoSizerEngine();
             renderHotkeysList();
+            renderOutputSlotsList();
+            document.getElementById('addOutputSlotBtn').addEventListener('click', () => {
+                const newSlot = { id: 'slot_' + Date.now(), name: 'New Output', sourceMode: 'live', windowRef: null };
+                outputSlots.push(newSlot);
+                persistOutputSlotsConfig();
+                renderOutputSlotsList();
+            });
+            document.getElementById('detectScreensBtn').addEventListener('click', detectAndListScreens);
+
+            // Desktop companion app only: reveal the experimental native NDI sender controls
+            if (window.desktopBridge) {
+                const ndiSection = document.getElementById('desktopNdiSection');
+                if (ndiSection) ndiSection.style.display = 'block';
+                document.getElementById('startDesktopNdiBtn').addEventListener('click', async () => {
+                    const statusEl = document.getElementById('desktopNdiStatus');
+                    statusEl.innerText = 'Starting...';
+                    const result = await window.desktopBridge.startNdiSender('Express Bible Presenter');
+                    statusEl.innerText = result.ok ? '● Sending NDI' : `Not available: ${result.reason}`;
+                });
+                document.getElementById('stopDesktopNdiBtn').addEventListener('click', async () => {
+                    await window.desktopBridge.stopNdiSender();
+                    document.getElementById('desktopNdiStatus').innerText = 'Not running';
+                });
+            }
         }
 
         async function enumerateAudioDevices() {
@@ -609,6 +625,7 @@
 
                         // DOUBLE CLICK: Load Staging and Direct Live Cast
                         row.addEventListener('dblclick', async () => {
+                            forceTextVisibleOnDoubleClick();
                             currentBookCode = res.book;
                             currentBookName = bookName;
                             currentChapter = res.chapter;
@@ -859,6 +876,7 @@
 
                 // Double Click: Stage and force live immediately
                 row.addEventListener('dblclick', () => {
+                    forceTextVisibleOnDoubleClick();
                     document.querySelectorAll('#lyricsSlidesDeck .verse-row').forEach(r => r.classList.remove('active'));
                     row.classList.add('active');
 
@@ -991,19 +1009,7 @@
                 liveState.timerText = formattedTime;
             }
 
-            // Target Staged Preview DOM Overlays
-            const previewOverlay = document.getElementById('previewTimerOverlay') || document.querySelector('#previewCanvas .canvas-timer-node');
-            if (previewOverlay) {
-                previewOverlay.className = `canvas-timer-node ${previewState.timerPosition} ${previewState.timerSize} ${previewState.timerVisible ? 'timer-visible' : ''}`;
-                previewOverlay.innerText = formattedTime;
-                
-                // Dynamic Sizing Transforms
-                const originStr = previewState.timerPosition === 'timer-center' ? 'center' : (previewState.timerPosition.includes('left') ? 'left' : 'right');
-                previewOverlay.style.transformOrigin = originStr;
-                previewOverlay.style.transform = `${previewState.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${previewState.timerScale || 1.0})`;
-            }
-
-            // Target Broadcast Live DOM Overlays
+            // Target the single scene's DOM overlay
             const liveOverlay = document.getElementById('liveTimerOverlay') || document.querySelector('#liveCanvas .canvas-timer-node');
             if (liveOverlay) {
                 liveOverlay.className = `canvas-timer-node ${liveState.timerPosition} ${liveState.timerSize} ${liveState.timerVisible ? 'timer-visible' : ''}`;
@@ -1014,9 +1020,9 @@
                 liveOverlay.style.transform = `${liveState.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${liveState.timerScale || 1.0})`;
             }
 
-            // Target local OBS / projector screens directly
-            if (obsWindowRef && !obsWindowRef.closed) {
-                const projectorOverlay = obsWindowRef.document.getElementById('projectorCanvasOverlayTimer') || obsWindowRef.document.querySelector('.canvas-timer-node');
+            // Target the projector output window directly
+            if (projectorWindowRef && !projectorWindowRef.closed) {
+                const projectorOverlay = projectorWindowRef.document.getElementById('directProjectorCanvasOverlayTimer') || projectorWindowRef.document.querySelector('.canvas-timer-node');
                 if (projectorOverlay) {
                     projectorOverlay.className = `canvas-timer-node ${liveState.timerPosition} ${liveState.timerSize} ${liveState.timerVisible ? 'timer-visible' : ''}`;
                     projectorOverlay.innerText = formattedTime;
@@ -1044,12 +1050,12 @@
 
                 // Resize only the logo image itself, directly, everywhere it currently exists —
                 // this never touches or rebuilds the rest of the live scene, so nothing blinks.
-                document.querySelectorAll('#previewCanvas .canvas-logo-node, #liveCanvas .canvas-logo-node, #obsCanvas .canvas-logo-node').forEach(logoEl => {
+                document.querySelectorAll('#liveCanvas .canvas-logo-node, #obsCanvas .canvas-logo-node').forEach(logoEl => {
                     logoEl.style.width = `${newSize}%`;
                     logoEl.style.height = `${newSize * 1.5}%`;
                 });
-                if (obsWindowRef && !obsWindowRef.closed) {
-                    const projectorLogo = obsWindowRef.document.querySelector('.canvas-logo-node');
+                if (projectorWindowRef && !projectorWindowRef.closed) {
+                    const projectorLogo = projectorWindowRef.document.querySelector('.canvas-logo-node');
                     if (projectorLogo) {
                         projectorLogo.style.width = `${newSize}%`;
                         projectorLogo.style.height = `${newSize * 1.5}%`;
@@ -1154,6 +1160,7 @@
                 });
 
                 row.addEventListener('dblclick', () => {
+                    forceTextVisibleOnDoubleClick();
                     selectSpecificVerseCoordinate(vObj.verse); 
                     sendStagedToLiveView();
                 });
@@ -1199,6 +1206,96 @@
             if (targetIdx >= rows.length) targetIdx = rows.length - 1;
             rows[targetIdx].click();
             sendStagedToLiveView();
+        }
+
+        // Converts a #rrggbb hex color into an rgba() string at the given opacity (0-100)
+        // ===================== SHARED VIDEO ENGINE =====================
+        // Real broadcast software only shows identical, perfectly synced video across Preview/Live/
+        // multiple outputs when they're all watching the SAME actual playing media — not separate
+        // copies each trying to mimic the other's position. So instead of an independent <video> per
+        // canvas (which caused restarts and drift), we keep ONE hidden "master" video playing per
+        // background video file, capture its live output as a MediaStream, and every canvas (including
+        // cross-window popups) attaches a lightweight "sink" <video> to that same stream — always
+        // frame-identical, never restarted.
+        const masterVideoRegistry = new Map(); // videoUrl -> { masterEl, stream }
+
+        function getOrCreateMasterVideo(videoUrl) {
+            let entry = masterVideoRegistry.get(videoUrl);
+            if (entry) return entry;
+
+            const masterEl = document.createElement('video');
+            masterEl.src = videoUrl;
+            masterEl.loop = true;
+            masterEl.muted = true; // the master itself is always muted — each sink controls its own audibility
+            masterEl.autoplay = true;
+            masterEl.playsInline = true;
+            masterEl.style.cssText = 'position:fixed; width:1px; height:1px; opacity:0; pointer-events:none; left:-9999px;';
+            document.body.appendChild(masterEl);
+            masterEl.play().catch(() => {});
+
+            entry = { masterEl, stream: null };
+            masterVideoRegistry.set(videoUrl, entry);
+
+            const captureWhenReady = () => {
+                if (entry.stream) return;
+                try {
+                    if (masterEl.captureStream) entry.stream = masterEl.captureStream();
+                    else if (masterEl.mozCaptureStream) entry.stream = masterEl.mozCaptureStream();
+                } catch (e) {}
+            };
+            masterEl.addEventListener('loadedmetadata', captureWhenReady, { once: true });
+            masterEl.addEventListener('playing', captureWhenReady, { once: true });
+
+            return entry;
+        }
+
+        // Attaches (or reuses) a sink <video> inside any container — same document or a cross-window
+        // popup — that mirrors the shared master stream for the given URL.
+        function attachSharedVideoSink(container, ownerDoc, videoUrl, existingVideoEl, opts) {
+            const entry = getOrCreateMasterVideo(videoUrl);
+            let sinkEl = (existingVideoEl && existingVideoEl.dataset.videoSrc === videoUrl) ? existingVideoEl : null;
+
+            if (!sinkEl) {
+                sinkEl = ownerDoc.createElement('video');
+                sinkEl.dataset.videoSrc = videoUrl;
+                sinkEl.autoplay = true;
+                sinkEl.playsInline = true;
+            }
+            sinkEl.className = opts.className;
+            sinkEl.style.opacity = opts.opacity;
+            sinkEl.muted = opts.muted;
+            sinkEl.dataset.currentOpacity = opts.opacity;
+            if (opts.className.includes('ebp-transition-') && !sinkEl.dataset.opacityFixBound) {
+                sinkEl.dataset.opacityFixBound = '1';
+                sinkEl.addEventListener('animationend', () => { sinkEl.style.opacity = sinkEl.dataset.currentOpacity; });
+            }
+            container.insertBefore(sinkEl, container.firstChild);
+
+            if (entry.stream) {
+                if (sinkEl.srcObject !== entry.stream) {
+                    sinkEl.srcObject = entry.stream;
+                    const playPromise = sinkEl.play();
+                    if (playPromise && playPromise.catch) playPromise.catch(() => {});
+                }
+            } else if (!sinkEl.dataset.fallbackDirect) {
+                let attempts = 0;
+                const retry = () => {
+                    attempts++;
+                    const freshEntry = masterVideoRegistry.get(videoUrl);
+                    if (freshEntry && freshEntry.stream) {
+                        sinkEl.srcObject = freshEntry.stream;
+                        const p = sinkEl.play(); if (p && p.catch) p.catch(() => {});
+                    } else if (attempts < 15) {
+                        setTimeout(retry, 200);
+                    } else if (!sinkEl.srcObject) {
+                        sinkEl.dataset.fallbackDirect = '1';
+                        sinkEl.src = videoUrl; sinkEl.loop = true;
+                        const p = sinkEl.play(); if (p && p.catch) p.catch(() => {});
+                    }
+                };
+                retry();
+            }
+            return sinkEl;
         }
 
         // Converts a #rrggbb hex color into an rgba() string at the given opacity (0-100)
@@ -1305,13 +1402,16 @@
                 </div>
             `;
 
-            // Announcement banner — editable, toggleable, shown UNDER the main text (never replaces it)
+            // Announcement banner — editable, toggleable, shown over the main text (never replaces it)
             const announcementActive = stateObject.announcementVisible && stateObject.announcementText;
-            const announcementInner = stateObject.announcementScrolling
+            const announcementEffect = stateObject.announcementEffect || 'none';
+            const announcementInner = announcementEffect === 'scroll'
                 ? `<div class="ticker-wrapper"><div class="ticker-text">${stateObject.announcementText || ''}</div></div>`
                 : (stateObject.announcementText || '');
+            const announcementPosClass = `announcement-pos-${stateObject.announcementPosition || 'bottom'}`;
+            const announcementEffectClass = announcementEffect !== 'none' && announcementEffect !== 'scroll' ? `announcement-effect-${announcementEffect}` : '';
             const announcementHtml = `
-                <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''}" style="${videoAloneHide}">${announcementInner}</div>
+                <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''} ${announcementPosClass} ${announcementEffectClass}" style="${videoAloneHide} background: ${stateObject.announcementBgColor || '#b45309'};">${announcementInner}</div>
             `;
 
             canvasElement.innerHTML = `
@@ -1335,26 +1435,10 @@
 
             // Video background takes precedence over a static flier image when enabled
             if (stateObject.videoBgEnabled && stateObject.videoBgUrl) {
-                if (existingVideoEl && existingVideoEl.dataset.videoSrc === stateObject.videoBgUrl) {
-                    // SAME video already playing — reuse the exact element so playback position,
-                    // paused/playing state, and buffering are never disturbed by unrelated changes.
-                    existingVideoEl.className = `canvas-video-bg-node ${transitionClass}`;
-                    existingVideoEl.style.opacity = bgOpacity / 100;
-                    existingVideoEl.muted = stateObject.videoOverlayMode !== false;
-                    canvasElement.insertBefore(existingVideoEl, canvasElement.firstChild);
-                } else {
-                    // Different (or first-time) video — create fresh
-                    const videoBg = document.createElement('video');
-                    videoBg.className = `canvas-video-bg-node ${transitionClass}`;
-                    videoBg.dataset.videoSrc = stateObject.videoBgUrl;
-                    videoBg.src = stateObject.videoBgUrl;
-                    videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = stateObject.videoOverlayMode !== false;
-                    videoBg.style.opacity = bgOpacity / 100;
-                    if (transitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
-                    canvasElement.insertBefore(videoBg, canvasElement.firstChild);
-                    const playPromise = videoBg.play();
-                    if (playPromise && playPromise.catch) playPromise.catch(() => {});
-                }
+                attachSharedVideoSink(
+                    canvasElement, document, stateObject.videoBgUrl, existingVideoEl,
+                    { className: `canvas-video-bg-node ${transitionClass}`, opacity: bgOpacity / 100, muted: stateObject.videoOverlayMode !== false }
+                );
             } else if (stateObject.flierId) {
                 const targetAsset = assetLibraryContext.find(a => a.id === stateObject.flierId);
                 if (targetAsset) {
@@ -1384,60 +1468,53 @@
             }
         }
 
+        // SINGLE SCENE: there is no separate staging step anymore — selecting a verse/song/etc.
+        // updates the one visible scene immediately. Freeze Live still has a purpose here: while
+        // frozen, the scene keeps responding so you can keep working, but that work is NOT pushed
+        // out to the projector, OBS/NDI capture, remote viewers, or any multi-screen output slots
+        // until you unfreeze — so a live congregation/stage screen can't be disrupted mid-edit.
         function renderPreview() {
-            const previewCanvas = document.getElementById('previewCanvas');
-            if (!previewState.text && !previewState.flierId && !previewState.textBgUrl) {
-                previewCanvas.innerHTML = `
-                    <div class="placeholder-text">Awaiting Selection...</div>
-                    <div class="canvas-timer-node" id="previewTimerOverlay">00:00</div>
-                `;
-                updateTimerDisplays();
-                return;
-            }
-            buildCanvasDOM(previewCanvas, previewState);
-        }
-
-        function renderLive() {
             const liveCanvas = document.getElementById('liveCanvas');
             if (!liveState.text && !liveState.flierId && !liveState.textBgUrl) {
                 liveCanvas.innerHTML = `
-                    <div class="placeholder-text">Canvas Screen Clear</div>
+                    <div class="placeholder-text">Awaiting Selection...</div>
                     <div class="canvas-timer-node" id="liveTimerOverlay">00:00</div>
                 `;
                 updateTimerDisplays();
-                updateObsProjectorDOM(); 
+                if (!isLiveFrozen) {
+                    syncLiveStateToRemoteChannels();
+                    renderAllOutputSlots();
+                    if (projectorWindowRef && !projectorWindowRef.closed) renderIntoOutputWindow(projectorWindowRef, "directProjectorCanvas", liveState);
+                }
                 return;
             }
             buildCanvasDOM(liveCanvas, liveState, importedAssetsLibrary, cachedLogoDataUrl, true);
             updateTimerDisplays();
-            updateObsProjectorDOM(); 
+            if (!isLiveFrozen) {
+                syncLiveStateToRemoteChannels();
+                renderAllOutputSlots();
+                if (projectorWindowRef && !projectorWindowRef.closed) renderIntoOutputWindow(projectorWindowRef, "directProjectorCanvas", liveState);
+            }
+        }
+
+        // Compatibility aliases — older code paths (hotkeys, Enter key, double-click) still call
+        // these by name; both simply re-render the single scene now.
+        function renderLive() { renderPreview(); }
+        // When double-clicking a verse/song/etc. to cut it live, the operator clearly wants text
+        // shown NOW — so if video-alone mode or Flier Only was hiding all text, switch that off
+        // automatically instead of silently hiding the very thing they just double-clicked.
+        function forceTextVisibleOnDoubleClick() {
+            if (previewState.videoBgEnabled && previewState.videoOverlayMode === false) {
+                previewState.videoOverlayMode = true; // back to overlay mode so text shows over the video
+            }
+            if (previewState.layout === 'mode-flieronly') {
+                previewState.layout = 'mode-center';
+            }
         }
 
         function sendStagedToLiveView() {
-            if (isLiveFrozen) return; // FROZEN: Live output is locked, ignore Send Live until unfrozen
-            if (!previewState.text && !previewState.flierId && !previewState.textBgUrl && !previewState.timerVisible) return;
-
-            // If a background video is currently playing on Preview, carry its exact playback
-            // position over to Live so it continues in sync instead of restarting from 0.
-            const previewVideoEl = document.querySelector('#previewCanvas .canvas-video-bg-node');
-            const liveVideoElBefore = document.querySelector('#liveCanvas .canvas-video-bg-node');
-            const isSameVideoAlreadyLive = previewVideoEl && liveVideoElBefore &&
-                liveVideoElBefore.dataset.videoSrc === previewState.videoBgUrl;
-            const pendingVideoSyncTime = (previewVideoEl && !isSameVideoAlreadyLive) ? previewVideoEl.currentTime : null;
-
-            liveState = { ...previewState };
             pushItemToHistoryDropdownLog(liveState);
-            renderLive();
-
-            if (pendingVideoSyncTime != null) {
-                const liveVideoEl = document.querySelector('#liveCanvas .canvas-video-bg-node');
-                if (liveVideoEl) {
-                    const applySync = () => { try { liveVideoEl.currentTime = pendingVideoSyncTime; } catch (e) {} };
-                    if (liveVideoEl.readyState >= 1) applySync();
-                    else liveVideoEl.addEventListener('loadedmetadata', applySync, { once: true });
-                }
-            }
-
+            renderPreview();
             transmitStatePacketToRemoteClients();
         }
 
@@ -1625,15 +1702,16 @@
 
         function setupStudioEventBindings() {
             listeningBtn.addEventListener('click', toggleListening);
-            sendLiveBtn.addEventListener('click', sendStagedToLiveView);
             document.getElementById('freezeLiveBtn').addEventListener('click', () => {
                 isLiveFrozen = !isLiveFrozen;
                 const btn = document.getElementById('freezeLiveBtn');
                 btn.classList.toggle('toggle-active', isLiveFrozen);
-                btn.innerHTML = isLiveFrozen ? '🔒 Live Frozen (click to unfreeze)' : '❄ Freeze Live';
+                btn.innerHTML = isLiveFrozen ? '🔒 Frozen (click to unfreeze)' : '❄ Freeze Live';
                 document.body.classList.toggle('live-is-frozen', isLiveFrozen);
+                if (!isLiveFrozen) renderPreview(); // flush whatever changed while frozen out to every output now
             });
-            openObsBtn.addEventListener('click', spawnObsProjectorWindow);
+            document.getElementById('sendToProjectorBtn').addEventListener('click', sendToProjectorAutoDetect);
+            document.getElementById('enableExtendedDisplayBtn').addEventListener('click', enableExtendedDisplayDetection);
             manualSearchInput.addEventListener('input', () => { parseAndRouteInput(manualSearchInput.value, false); });
             versionSelector.addEventListener('change', () => { fetchCurrentChapterFromAPI(); });
             layoutSelector.addEventListener('change', () => { previewState.layout = layoutSelector.value; renderPreview(); });
@@ -1693,8 +1771,23 @@
                 if (!txt) return;
                 previewState.announcementText = txt;
                 previewState.announcementVisible = true;
-                previewState.announcementScrolling = document.getElementById('announcementScrollToggle').checked;
+                previewState.announcementEffect = document.getElementById('announcementEffectSelector').value;
+                previewState.announcementPosition = document.getElementById('announcementPositionSelector').value;
+                previewState.announcementBgColor = document.getElementById('announcementColorPicker').value;
                 document.getElementById('announcementEyeToggleBtn').classList.add('toggle-active');
+                renderPreview();
+            });
+
+            document.getElementById('announcementEffectSelector').addEventListener('change', (e) => {
+                previewState.announcementEffect = e.target.value;
+                renderPreview();
+            });
+            document.getElementById('announcementPositionSelector').addEventListener('change', (e) => {
+                previewState.announcementPosition = e.target.value;
+                renderPreview();
+            });
+            document.getElementById('announcementColorPicker').addEventListener('input', (e) => {
+                previewState.announcementBgColor = e.target.value;
                 renderPreview();
             });
 
@@ -1708,7 +1801,7 @@
                 document.getElementById('announcementInput').value = "";
                 previewState.announcementText = "";
                 previewState.announcementVisible = false;
-                previewState.announcementScrolling = false;
+                previewState.announcementEffect = "none";
                 document.getElementById('announcementEyeToggleBtn').classList.remove('toggle-active');
                 renderPreview();
             });
@@ -1770,8 +1863,66 @@
                     document.getElementById('lowerThirdVisibleCheckbox').checked = !!previewState.lowerThirdVisible;
                 }
             }
-            document.querySelectorAll('.ribbon-tab-btn').forEach(btn => {
+            document.querySelectorAll('.ribbon-tab-btn[data-ribbon-tab]').forEach(btn => {
                 btn.addEventListener('click', () => switchRibbonTab(btn.dataset.ribbonTab));
+            });
+
+            // FILE MENU — dropdown, not a panel-switching tab
+            document.getElementById('fileMenuTabBtn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                document.getElementById('fileMenuDropdown').classList.toggle('open');
+            });
+            document.getElementById('fileMenuDropdown').addEventListener('click', (e) => { e.stopPropagation(); });
+            document.addEventListener('click', () => { document.getElementById('fileMenuDropdown').classList.remove('open'); });
+
+            document.getElementById('fileMenuNewBtn').addEventListener('click', () => {
+                if (!confirm('Start a new session? Unsaved changes to the current scene will be lost.')) return;
+                Object.assign(previewState, {
+                    text: "", ref: "", flierId: "", textBgUrl: "", isScrolling: false,
+                    videoBgUrl: "", videoBgEnabled: false, announcementText: "", announcementVisible: false,
+                    lowerThirdName: "", lowerThirdVisible: false
+                });
+                document.getElementById('fileMenuDropdown').classList.remove('open');
+                renderPreview();
+            });
+            document.getElementById('fileMenuLyricsImportPicker').addEventListener('change', (e) => {
+                document.getElementById('fileMenuDropdown').classList.remove('open');
+                document.getElementById('lyricsFilePicker').files = e.target.files;
+                document.getElementById('lyricsFilePicker').dispatchEvent(new Event('change'));
+            });
+            document.getElementById('fileMenuDuplicateBtn').addEventListener('click', () => {
+                exportProfileToFile();
+                document.getElementById('fileMenuDropdown').classList.remove('open');
+            });
+            document.getElementById('fileMenuDownloadBtn').addEventListener('click', () => {
+                exportProfileToFile();
+                document.getElementById('fileMenuDropdown').classList.remove('open');
+            });
+            document.getElementById('fileMenuRenameBtn').addEventListener('click', () => {
+                const currentName = localStorage.getItem('ebp_session_name') || 'My Session';
+                const newName = prompt('Session name:', currentName);
+                if (newName) { try { localStorage.setItem('ebp_session_name', newName); } catch (e) {} }
+                document.getElementById('fileMenuDropdown').classList.remove('open');
+            });
+            document.getElementById('fileMenuClearBtn').addEventListener('click', () => {
+                if (!confirm('Clear ALL saved data (songs, names, hotkeys, theme, output slots)? This cannot be undone.')) return;
+                try { localStorage.clear(); } catch (e) {}
+                location.reload();
+            });
+            document.getElementById('fileMenuHistoryToggleBtn').addEventListener('click', () => {
+                const panel = document.getElementById('ribbon-history-panel');
+                panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+                document.getElementById('fileMenuDropdown').classList.remove('open');
+            });
+            document.getElementById('fileMenuDetailsBtn').addEventListener('click', () => {
+                const savedSongsCount = (JSON.parse(localStorage.getItem('ebp_saved_songs') || '[]')).length;
+                const savedNamesCount = (JSON.parse(localStorage.getItem('ebp_saved_names') || '[]')).length;
+                alert(`Session: ${localStorage.getItem('ebp_session_name') || 'My Session'}\nBook: ${currentBookName} ${currentChapter}\nVersion: ${document.getElementById('versionSelector').value}\nSaved songs: ${savedSongsCount}\nSaved names: ${savedNamesCount}\nWorks fully offline: Yes`);
+                document.getElementById('fileMenuDropdown').classList.remove('open');
+            });
+            document.getElementById('fileMenuSettingsBtn').addEventListener('click', () => {
+                document.getElementById('settingsModal').style.display = 'flex';
+                document.getElementById('fileMenuDropdown').classList.remove('open');
             });
 
             // TEXT STYLE dropdown (Display Transition / Font Style / Bold-Italic / Text Shadow) — under the Text tab
@@ -1914,36 +2065,44 @@
                 renderPreview();
             });
 
-            // Video transport controls — act on whichever background video is currently rendered on Preview
-            function getActivePreviewVideoEl() {
-                return document.querySelector('#previewCanvas .canvas-video-bg-node');
+            // Video transport controls — act on every place the same video is currently rendered
+            // (Preview, Live, the OBS standalone canvas, and the OBS/NDI popup window) at once.
+            // Finds the master video currently backing whichever background video is active
+            // (Preview's, or Live's if Preview has none) — controlling this one element
+            // instantly reflects everywhere, since every sink just mirrors its live stream.
+            function getActiveMasterVideoEl() {
+                const url = (previewState.videoBgEnabled && previewState.videoBgUrl) ? previewState.videoBgUrl
+                    : (liveState.videoBgEnabled && liveState.videoBgUrl) ? liveState.videoBgUrl : null;
+                if (!url) return null;
+                const entry = masterVideoRegistry.get(url);
+                return entry ? entry.masterEl : null;
             }
             document.getElementById('videoPlayPauseBtn').addEventListener('click', () => {
-                const vid = getActivePreviewVideoEl();
-                if (!vid) return;
-                if (vid.paused) vid.play(); else vid.pause();
+                const master = getActiveMasterVideoEl();
+                if (!master) return;
+                if (master.paused) master.play(); else master.pause();
             });
             document.getElementById('videoSkipBackBtn').addEventListener('click', () => {
-                const vid = getActivePreviewVideoEl();
-                if (!vid) return;
-                vid.currentTime = Math.max(0, vid.currentTime - 10);
+                const master = getActiveMasterVideoEl();
+                if (!master) return;
+                master.currentTime = Math.max(0, master.currentTime - 10);
             });
             document.getElementById('videoSkipFwdBtn').addEventListener('click', () => {
-                const vid = getActivePreviewVideoEl();
-                if (!vid) return;
-                vid.currentTime = Math.min(vid.duration || vid.currentTime + 10, vid.currentTime + 10);
+                const master = getActiveMasterVideoEl();
+                if (!master) return;
+                master.currentTime = Math.min(master.duration || master.currentTime + 10, master.currentTime + 10);
             });
             document.getElementById('videoSeekSlider').addEventListener('input', (e) => {
-                const vid = getActivePreviewVideoEl();
-                if (!vid || !vid.duration) return;
-                vid.currentTime = (parseFloat(e.target.value) / 100) * vid.duration;
+                const master = getActiveMasterVideoEl();
+                if (!master || !master.duration) return;
+                master.currentTime = (parseFloat(e.target.value) / 100) * master.duration;
             });
-            // Keep the seek slider in sync with whichever video is currently playing on Preview
+            // Keep the seek slider in sync with whichever video is currently playing
             setInterval(() => {
-                const vid = getActivePreviewVideoEl();
+                const master = getActiveMasterVideoEl();
                 const slider = document.getElementById('videoSeekSlider');
-                if (vid && vid.duration) {
-                    slider.value = (vid.currentTime / vid.duration) * 100;
+                if (master && master.duration) {
+                    slider.value = (master.currentTime / master.duration) * 100;
                 }
             }, 500);
 
@@ -2092,7 +2251,7 @@
                 }
             });
 
-            document.getElementById('previewCanvas').addEventListener('wheel', (e) => {
+            document.getElementById('liveCanvas').addEventListener('wheel', (e) => {
                 if (e.ctrlKey) {
                     e.preventDefault();
                     const sizes = ["small", "medium", "large", "xlarge"];
@@ -2109,7 +2268,6 @@
                 }
             }, { passive: false });
 
-            document.getElementById('exportProfileBtn').addEventListener('click', exportProfileToFile);
             document.getElementById('importProfilePicker').addEventListener('change', importProfileFromFile);
         }
 
@@ -2176,15 +2334,13 @@
             }
         }
 
-        function spawnObsProjectorWindow() {
-            if (obsWindowRef && !obsWindowRef.closed) { obsWindowRef.focus(); return; }
-            obsWindowRef = window.open("", "OBS_Projector_Window", "width=1376,height=768,scrollbars=no,menubar=no,toolbar=no,location=no,status=no");
-            obsWindowRef.document.open();
-            obsWindowRef.document.write(`
+        // Shared HTML template used by every independent output window (OBS popup + any Stage/Monitor outputs)
+        function buildOutputWindowDocument(titleText, canvasElementId) {
+            return `
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>Express Bible Presenter — Output (capture this window for OBS / NDI)</title>
+                    <title>${titleText}</title>
                     <style>
                         body, html { margin:0; padding:0; overflow:hidden; background-color:#000; width:100%; height:100%; display:flex; justify-content:center; align-items:center; }
                         :root { --canvas-font-size: 34px; --accent-primary: #38bdf8; }
@@ -2231,34 +2387,173 @@
                         .canvas-namebar-node.namebar-visible { display: flex; }
                         .canvas-namebar-node .namebar-role { background: var(--accent-primary, #38bdf8); color: #04121e; font-weight: 900; font-size: calc(var(--canvas-font-size) * 0.28); text-transform: uppercase; letter-spacing: 0.04em; padding: 0.35em 0.7em; display: flex; align-items: center; white-space: nowrap; }
                         .canvas-namebar-node .namebar-name { background: rgba(4, 10, 20, 0.88); color: #ffffff; font-weight: 800; font-size: calc(var(--canvas-font-size) * 0.32); padding: 0.35em 0.9em; display: flex; align-items: center; white-space: nowrap; }
-                        .canvas-announcement-banner { display: none; position: absolute; left: 0; right: 0; bottom: 0; z-index: 8; background: linear-gradient(0deg, rgba(180, 83, 9, 0.92) 0%, rgba(180, 83, 9, 0.78) 100%); color: #fff8e7; font-weight: 800; font-size: calc(var(--canvas-font-size) * 0.32); padding: 0.5em 1em; text-align: center; text-shadow: 0 2px 6px rgba(0,0,0,0.8); box-shadow: 0 -6px 16px rgba(0,0,0,0.4); overflow: hidden; white-space: nowrap; }
+                        .canvas-announcement-banner { display: none; position: absolute; left: 0; right: 0; z-index: 8; color: #fff8e7; font-weight: 800; font-size: calc(var(--canvas-font-size) * 0.32); padding: 0.5em 1em; text-align: center; text-shadow: 0 2px 6px rgba(0,0,0,0.8); box-shadow: 0 -6px 16px rgba(0,0,0,0.4); overflow: hidden; white-space: nowrap; }
                         .canvas-announcement-banner.announcement-visible { display: block; }
+                        .canvas-announcement-banner.announcement-pos-bottom { bottom: 0; top: auto; }
+                        .canvas-announcement-banner.announcement-pos-top { top: 0; bottom: auto; box-shadow: 0 6px 16px rgba(0,0,0,0.4); }
+                        .canvas-announcement-banner.announcement-pos-center { top: 50%; bottom: auto; transform: translateY(-50%); box-shadow: 0 0 24px rgba(0,0,0,0.5); border-radius: 8px; margin: 0 4%; width: auto; left: 4%; right: 4%; }
+                        @keyframes announcementBreathing { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+                        @keyframes announcementFadeInOut { 0%, 100% { opacity: 0; } 15%, 85% { opacity: 1; } }
+                        .canvas-announcement-banner.announcement-effect-breathing { animation: announcementBreathing 2.4s ease-in-out infinite; }
+                        .canvas-announcement-banner.announcement-effect-fade { animation: announcementFadeInOut 4s ease-in-out infinite; }
                     </style>
                 </head>
-                <body><div id="projectorCanvas" class="display-canvas mode-center size-medium"></div></body>
+                <body>
+                    <div id="${canvasElementId}" class="display-canvas mode-center size-medium"></div>
+                </body>
                 </html>
-            `);
-            obsWindowRef.document.close(); updateObsProjectorDOM();
+            `;
         }
 
-        function updateObsProjectorDOM() {
-            // Channel 1 Sync: BroadcastChannel (Instant Offline Sync)
+        // DIRECT PROJECTOR OUTPUT — this is the single output window used both for HDMI/extended-display
+        // projection AND as the window OBS/NDI Screen Capture should point at (see Settings -> NDI Output).
+        // Once your PC's second screen is extended (Windows/Mac "Extend displays"), the OS already routes
+        // anything shown on that screen out through its HDMI/wireless-display port — a browser can't skip
+        // that step, no application can. What this DOES do differently from a plain browser tab: it
+        // detects the extended screen automatically, opens borderless and already positioned there (never
+        // visible on your main screen), and snaps to fullscreen immediately, so there's nothing to drag.
+        let projectorWindowRef = null;
+        let cachedScreenDetailsHandle = null; // set once permission is granted, reused so later clicks need no extra prompt/await
+
+        async function enableExtendedDisplayDetection() {
+            const statusEl = document.getElementById('projectorConnectionStatus');
+            if (window.desktopBridge) {
+                const displays = await window.desktopBridge.listDisplays();
+                const extended = displays.find(d => !d.isPrimary);
+                if (statusEl) statusEl.innerText = extended ? `Ready — ${extended.label} detected` : 'Ready — only one screen detected. Extend your display to add a second.';
+                return true;
+            }
+            if (!('getScreenDetails' in window)) {
+                if (statusEl) statusEl.innerText = '⚠ This browser (Firefox/Safari) can\'t auto-detect screens — use "Send to Projector" anyway, then drag + press F11 once.';
+                return false;
+            }
+            try {
+                cachedScreenDetailsHandle = await window.getScreenDetails();
+                cachedScreenDetailsHandle.addEventListener('screenschange', updateProjectorConnectionStatusText);
+                updateProjectorConnectionStatusText();
+                return true;
+            } catch (err) {
+                if (statusEl) statusEl.innerText = '⚠ Screen access wasn\'t granted — click "Enable Extended Display Detection" and allow it.';
+                return false;
+            }
+        }
+
+        function updateProjectorConnectionStatusText() {
+            const statusEl = document.getElementById('projectorConnectionStatus');
+            if (!statusEl) return;
+            if (!cachedScreenDetailsHandle) { statusEl.innerText = 'Not connected'; return; }
+            const extendedScreen = cachedScreenDetailsHandle.screens.find(s => !s.isPrimary);
+            if (projectorWindowRef && !projectorWindowRef.closed) {
+                statusEl.innerText = extendedScreen
+                    ? `● Live — fullscreen on your extended screen (${extendedScreen.width}x${extendedScreen.height})`
+                    : '● Live — fullscreen (only one screen detected; extend your display for a true second-screen output)';
+            } else {
+                statusEl.innerText = extendedScreen
+                    ? `Ready — extended screen detected (${extendedScreen.width}x${extendedScreen.height})`
+                    : 'Ready — but no second screen detected yet. Extend your display, then click "Detect" again.';
+            }
+        }
+
+        // ONE-CLICK PROJECTOR: shows Live fullscreen on the extended screen immediately —
+        // no manual window dragging, no visible popup on your main screen, and always mirrors
+        // Live exactly (same feed as Send Live), so it's inherently in sync.
+        async function sendToProjectorAutoDetect() {
+            const statusEl = document.getElementById('projectorConnectionStatus');
+
+            // DESKTOP APP PATH: when running inside the Electron companion app, use its native,
+            // prompt-free screen detection instead of the browser's Window Management API —
+            // more reliable, and works on every OS the desktop app runs on.
+            if (window.desktopBridge) {
+                const displays = await window.desktopBridge.listDisplays();
+                const extended = displays.find(d => !d.isPrimary) || displays[0];
+                if (!extended) { if (statusEl) statusEl.innerText = 'No displays detected.'; return; }
+                await window.desktopBridge.openOutputOnDisplay(extended.id);
+                if (statusEl) statusEl.innerText = `● Live — fullscreen on ${extended.label}`;
+                return;
+            }
+
+            if (projectorWindowRef && !projectorWindowRef.closed) {
+                // Already running — a second click disconnects it, like toggling a real projector output off
+                projectorWindowRef.close();
+                projectorWindowRef = null;
+                updateProjectorConnectionStatusText();
+                return;
+            }
+
+            let bounds = null;
+            if (cachedScreenDetailsHandle) {
+                // Permission already granted earlier — no await needed here, so the click's user-gesture
+                // is still valid by the time we call requestFullscreen() below.
+                const extendedScreen = cachedScreenDetailsHandle.screens.find(s => !s.isPrimary);
+                if (extendedScreen) bounds = { left: extendedScreen.left, top: extendedScreen.top, width: extendedScreen.width, height: extendedScreen.height };
+            }
+
+            if (!bounds) {
+                // No cached permission yet — ask now. This first click may not auto-fullscreen because of
+                // the async prompt, but every click after this one will, since the screen list is now cached.
+                const granted = await enableExtendedDisplayDetection();
+                if (granted && cachedScreenDetailsHandle) {
+                    const extendedScreen = cachedScreenDetailsHandle.screens.find(s => !s.isPrimary);
+                    if (extendedScreen) bounds = { left: extendedScreen.left, top: extendedScreen.top, width: extendedScreen.width, height: extendedScreen.height };
+                }
+            }
+
+            const features = bounds
+                ? `left=${bounds.left},top=${bounds.top},width=${bounds.width},height=${bounds.height},scrollbars=no,menubar=no,toolbar=no,location=no,status=no`
+                : "width=1280,height=720,scrollbars=no,menubar=no,toolbar=no,location=no,status=no";
+
+            projectorWindowRef = window.open("", "EBP_Direct_Projector_Output", features);
+            if (!projectorWindowRef) { alert('Pop-up blocked. Please allow pop-ups for this page, then click "Send to Projector" again.'); return; }
+            projectorWindowRef.document.open();
+            projectorWindowRef.document.write(buildOutputWindowDocument("Express Bible Presenter — Projector (fullscreen)", "directProjectorCanvas"));
+            projectorWindowRef.document.close();
+            renderIntoOutputWindow(projectorWindowRef, "directProjectorCanvas", liveState);
+
+            if (bounds) {
+                try {
+                    const rootEl = projectorWindowRef.document.documentElement;
+                    if (rootEl && rootEl.requestFullscreen) await rootEl.requestFullscreen();
+                } catch (e) {
+                    if (statusEl) statusEl.innerText = 'Opened on the extended screen, but fullscreen needs one more click — click inside that window once.';
+                }
+            } else if (statusEl) {
+                statusEl.innerText = 'Opened without a detected second screen — drag it onto your projector display, then press F11 on that window.';
+            }
+
+            projectorWindowRef.addEventListener('beforeunload', () => { projectorWindowRef = null; updateProjectorConnectionStatusText(); });
+            updateProjectorConnectionStatusText();
+        }
+
+        function syncLiveStateToRemoteChannels() {
+            // Channel 1: BroadcastChannel (Instant Offline Sync)
             const stateSync = { liveState: liveState, cachedLogoDataUrl: cachedLogoDataUrl };
             obsBroadcastChannel.postMessage({ type: "SYSTEM_SYNC_STATE", ...stateSync });
-            
-            // Channel 2 Sync: Remote WebRTC connections
+
+            // Channel 2: Remote WebRTC connections
             activeRemoteDataConnections.forEach(conn => {
                 if (conn.open) conn.send({ type: "SYSTEM_SYNC_STATE", ...stateSync });
             });
 
-            // Channel 3 Sync: LocalStorage updates (Reliable crossover inside same-machine OBS docks)
+            // Channel 3: LocalStorage updates (reliable crossover inside same-machine docks/tabs)
             localStorage.setItem('ebp_live_sync_state', JSON.stringify({ type: "SYSTEM_SYNC_STATE", ...stateSync }));
+        }
 
-            if (!obsWindowRef || obsWindowRef.closed) return;
-            const targetDoc = obsWindowRef.document;
-            const container = targetDoc.getElementById('projectorCanvas'); if (!container) return;
+        function displayPanelFallbackNotice(msg) {
+            document.getElementById('statusDot').className = "status-dot";
+            document.getElementById('statusText').innerText = "Data Void";
+            document.getElementById('verseGridDeck').innerHTML = `<div style="padding:1.5rem; text-align:center; color:var(--text-muted); font-size:0.9rem; font-style:italic;">${msg}</div>`;
+        }
 
-            // Preserve any currently-playing background video across this update, same as the main canvas
+        // ===================== MULTI-OUTPUT SYSTEM (Stage Screen / Stage Monitor / any extra screen) =====================
+        // Renders an arbitrary state object (Live or Preview) into any independent output window —
+        // this is what lets you send DIFFERENT content to DIFFERENT physical screens at the same time
+        // (e.g. Stage Screen shows Live scripture, while a Stage Monitor shows the upcoming Preview slide).
+        function renderIntoOutputWindow(win, containerId, stateObject) {
+            if (!win || win.closed) return;
+            const targetDoc = win.document;
+            const container = targetDoc.getElementById(containerId);
+            if (!container) return;
+
             const existingVideoEl = container.querySelector('.canvas-video-bg-node');
 
             const customFontFamily = document.getElementById('fontStyleOverrideSelector').value;
@@ -2267,127 +2562,243 @@
             const isTextItalic = document.getElementById('fontItalicToggleBtn').classList.contains('toggle-active');
             const customFontWeight = isTextBold ? '900' : '400';
             const customFontStyle = isTextItalic ? 'italic' : 'normal';
-            const bgOpacity = liveState.bgOpacity == null ? 100 : liveState.bgOpacity;
+            const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
-            container.className = `display-canvas ${liveState.layout} size-${liveState.fontSize}`;
+            container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize}`;
             container.style.fontFamily = customFontFamily;
-
             container.style.backgroundImage = 'none';
-            container.style.backgroundColor = liveState.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(liveState.bgColor, bgOpacity);
+            container.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
             container.style.transition = getDisplayTransitionClass() ? 'background-color 0.5s ease' : 'none';
 
-            let contentNode = liveState.text || '';
-            if (liveState.isScrolling && liveState.text) {
+            let contentNode = stateObject.text || '';
+            if (stateObject.isScrolling && stateObject.text) {
                 contentNode = `<div class="ticker-wrapper"><div class="ticker-text">${contentNode}</div></div>`;
             }
 
-            const boxBgStyleString = liveState.textBgUrl ? `background-image: url('${liveState.textBgUrl}');` : '';
-            const textHiddenClass = (liveState.timerVisible && liveState.timerSolo) ? 'display: none !important;' : '';
-            
-            // Apply Flier Only Layout on Projector Out
-            const flierOnlyTextHide = liveState.layout === 'mode-flieronly' ? 'display: none !important;' : '';
-
-            // Video-alone mode: hide text/reference/name-tag when video background overlay is turned off
-            const isVideoAloneMode = liveState.videoBgEnabled && liveState.videoBgUrl && liveState.videoOverlayMode === false;
+            const boxBgStyleString = stateObject.textBgUrl ? `background-image: url('${stateObject.textBgUrl}');` : '';
+            const textHiddenClass = (stateObject.timerVisible && stateObject.timerSolo) ? 'display: none !important;' : '';
+            const flierOnlyTextHide = stateObject.layout === 'mode-flieronly' ? 'display: none !important;' : '';
+            const isVideoAloneMode = stateObject.videoBgEnabled && stateObject.videoBgUrl && stateObject.videoOverlayMode === false;
             const videoAloneHide = isVideoAloneMode ? 'display: none !important;' : '';
-
-            // Responsive font scaling, gradient glow, and text backing panel — mirrored from the main canvas
-            // Auto-resizing disabled per request — text now stays at the selected size and wraps to fit instead
             const autoFontScale = 1;
-            const gradientGlowClass = liveState.gradientGlowText ? 'gradient-glow-active' : '';
-            const dynamicColorVar = `--dynamic-text-color: ${liveState.textColor || '#38bdf8'};`;
-            const backingPanelClass = liveState.textBackingPanel ? 'backing-panel-active' : '';
+            const gradientGlowClass = stateObject.gradientGlowText ? 'gradient-glow-active' : '';
+            const dynamicColorVar = `--dynamic-text-color: ${stateObject.textColor || '#38bdf8'};`;
+            const backingPanelClass = stateObject.textBackingPanel ? 'backing-panel-active' : '';
 
-            // Lower third name tag
-            const nameBarVisible = liveState.lowerThirdVisible && (liveState.lowerThirdName || liveState.lowerThirdRole);
+            const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
             const nameBarHtml = `
                 <div class="canvas-namebar-node ${nameBarVisible ? 'namebar-visible' : ''}" style="${videoAloneHide}">
-                    <div class="namebar-role">${liveState.lowerThirdRole || ''}</div>
-                    <div class="namebar-name" style="color: ${liveState.lowerThirdColor || '#ffffff'};">${liveState.lowerThirdName || ''}</div>
+                    <div class="namebar-role">${stateObject.lowerThirdRole || ''}</div>
+                    <div class="namebar-name" style="color: ${stateObject.lowerThirdColor || '#ffffff'};">${stateObject.lowerThirdName || ''}</div>
                 </div>
             `;
 
-            // Announcement banner — mirrored from the main canvas
-            const announcementActive = liveState.announcementVisible && liveState.announcementText;
-            const announcementInner = liveState.announcementScrolling
-                ? `<div class="ticker-wrapper"><div class="ticker-text">${liveState.announcementText || ''}</div></div>`
-                : (liveState.announcementText || '');
+            const announcementActive = stateObject.announcementVisible && stateObject.announcementText;
+            const announcementEffect = stateObject.announcementEffect || 'none';
+            const announcementInner = announcementEffect === 'scroll'
+                ? `<div class="ticker-wrapper"><div class="ticker-text">${stateObject.announcementText || ''}</div></div>`
+                : (stateObject.announcementText || '');
+            const announcementPosClass = `announcement-pos-${stateObject.announcementPosition || 'bottom'}`;
+            const announcementEffectClass = announcementEffect !== 'none' && announcementEffect !== 'scroll' ? `announcement-effect-${announcementEffect}` : '';
             const announcementHtml = `
-                <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''}" style="${videoAloneHide}">${announcementInner}</div>
+                <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''} ${announcementPosClass} ${announcementEffectClass}" style="${videoAloneHide} background: ${stateObject.announcementBgColor || '#b45309'};">${announcementInner}</div>
             `;
 
-            const projectorTransitionClass = getDisplayTransitionClass();
+            const outTransitionClass = getDisplayTransitionClass();
             container.innerHTML = `
-                <div class="text-display-box-container ${projectorTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
-                    <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${liveState.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
+                <div class="text-display-box-container ${outTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
+                    <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
-                <div class="ref-out ${projectorTransitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${liveState.refColor ? `color: ${liveState.refColor};` : ''}">${liveState.ref || ''}</div>
-                <div class="canvas-timer-node" id="projectorCanvasOverlayTimer">00:00</div>
+                <div class="ref-out ${outTransitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
+                <div class="canvas-timer-node" id="${containerId}OverlayTimer">00:00</div>
                 ${nameBarHtml}
                 ${announcementHtml}
             `;
 
-            // Text stays at the selected size and wraps; this only steps in if wrapped text would actually overflow the frame
             autoFitVerseText(container);
 
-            // Render scaled coordinates on the standalone OBS Projector
-            const innerTimer = container.querySelector('#projectorCanvasOverlayTimer');
+            const innerTimer = container.querySelector(`#${containerId}OverlayTimer`);
             if (innerTimer) {
-                innerTimer.className = `canvas-timer-node ${liveState.timerPosition} ${liveState.timerSize} ${liveState.timerVisible ? 'timer-visible' : ''}`;
-                innerTimer.innerText = liveState.timerText || "00:00";
-                
-                const originStr = liveState.timerPosition === 'timer-center' ? 'center' : (liveState.timerPosition.includes('left') ? 'left' : 'right');
+                innerTimer.className = `canvas-timer-node ${stateObject.timerPosition} ${stateObject.timerSize} ${stateObject.timerVisible ? 'timer-visible' : ''}`;
+                innerTimer.innerText = stateObject.timerText || "00:00";
+                const originStr = stateObject.timerPosition === 'timer-center' ? 'center' : (stateObject.timerPosition.includes('left') ? 'left' : 'right');
                 innerTimer.style.transformOrigin = originStr;
-                innerTimer.style.transform = `${liveState.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${liveState.timerScale || 1.0})`;
+                innerTimer.style.transform = `${stateObject.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${stateObject.timerScale || 1.0})`;
             }
 
-            if (liveState.videoBgEnabled && liveState.videoBgUrl) {
-                if (existingVideoEl && existingVideoEl.dataset.videoSrc === liveState.videoBgUrl) {
-                    existingVideoEl.className = `canvas-video-bg-node ${projectorTransitionClass}`;
-                    existingVideoEl.style.opacity = bgOpacity / 100;
-                    existingVideoEl.muted = liveState.videoOverlayMode !== false;
-                    container.insertBefore(existingVideoEl, container.firstChild);
-                } else {
-                    const videoBg = targetDoc.createElement('video');
-                    videoBg.className = `canvas-video-bg-node ${projectorTransitionClass}`;
-                    videoBg.dataset.videoSrc = liveState.videoBgUrl;
-                    videoBg.src = liveState.videoBgUrl;
-                    videoBg.autoplay = true; videoBg.loop = true; videoBg.playsInline = true; videoBg.muted = liveState.videoOverlayMode !== false;
-                    videoBg.style.opacity = bgOpacity / 100;
-                    if (projectorTransitionClass) videoBg.addEventListener('animationend', () => { videoBg.style.opacity = bgOpacity / 100; }, { once: true });
-                    container.insertBefore(videoBg, container.firstChild);
-                    const playPromise = videoBg.play();
-                    if (playPromise && playPromise.catch) playPromise.catch(() => {});
-                }
-            } else if (liveState.flierId) {
-                const asset = importedAssetsLibrary.find(a => a.id === liveState.flierId);
+            if (stateObject.videoBgEnabled && stateObject.videoBgUrl) {
+                attachSharedVideoSink(
+                    container, targetDoc, stateObject.videoBgUrl, existingVideoEl,
+                    { className: `canvas-video-bg-node ${outTransitionClass}`, opacity: bgOpacity / 100, muted: stateObject.videoOverlayMode !== false }
+                );
+            } else if (stateObject.flierId) {
+                const asset = importedAssetsLibrary.find(a => a.id === stateObject.flierId);
                 if (asset) {
-                    const flierLayer = targetDoc.createElement('div'); flierLayer.className = `flier-graphic-layer ${projectorTransitionClass}`;
+                    const flierLayer = targetDoc.createElement('div'); flierLayer.className = `flier-graphic-layer ${outTransitionClass}`;
                     flierLayer.style.backgroundImage = `url('${asset.dataUrl}')`; flierLayer.style.opacity = bgOpacity / 100; container.appendChild(flierLayer);
-                    if (projectorTransitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
+                    if (outTransitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
                 }
-            } else if (liveState.layout === 'mode-flieronly') {
+            } else if (stateObject.layout === 'mode-flieronly') {
                 const placeholderLayer = targetDoc.createElement('div');
-                placeholderLayer.className = `flier-graphic-layer ${projectorTransitionClass}`;
+                placeholderLayer.className = `flier-graphic-layer ${outTransitionClass}`;
                 placeholderLayer.innerHTML = `<div class="placeholder-text">[ Flier Only Mode - No Image Selected ]</div>`;
                 container.appendChild(placeholderLayer);
             }
 
-            if (cachedLogoDataUrl && liveState.logoPosition) {
+            if (cachedLogoDataUrl && stateObject.logoPosition) {
                 const logoImg = targetDoc.createElement('img');
-                const logoSizeValue = liveState.logoSize || 6;
-                logoImg.src = cachedLogoDataUrl; 
-                logoImg.className = `canvas-logo-node ${liveState.logoPosition}`;
+                const logoSizeValue = stateObject.logoSize || 6;
+                logoImg.src = cachedLogoDataUrl;
+                logoImg.className = `canvas-logo-node ${stateObject.logoPosition}`;
                 logoImg.style.width = `${logoSizeValue}%`;
                 logoImg.style.height = `${logoSizeValue * 1.5}%`;
                 container.appendChild(logoImg);
             }
         }
 
-        function displayPanelFallbackNotice(msg) {
-            document.getElementById('statusDot').className = "status-dot";
-            document.getElementById('statusText').innerText = "Data Void";
-            document.getElementById('verseGridDeck').innerHTML = `<div style="padding:1.5rem; text-align:center; color:var(--text-muted); font-size:0.9rem; font-style:italic;">${msg}</div>`;
+        // Output slot registry — each slot is an independent window you can drag to any monitor
+        // (HDMI, wireless-extended display, or captured by NDI Screen Capture) and assign to show
+        // either the Live output or the Preview (next-up) content, completely independent of the other.
+        let outputSlots = [];
+        try {
+            const savedSlots = JSON.parse(localStorage.getItem('ebp_output_slots_config') || 'null');
+            if (Array.isArray(savedSlots) && savedSlots.length) {
+                outputSlots = savedSlots.map(s => ({ ...s, windowRef: null }));
+            }
+        } catch (e) {}
+        if (!outputSlots.length) {
+            outputSlots = [
+                { id: 'slot_stage_screen', name: 'Stage Screen', sourceMode: 'live', windowRef: null },
+                { id: 'slot_stage_monitor', name: 'Stage Monitor', sourceMode: 'preview', windowRef: null }
+            ];
+        }
+
+        function persistOutputSlotsConfig() {
+            try {
+                const toSave = outputSlots.map(({ windowRef, ...rest }) => rest);
+                localStorage.setItem('ebp_output_slots_config', JSON.stringify(toSave));
+            } catch (e) {}
+        }
+
+        function renderOutputSlot(slot) {
+            if (!slot.windowRef || slot.windowRef.closed) return;
+            const stateObject = slot.sourceMode === 'preview' ? previewState : liveState;
+            renderIntoOutputWindow(slot.windowRef, 'outputCanvas', stateObject);
+        }
+
+        function renderAllOutputSlots() {
+            outputSlots.forEach(renderOutputSlot);
+        }
+
+        async function openOutputSlotWindow(slotId, screenDetails) {
+            const slot = outputSlots.find(s => s.id === slotId);
+            if (!slot) return;
+            if (slot.windowRef && !slot.windowRef.closed) { slot.windowRef.focus(); return; }
+
+            let windowFeatures = "width=1280,height=720,scrollbars=no,menubar=no,toolbar=no,location=no,status=no";
+            if (screenDetails) {
+                windowFeatures = `left=${screenDetails.left},top=${screenDetails.top},width=${screenDetails.width},height=${screenDetails.height},scrollbars=no,menubar=no,toolbar=no,location=no,status=no`;
+            }
+
+            const winName = 'EBP_Output_' + slot.id;
+            slot.windowRef = window.open("", winName, windowFeatures);
+            if (!slot.windowRef) { alert('Pop-up blocked. Please allow pop-ups for this page and try again.'); return; }
+            slot.windowRef.document.open();
+            slot.windowRef.document.write(buildOutputWindowDocument(`Express Bible Presenter — ${slot.name}`, 'outputCanvas'));
+            slot.windowRef.document.close();
+            renderOutputSlot(slot);
+
+            if (screenDetails) {
+                setTimeout(() => {
+                    try {
+                        slot.windowRef.moveTo(screenDetails.left, screenDetails.top);
+                        slot.windowRef.resizeTo(screenDetails.width, screenDetails.height);
+                    } catch (e) {}
+                }, 200);
+            }
+        }
+
+        function renderOutputSlotsList() {
+            const listEl = document.getElementById('outputSlotsList');
+            if (!listEl) return;
+            listEl.innerHTML = '';
+            outputSlots.forEach(slot => {
+                const row = document.createElement('div');
+                row.className = 'hotkey-row';
+                row.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:0.5rem; flex:1;">
+                        <input type="text" class="output-slot-name-input" data-id="${slot.id}" value="${slot.name}" style="padding:0.35rem 0.5rem; font-size:0.78rem; width:130px;">
+                        <select class="output-slot-source-select" data-id="${slot.id}" style="padding:0.35rem; font-size:0.75rem;">
+                            <option value="live" ${slot.sourceMode === 'live' ? 'selected' : ''}>Live Output</option>
+                            <option value="preview" ${slot.sourceMode === 'preview' ? 'selected' : ''}>Preview (Next Up)</option>
+                        </select>
+                    </div>
+                    <div class="hotkey-row-controls">
+                        <button class="btn output-slot-open-btn" data-id="${slot.id}" style="padding: 0.3rem 0.6rem; font-size: 0.7rem; background:#0369a1; border-color:#0284c7;">Open Window</button>
+                        <button class="btn output-slot-delete-btn" data-id="${slot.id}" style="padding: 0.3rem 0.6rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;">Delete</button>
+                    </div>
+                `;
+                listEl.appendChild(row);
+            });
+
+            listEl.querySelectorAll('.output-slot-name-input').forEach(input => {
+                input.addEventListener('input', (e) => {
+                    const slot = outputSlots.find(s => s.id === e.target.dataset.id);
+                    if (slot) { slot.name = e.target.value; persistOutputSlotsConfig(); }
+                });
+            });
+            listEl.querySelectorAll('.output-slot-source-select').forEach(sel => {
+                sel.addEventListener('change', (e) => {
+                    const slot = outputSlots.find(s => s.id === e.target.dataset.id);
+                    if (slot) { slot.sourceMode = e.target.value; persistOutputSlotsConfig(); renderOutputSlot(slot); }
+                });
+            });
+            listEl.querySelectorAll('.output-slot-open-btn').forEach(btn => {
+                btn.addEventListener('click', () => openOutputSlotWindow(btn.dataset.id));
+            });
+            listEl.querySelectorAll('.output-slot-delete-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const slot = outputSlots.find(s => s.id === btn.dataset.id);
+                    if (slot && slot.windowRef && !slot.windowRef.closed) slot.windowRef.close();
+                    outputSlots = outputSlots.filter(s => s.id !== btn.dataset.id);
+                    persistOutputSlotsConfig();
+                    renderOutputSlotsList();
+                });
+            });
+        }
+
+        async function detectAndListScreens() {
+            const screenPickerEl = document.getElementById('outputScreenPicker');
+            if (!screenPickerEl) return;
+            if (!('getScreenDetails' in window)) {
+                screenPickerEl.innerHTML = '<p style="font-size:0.72rem; color: var(--text-muted);">Your browser doesn\'t support automatic screen detection (this works in Chrome/Edge). Just use "Open Window" above, then drag the new window onto your other monitor and press F11 for fullscreen — works the same either way.</p>';
+                return;
+            }
+            try {
+                const screenDetails = await window.getScreenDetails();
+                screenPickerEl.innerHTML = '<label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Open a slot directly on a detected screen:</label>';
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; gap:0.4rem; flex-wrap:wrap; margin-top:0.4rem;';
+                screenDetails.screens.forEach((scr, idx) => {
+                    screenSlotButtonsForEachOutputSlot(row, scr, idx);
+                });
+                screenPickerEl.appendChild(row);
+            } catch (err) {
+                screenPickerEl.innerHTML = `<p style="font-size:0.72rem; color: var(--text-muted);">Screen access wasn't granted (${err.message || err}). You can still use "Open Window" above and drag it to the target monitor manually.</p>`;
+            }
+        }
+
+        function screenSlotButtonsForEachOutputSlot(container, scr, screenIdx) {
+            outputSlots.forEach(slot => {
+                const btn = document.createElement('button');
+                btn.className = 'btn';
+                btn.style.cssText = 'padding: 0.35rem 0.6rem; font-size: 0.72rem; background:#166534; border-color:#15803d;';
+                btn.innerText = `${slot.name} → Screen ${screenIdx + 1}${scr.isPrimary ? ' (Primary)' : ''}`;
+                btn.addEventListener('click', () => {
+                    openOutputSlotWindow(slot.id, { left: scr.left, top: scr.top, width: scr.width, height: scr.height });
+                });
+                container.appendChild(btn);
+            });
         }
 
         function copyIntegrationLink(elementId) {
@@ -2419,7 +2830,13 @@
                     if (importedData.cachedLogoBlobData) { cachedLogoDataUrl = importedData.cachedLogoBlobData; }
                     document.getElementById('versionSelector').value = importedData.version || "KJV";
                     currentBookCode = importedData.bookCode; currentBookName = importedData.bookName; currentChapter = importedData.chapter; currentVerse = importedData.verse;
-                    previewState = importedData.savedPreviewState; liveState = importedData.savedLiveState;
+                    // Single scene now: load whichever saved state has content (older exported
+                    // profiles may still have separate preview/live states) into the one shared object.
+                    const restoredState = importedData.savedLiveState && importedData.savedLiveState.text
+                        ? importedData.savedLiveState
+                        : (importedData.savedPreviewState || importedData.savedLiveState || previewState);
+                    Object.assign(previewState, restoredState);
+                    liveState = previewState;
                     document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || "";
                     fetchCurrentChapterFromAPI(); renderPreview();
                 } catch (err) { console.error("Import failure: ", err); }
