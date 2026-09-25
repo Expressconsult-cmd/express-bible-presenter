@@ -131,6 +131,7 @@
             <div class="ribbon-tabs-bar">
                 <button class="ribbon-tab-btn active" data-ribbon-tab="ribbon-text">📝 Text</button>
                 <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-background">🖼 Background</button>
+                <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-media">🎞 Media</button>
                 <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-message">💬 Message</button>
                 <div class="file-menu-wrapper">
                     <button class="ribbon-tab-btn" id="fileMenuTabBtn" type="button">📁 File ▾</button>
@@ -293,30 +294,6 @@
                     <input type="file" id="masterImagePicker" accept="image/*" class="hidden-file-input">
                 </div>
 
-                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-wrap: wrap; row-gap: 0.4rem;">
-                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Video BG:</label>
-                    <select id="savedVideosDropdown" style="padding:0.35rem; font-size:0.7rem; max-width:130px;">
-                        <option value="">-- Saved Videos --</option>
-                    </select>
-                    <button id="deleteSavedVideoBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected saved video">✕</button>
-                    <input type="file" id="videoBgPicker" accept="video/*" class="hidden-file-input">
-                    <button id="videoBgUploadBtn" class="btn" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">Upload</button>
-                    <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.75rem;"><input type="checkbox" id="videoBgEnabledCheckbox"> Enabled</label>
-                    <button id="videoBgClearBtn" class="btn" style="padding: 0.4rem 0.75rem; font-size: 0.75rem; background:#7f1d1d; border-color:#991b1b;">Clear</button>
-                    <span id="videoBgFileName" style="font-size: 0.6rem; color: var(--text-muted); max-width:140px;">No video selected (session-only).</span>
-
-                    <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="When checked: text/logo/timer show on top of the video (video is muted). When unchecked: video plays alone with sound, nothing overlays it.">
-                        <input type="checkbox" id="videoOverlayModeCheckbox" checked> Overlay text on video (video muted)
-                    </label>
-
-                    <div style="display:flex; align-items:center; gap:0.3rem; border-left: 1px solid var(--bg-accent); padding-left:0.6rem;">
-                        <button id="videoSkipBackBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Back 10s">⏪10s</button>
-                        <button id="videoPlayPauseBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Play/Pause">⏯</button>
-                        <button id="videoSkipFwdBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Forward 10s">10s⏩</button>
-                        <input type="range" id="videoSeekSlider" min="0" max="100" value="0" step="0.1" style="width:90px;" title="Seek">
-                    </div>
-                </div>
-
                 <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-direction: column; align-items: flex-start; gap:0.2rem;">
                     <label for="bgOpacitySlider" style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Opacity: <span id="bgOpacityValue">100%</span></label>
                     <input type="range" id="bgOpacitySlider" min="10" max="100" value="100" style="width:110px;">
@@ -342,6 +319,34 @@
                     <button id="logoSizeIncBtn" class="btn" style="padding: 0.15rem 0.45rem; font-size: 0.75rem;">+</button>
                     <span id="logoSizeValue" style="font-size: 0.75rem; color: var(--accent-success); font-weight: bold; min-width: 25px;">6%</span>
                 </div>
+            </div>
+
+            <!-- RIBBON PANEL: MEDIA — fliers, images & videos shown full-screen, fully separate from backgrounds -->
+            <div id="ribbon-media" class="ribbon-panel">
+                <div class="control-group">
+                    <label for="mediaLibraryDropdown">Media:</label>
+                    <select id="mediaLibraryDropdown" style="max-width: 230px;"><option value="">-- Saved Media (images & videos) --</option></select>
+                    <button id="mediaDeleteBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected media">✕</button>
+                    <input type="file" id="mediaFilePicker" accept="image/*,video/*" multiple class="hidden-file-input">
+                    <button id="mediaUploadBtn" class="btn" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">Upload Image / Video</button>
+                </div>
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <button id="mediaShowBtn" class="btn" style="background:#166534; border-color:#15803d;" title="Show the selected media full-screen on the output">▶ Show on Screen</button>
+                    <button id="mediaHideBtn" class="btn" style="background:#475569; border-color:#64748b;" title="Remove the media and go back to the text display">⏹ Hide Media</button>
+                    <label for="mediaFitSelector">Fit:</label>
+                    <select id="mediaFitSelector">
+                        <option value="contain">Fit whole media (no cropping)</option>
+                        <option value="cover">Fill screen (may crop edges)</option>
+                    </select>
+                </div>
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <button id="mediaSkipBackBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Back 10s">⏪10s</button>
+                    <button id="mediaPlayPauseBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Play/Pause">⏯</button>
+                    <button id="mediaSkipFwdBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Forward 10s">10s⏩</button>
+                    <input type="range" id="mediaSeekSlider" min="0" max="100" value="0" step="0.1" style="width:110px;" title="Seek (videos)">
+                    <span id="mediaStatus" style="font-size:0.7rem; color: var(--text-muted); max-width:230px;">Media hidden — text is showing</span>
+                </div>
+                <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">Everything you upload is kept in the dropdown for next time. Double-click any verse, song slide or search result and the screen switches back to text automatically.</span>
             </div>
 
             <!-- RIBBON PANEL: MESSAGE -->
