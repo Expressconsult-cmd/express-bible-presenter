@@ -129,7 +129,7 @@
             clearAnnouncement: { label: 'Clear Announcement', fn: () => document.getElementById('clearAnnouncementBtn').click() },
             timerStartStop: { label: 'Start / Stop Broadcast Timer', fn: () => document.getElementById('timerToggleStartBtn').click() },
             timerReset: { label: 'Reset Broadcast Timer', fn: () => document.getElementById('timerResetBtn').click() },
-            videoPlayPause: { label: 'Play / Pause Video Background', fn: () => document.getElementById('videoPlayPauseBtn').click() }
+            toggleMedia: { label: 'Show / Hide Media (flier, image, video)', fn: () => document.getElementById(previewState.displayMode === 'media' ? 'mediaHideBtn' : 'mediaShowBtn').click() }
         };
 
         function persistHotkeys() {
@@ -209,12 +209,12 @@
             flierId: "", textBgUrl: "", isScrolling: false, logoPosition: "", logoSize: 6,
             timerVisible: false, timerSolo: false, timerText: "05:00", timerPosition: "timer-top-right", timerSize: "timer-size-medium",
             timerScale: 1.0,
-            videoBgUrl: "", videoBgEnabled: false, bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
+            bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
             lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
             refColor: "", lowerThirdColor: "#ffffff",
-            videoOverlayMode: true,
             announcementText: "", announcementVisible: false, announcementEffect: "none", announcementPosition: "bottom", announcementBgColor: "#b45309",
-            bgTransparent: false
+            bgTransparent: false,
+            displayMode: "text", mediaUrl: "", mediaKind: "", mediaName: "", mediaFit: "contain"
         };
 
         // SINGLE SCENE: liveState is the SAME object as previewState (not a copy) — there's only
@@ -279,6 +279,7 @@
             fetchCurrentChapterFromAPI();
             initTimerEngine();
             initLogoSizerEngine();
+            initMediaEngine();
             renderHotkeysList();
             renderOutputSlotsList();
             document.getElementById('addOutputSlotBtn').addEventListener('click', () => {
@@ -362,6 +363,7 @@
                     selectSpecificVerseCoordinate(packet.verseNum);
                     break;
                 case "REMOTE_TRIGGER_LIVE":
+                    switchToTextDisplay();
                     sendStagedToLiveView();
                     break;
             }
@@ -387,7 +389,7 @@
             obsBroadcastChannel.postMessage(systemSyncPayload);
 
             // Triple-Redundancy Sync Channel 2: LocalStorage Events (OBS IFrame Fix)
-            localStorage.setItem('ebp_live_sync_state', JSON.stringify(systemSyncPayload));
+            try { localStorage.setItem('ebp_live_sync_state', JSON.stringify(systemSyncPayload)); } catch (e) {}
         }
 
         function updateVuMeterStatus(state) {
@@ -449,6 +451,7 @@
                 audioMicStream.getTracks().forEach(track => track.stop());
                 audioMicStream = null;
             }
+            clearTimeout(voicePendingTimer);
             resetSignalSpectrumLEDBars();
             updateVuMeterStatus('disconnected');
         }
@@ -595,7 +598,7 @@
                         row.className = "verse-row";
                         row.style.borderLeft = "3px solid var(--accent-primary)";
 
-                        let cleanText = res.text.replace(/<[^>]*>/g, '').trim();
+                        let cleanText = res.text.replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<[^>]*>/g, '').trim();
                         let highlightedHTML = cleanText;
                         try {
                             const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -892,7 +895,170 @@
             });
         }
 
-        // BROADCAST CHRONOMETER TIMER SERVICE MODULE
+        // ===================== MEDIA DISPLAY: flier / image / video (independent of backgrounds) =====================
+// Own library, saved permanently in IndexedDB (handles big videos too), shown full-screen on its own.
+let mediaLibrary = [];
+const mediaDB = (() => {
+    let dbPromise = null;
+    const open = () => dbPromise || (dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open('ebp_media_library', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('media', { keyPath: 'id' });
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    }));
+    const run = async (mode, action) => {
+        const db = await open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('media', mode);
+            const request = action(tx.objectStore('media'));
+            tx.oncomplete = () => resolve(request.result);
+            tx.onerror = tx.onabort = () => reject(tx.error);
+        });
+    };
+    return { all: () => run('readonly', st => st.getAll()), put: rec => run('readwrite', st => st.put(rec)), remove: id => run('readwrite', st => st.delete(id)) };
+})();
+
+function updateMediaPanelStatus() {
+    const el = document.getElementById('mediaStatus');
+    if (!el) return;
+    const on = previewState.displayMode === 'media' && previewState.mediaUrl;
+    el.innerText = on ? `● On screen: ${previewState.mediaName}` : 'Media hidden — text is showing';
+    el.style.color = on ? 'var(--accent-live)' : 'var(--text-muted)';
+    const showBtn = document.getElementById('mediaShowBtn');
+    if (showBtn) showBtn.classList.toggle('toggle-active', !!on);
+}
+
+// Text is chosen (double-click / arrows / Enter) -> media steps aside automatically instead of overlaying.
+function switchToTextDisplay() {
+    if (previewState.displayMode !== 'media') return;
+    previewState.displayMode = 'text';
+    const entry = masterVideoRegistry.get(previewState.mediaUrl);
+    if (entry) entry.masterEl.pause();
+    updateMediaPanelStatus();
+}
+
+function refreshMediaDropdown(selectedId) {
+    const dd = document.getElementById('mediaLibraryDropdown');
+    dd.innerHTML = '<option value="">-- Saved Media (images & videos) --</option>';
+    mediaLibrary.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id; opt.innerText = `${m.kind === 'video' ? '🎞' : '🖼'} ${m.name}`;
+        dd.appendChild(opt);
+    });
+    dd.value = selectedId || '';
+}
+
+function showMedia(id) {
+    const m = mediaLibrary.find(x => x.id === id);
+    if (!m) return;
+    Object.assign(previewState, { mediaUrl: m.url, mediaKind: m.kind, mediaName: m.name, displayMode: 'media' });
+    const entry = masterVideoRegistry.get(m.url);
+    if (m.kind === 'video' && entry) { entry.masterEl.currentTime = 0; entry.masterEl.play().catch(() => {}); }
+    updateMediaPanelStatus();
+    renderPreview();
+}
+
+// Draws the media on any canvas (main, OBS, projector, extra outputs). Videos reuse the shared master
+// stream so nothing restarts on re-render; media is letterboxed by default so nothing is cropped.
+// ===================== NO-BLINK RENDERING HELPERS =====================
+// The scene is rebuilt on every control change, and each rebuild used to replay the fade/slide/zoom
+// animation, restart the announcement effect and re-create image layers — that was the "blink".
+// Now: transitions only play when the CONTENT (text / reference / media) really changes, and image,
+// logo and announcement layers that haven't changed are carried over untouched.
+function computeSceneContentSig(st) {
+    return [st.text, st.ref, st.flierId, st.textBgUrl, st.displayMode, st.mediaUrl].join('\u241F');
+}
+
+// Detaches layers worth keeping BEFORE the canvas is rewritten, so they can be put back as-is.
+function takeReusableLayers(container) {
+    const kept = new Map();
+    container.querySelectorAll(':scope > [data-layer-key]').forEach(node => { kept.set(node.dataset.layerKey, node); node.remove(); });
+    const banner = container.querySelector(':scope > .canvas-announcement-banner');
+    if (banner) { kept.set('__banner__', banner); banner.remove(); }
+    return kept;
+}
+
+function layerFromCache(reusable, key, create) {
+    const cached = reusable && reusable.get(key);
+    if (cached) return { node: cached, reused: true };
+    const node = create();
+    node.dataset.layerKey = key;
+    return { node, reused: false };
+}
+
+// Keeps the running announcement animation (scroll / breathing / fade) alive when its content is unchanged.
+function restoreAnnouncementBanner(container, reusable, annSig) {
+    const fresh = container.querySelector(':scope > .canvas-announcement-banner');
+    if (!fresh) return;
+    const old = reusable && reusable.get('__banner__');
+    if (old && old.dataset.annSig === annSig) fresh.replaceWith(old);
+    else fresh.dataset.annSig = annSig;
+}
+
+function attachMediaLayer(container, ownerDoc, state, existingMediaEl, reusable) {
+    if (state.displayMode !== 'media' || !state.mediaUrl) return;
+    const fit = state.mediaFit === 'cover' ? 'cover' : 'contain';
+    if (state.mediaKind === 'video') {
+        const sink = attachSharedVideoSink(container, ownerDoc, state.mediaUrl, existingMediaEl,
+            { className: 'canvas-video-bg-node media-layer-node', opacity: 1, muted: false });
+        sink.style.objectFit = fit;
+    } else {
+        const { node: img } = layerFromCache(reusable, 'media:' + state.mediaUrl, () => { const el = ownerDoc.createElement('img'); el.src = state.mediaUrl; return el; });
+        img.className = 'media-layer-node'; img.style.objectFit = fit;
+        container.appendChild(img);
+    }
+}
+
+async function initMediaEngine() {
+    const $ = id => document.getElementById(id);
+    try {
+        const stored = await mediaDB.all();
+        mediaLibrary = stored.sort((a, b) => b.addedAt - a.addedAt)
+            .map(r => ({ id: r.id, name: r.name, kind: r.kind, addedAt: r.addedAt, url: URL.createObjectURL(r.blob) }));
+    } catch (err) { console.warn('Media storage unavailable — library will be session-only.', err); }
+    refreshMediaDropdown(); updateMediaPanelStatus();
+
+    $('mediaUploadBtn').addEventListener('click', () => $('mediaFilePicker').click());
+    $('mediaFilePicker').addEventListener('change', async (e) => {
+        let lastId = '';
+        for (const file of Array.from(e.target.files || [])) {
+            const kind = file.type.startsWith('video/') ? 'video' : (file.type.startsWith('image/') ? 'image' : '');
+            if (!kind) continue;
+            const rec = { id: 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), name: file.name, kind, addedAt: Date.now(), blob: file };
+            mediaLibrary.unshift({ id: rec.id, name: rec.name, kind, addedAt: rec.addedAt, url: URL.createObjectURL(file) });
+            try { await mediaDB.put(rec); } catch (err) { console.warn('Could not save media permanently (session-only):', err); }
+            lastId = rec.id;
+        }
+        e.target.value = '';
+        if (lastId) { refreshMediaDropdown(lastId); showMedia(lastId); }
+    });
+    $('mediaLibraryDropdown').addEventListener('change', (e) => { if (e.target.value) showMedia(e.target.value); });
+    $('mediaShowBtn').addEventListener('click', () => {
+        const current = mediaLibrary.find(m => m.url === previewState.mediaUrl);
+        const id = $('mediaLibraryDropdown').value || (current && current.id);
+        if (id) showMedia(id);
+    });
+    $('mediaHideBtn').addEventListener('click', () => { switchToTextDisplay(); renderPreview(); });
+    $('mediaFitSelector').addEventListener('change', (e) => { previewState.mediaFit = e.target.value; renderPreview(); });
+    $('mediaDeleteBtn').addEventListener('click', async () => {
+        const id = $('mediaLibraryDropdown').value;
+        const m = mediaLibrary.find(x => x.id === id);
+        if (!m || !confirm(`Remove "${m.name}" from the saved media library?`)) return;
+        if (previewState.mediaUrl === m.url) {
+            switchToTextDisplay();
+            Object.assign(previewState, { mediaUrl: '', mediaKind: '', mediaName: '' });
+            renderPreview();
+        }
+        const entry = masterVideoRegistry.get(m.url);
+        if (entry) { entry.masterEl.remove(); masterVideoRegistry.delete(m.url); }
+        URL.revokeObjectURL(m.url);
+        mediaLibrary = mediaLibrary.filter(x => x.id !== id);
+        try { await mediaDB.remove(id); } catch (err) {}
+        refreshMediaDropdown(); updateMediaPanelStatus();
+    });
+}
+
+// BROADCAST CHRONOMETER TIMER SERVICE MODULE
         function initTimerEngine() {
             const minInput = document.getElementById('timerMinInput');
             const secInput = document.getElementById('timerSecInput');
@@ -1101,9 +1267,8 @@
                 if (data && data.length > 0) {
                     activeChapterVerses = data.map(v => {
                         let parsedText = v.text;
-                        if (targetVersion === "KJV" || parsedText.match(/\d{3,}/)) {
-                            parsedText = parsedText.replace(/\d+/g, '').replace(/\s+/g, ' ').trim();
-                        }
+                        // Strip markup only (Strong's <S>1234</S> tags, <i>, <br>) — NEVER digits, which are real text (666, 144,000, ages, measurements)
+                        parsedText = parsedText.replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
                         return { ...v, text: parsedText };
                     });
 
@@ -1188,6 +1353,7 @@
         }
 
         function navigateSequentialOffsetVerses(direction) {
+            switchToTextDisplay();
             let targetIdx = activeChapterVerses.findIndex(v => v.verse === currentVerse);
             if (targetIdx === -1) return;
             targetIdx += direction;
@@ -1198,6 +1364,7 @@
 
         // Moves to the next/previous generated song slide and sends it straight to Live
         function navigateSongSlide(direction) {
+            switchToTextDisplay();
             const rows = Array.from(document.querySelectorAll('#lyricsSlidesDeck .verse-row'));
             if (!rows.length) return;
             let currentIdx = rows.findIndex(r => r.classList.contains('active'));
@@ -1344,10 +1511,15 @@
             // Capture any existing background video BEFORE anything rebuilds this canvas's DOM,
             // so playback (position, paused/playing state) survives unrelated text/style changes
             // instead of restarting from 0 every time.
-            const existingVideoEl = canvasElement.querySelector('.canvas-video-bg-node');
+            const existingVideoEl = canvasElement.querySelector('.canvas-video-bg-node:not(.media-layer-node)');
+            const existingMediaEl = canvasElement.querySelector('video.media-layer-node');
 
             canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize}`;
-            const transitionClass = withTransition ? getDisplayTransitionClass() : '';
+            const contentSig = computeSceneContentSig(stateObject);
+            const contentChanged = canvasElement.dataset.contentSig !== contentSig;
+            canvasElement.dataset.contentSig = contentSig;
+            const transitionClass = (withTransition && contentChanged) ? getDisplayTransitionClass() : '';
+            const reusableLayers = takeReusableLayers(canvasElement);
             canvasElement.style.transition = transitionClass ? 'background-color 0.5s ease' : 'none';
 
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
@@ -1360,7 +1532,7 @@
                 contentNode = `<div class="ticker-wrapper"><div class="ticker-text">${contentNode}</div></div>`;
             }
 
-            const boxBgStyleString = stateObject.textBgUrl ? `background-image: url('${stateObject.textBgUrl}');` : '';
+            const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
             const customFontFamily = document.getElementById('fontStyleOverrideSelector').value;
             const customShadow = document.getElementById('textShadowSelector').value;
             const isTextBold = document.getElementById('fontBoldToggleBtn').classList.contains('toggle-active');
@@ -1375,12 +1547,9 @@
             const textHiddenClass = (stateObject.timerVisible && stateObject.timerSolo) ? 'display: none !important;' : '';
 
             // Handle Flier Only Layout logic completely
-            const flierOnlyTextHide = stateObject.layout === 'mode-flieronly' ? 'display: none !important;' : '';
+            const flierOnlyTextHide = (stateObject.layout === 'mode-flieronly' || (stateObject.displayMode === 'media' && stateObject.mediaUrl)) ? 'display: none !important;' : '';
 
-            // Video-alone mode: when a video background is enabled and overlay is turned off,
-            // hide text/reference/name-tag so the video plays without anything on top of it
-            const isVideoAloneMode = stateObject.videoBgEnabled && stateObject.videoBgUrl && stateObject.videoOverlayMode === false;
-            const videoAloneHide = isVideoAloneMode ? 'display: none !important;' : '';
+            const videoAloneHide = ''; // Video BG feature removed — Media tab now covers full-screen video
 
             // Responsive font scaling — bigger/smaller automatically based on how much text is on the slide
             // Auto-resizing disabled per request — text now stays at the selected size and wraps to fit instead
@@ -1424,6 +1593,8 @@
                 ${announcementHtml}
             `;
 
+            restoreAnnouncementBanner(canvasElement, reusableLayers, announcementHtml.trim());
+
             // Text stays at the selected size and wraps; this only steps in if wrapped text would actually overflow the frame
             autoFitVerseText(canvasElement);
             const innerTimer = canvasElement.querySelector('.canvas-timer-node');
@@ -1433,20 +1604,17 @@
                 innerTimer.style.transform = `${stateObject.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${stateObject.timerScale || 1.0})`;
             }
 
-            // Video background takes precedence over a static flier image when enabled
-            if (stateObject.videoBgEnabled && stateObject.videoBgUrl) {
-                attachSharedVideoSink(
-                    canvasElement, document, stateObject.videoBgUrl, existingVideoEl,
-                    { className: `canvas-video-bg-node ${transitionClass}`, opacity: bgOpacity / 100, muted: stateObject.videoOverlayMode !== false }
-                );
-            } else if (stateObject.flierId) {
+            if (stateObject.flierId) {
                 const targetAsset = assetLibraryContext.find(a => a.id === stateObject.flierId);
                 if (targetAsset) {
-                    const flierLayer = document.createElement('div');
-                    flierLayer.className = `flier-graphic-layer ${transitionClass}`;
-                    flierLayer.style.backgroundImage = `url('${targetAsset.dataUrl}')`;
+                    const { node: flierLayer, reused: flierReused } = layerFromCache(reusableLayers, 'flier:' + targetAsset.id, () => {
+                        const el = document.createElement('div');
+                        el.style.backgroundImage = `url('${targetAsset.dataUrl}')`;
+                        return el;
+                    });
+                    flierLayer.className = `flier-graphic-layer ${flierReused ? '' : transitionClass}`;
                     flierLayer.style.opacity = bgOpacity / 100;
-                    if (transitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
+                    if (!flierReused && transitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
                     canvasElement.appendChild(flierLayer);
                 }
             } else if (stateObject.layout === 'mode-flieronly') {
@@ -1457,10 +1625,11 @@
                 canvasElement.appendChild(placeholderLayer);
             }
 
+            attachMediaLayer(canvasElement, document, stateObject, existingMediaEl, reusableLayers);
+
             if (logoBlobContext && stateObject.logoPosition) {
-                const logoImg = document.createElement('img');
+                const { node: logoImg } = layerFromCache(reusableLayers, 'logo:' + logoBlobContext.length + ':' + logoBlobContext.slice(-32), () => { const el = document.createElement('img'); el.src = logoBlobContext; return el; });
                 const logoSizeValue = stateObject.logoSize || 6;
-                logoImg.src = logoBlobContext; 
                 logoImg.className = `canvas-logo-node ${stateObject.logoPosition}`;
                 logoImg.style.width = `${logoSizeValue}%`;
                 logoImg.style.height = `${logoSizeValue * 1.5}%`;
@@ -1475,7 +1644,8 @@
         // until you unfreeze — so a live congregation/stage screen can't be disrupted mid-edit.
         function renderPreview() {
             const liveCanvas = document.getElementById('liveCanvas');
-            if (!liveState.text && !liveState.flierId && !liveState.textBgUrl) {
+            if (!liveState.text && !liveState.flierId && !liveState.textBgUrl && !(liveState.displayMode === 'media' && liveState.mediaUrl)) {
+                delete liveCanvas.dataset.contentSig;
                 liveCanvas.innerHTML = `
                     <div class="placeholder-text">Awaiting Selection...</div>
                     <div class="canvas-timer-node" id="liveTimerOverlay">00:00</div>
@@ -1504,9 +1674,7 @@
         // shown NOW — so if video-alone mode or Flier Only was hiding all text, switch that off
         // automatically instead of silently hiding the very thing they just double-clicked.
         function forceTextVisibleOnDoubleClick() {
-            if (previewState.videoBgEnabled && previewState.videoOverlayMode === false) {
-                previewState.videoOverlayMode = true; // back to overlay mode so text shows over the video
-            }
+            switchToTextDisplay();
             if (previewState.layout === 'mode-flieronly') {
                 previewState.layout = 'mode-center';
             }
@@ -1528,9 +1696,11 @@
             recognition = new SpeechRecognition();
             recognition.continuous = true; 
             recognition.interimResults = true; 
+            recognition.maxAlternatives = 3; // extra guesses make spoken numbers/commands far more reliable
             recognition.lang = 'en-US';
 
             recognition.onstart = () => {
+                voiceCommitted = { utterance: -1, sig: '' }; // fresh recognition session -> fresh utterance numbering
                 isListening = true; 
                 const btn = document.getElementById('listeningBtn');
                 btn.innerText = "Disable Live Voice"; 
@@ -1563,10 +1733,21 @@
                     btn.classList.remove('listening');
                     document.getElementById('statusDot').className = "status-dot";
                     document.getElementById('statusText').innerText = "Microphone access denied.";
-                    document.getElementById('transcriptTrack').innerText = "Microphone access was denied. Please allow it once, then click Enable Live Voice again.";
+                    document.getElementById('transcriptTrack').innerText = "Microphone access was denied. Allow it in the browser's address-bar prompt, then click Enable Live Voice again. (Inside OBS / vMix embedded browsers this is always denied — use a normal Chrome/Edge tab.)";
                     disableAudioVolumeDetection();
                 }
-                // 'no-speech' / 'aborted' / 'network' are transient — onend will already handle a clean, debounced restart.
+                if (event.error === 'network' || event.error === 'audio-capture') {
+                    // Retrying can't fix these — stop, and say exactly why.
+                    isListening = false;
+                    const failBtn = document.getElementById('listeningBtn');
+                    failBtn.innerText = "Enable Live Voice"; failBtn.classList.remove('listening');
+                    document.getElementById('statusText').innerText = "Live Voice stopped";
+                    document.getElementById('transcriptTrack').innerText = event.error === 'network'
+                        ? "Can't reach the speech service. Live Voice needs internet and a normal Chrome/Edge browser (OBS / vMix embedded browsers can't reach it)."
+                        : "No microphone found, or another app is using it. Check the Audio Source in Settings.";
+                    disableAudioVolumeDetection();
+                }
+                // 'no-speech' / 'aborted' are transient — onend will already handle a clean, debounced restart.
             };
 
             recognition.onresult = (event) => {
@@ -1581,86 +1762,249 @@
                     }
                 }
 
-                document.getElementById('transcriptTrack').innerHTML = `<span class="active-words">${finalTranscriptText}</span> <span style="opacity:0.4">${interimTranscriptText}</span>`;
-                let speechStreamInput = (finalTranscriptText + " " + interimTranscriptText).trim();
-                
-                if (speechStreamInput) {
-                    processContinuousSpeechForScriptures(speechStreamInput);
-                }
+                document.getElementById('transcriptTrack').innerHTML = `<span class="active-words">${finalTranscriptText}</span> <span style="opacity:0.4">${interimTranscriptText}</span>${voiceActionNote ? ` <span class="voice-action-note" style="color: var(--accent-success); font-weight:800;">▶ ${voiceActionNote}</span>` : ''}`;
+                processContinuousSpeechForScriptures(event);
             };
         }
 
-        function processContinuousSpeechForScriptures(speechText) {
-            let normalizedInputStr = speechText.toLowerCase()
-                .replace(/\bchapter\b/g, ' ')
-                .replace(/\bverse\b/g, ' ')
-                .replace(/\bcolons?\b/g, ' ')
-                .replace(/\bto\b/g, ' ')
-                .replace(/\band\b/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
+// ===================== VOICE ENGINE: Bible-text focus + spoken commands =====================
+// Listens for (1) scripture references ("turn to John 3:16", "Psalm one hundred and nineteen verse 105"),
+// (2) commands ("next verse", "previous verse", "go to verse 10", "open verse ten", "next chapter"), and
+// (3) the preacher reading the loaded chapter aloud — the display follows the verse being read.
+// Whatever it recognises is shown immediately as text (any media on screen steps aside).
+let voiceActionNote = '';
+let voiceCommitted = { utterance: -1, sig: '' };
+let voicePendingTimer = null;
+let voiceBusy = false;
 
-            const wordToNumberDictionary = {
-                "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5",
-                "1st": "1", "2nd": "2", "3rd": "3",
-                "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
-                "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10"
-            };
+const VOICE_NUM = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, eleven:11, twelve:12,
+    thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19,
+    twenty:20, thirty:30, forty:40, fourty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90 };
 
-            Object.keys(wordToNumberDictionary).forEach(word => {
-                normalizedInputStr = normalizedInputStr.replace(new RegExp(`\\b${word}\\b`, 'g'), wordToNumberDictionary[word]);
-            });
+// "one hundred and nineteen" -> 119, "twenty three" -> 23, "three sixteen" -> "3 16"
+function voiceWordsToDigits(text) {
+    const tk = text.trim().split(/\s+/);
+    const kindOf = w => w === 'hundred' ? 'h' : (w in VOICE_NUM ? (VOICE_NUM[w] >= 20 ? 't' : (VOICE_NUM[w] >= 10 ? 'n' : 'o')) : '');
+    const allowed = { '': ['o', 'n', 't'], o: ['h'], n: [], t: ['o'], h: ['o', 'n', 't'] };
+    const out = [];
+    for (let i = 0; i < tk.length;) {
+        const startKind = kindOf(tk[i]);
+        if (!startKind || startKind === 'h') { out.push(tk[i]); i++; continue; }
+        let cur = 0, last = '', j = i;
+        while (j < tk.length) {
+            let w = tk[j];
+            if (w === 'and' && last === 'h' && j + 1 < tk.length && kindOf(tk[j + 1]) && kindOf(tk[j + 1]) !== 'h') { j++; continue; }
+            const kk = kindOf(w);
+            if (!kk || !allowed[last].includes(kk)) break;
+            if (kk === 'h') cur = (cur || 1) * 100; else cur += VOICE_NUM[w];
+            last = kk; j++;
+        }
+        out.push(String(cur)); i = j;
+    }
+    return out.join(' ');
+}
 
-            const contextMarkers = ["open the bible to", "open to", "turn with me to", "read", "book of", "look at"];
-            contextMarkers.forEach(marker => {
-                if (normalizedInputStr.includes(marker)) {
-                    normalizedInputStr = normalizedInputStr.substring(normalizedInputStr.indexOf(marker) + marker.length).trim();
-                }
-            });
+function voiceNormalize(raw) {
+    let s = ' ' + String(raw || '').toLowerCase() + ' ';
+    s = s.replace(/(\d+)\s*:\s*(\d+)/g, '$1 verse $2');                                   // 3:16 -> 3 verse 16
+    s = s.replace(/[^a-z0-9\s]/g, ' ');                                                    // speech engines add commas/periods
+    s = s.replace(/\b(first|1st)\s+verse\b/g, ' verse 1 ').replace(/\b(second|2nd)\s+verse\b/g, ' verse 2 ')
+         .replace(/\b(third|3rd)\s+verse\b/g, ' verse 3 ');
+    s = s.replace(/\b(\d+)(st|nd|rd|th)\b/g, '$1');                                        // 10th -> 10, 1st john -> 1 john
+    s = s.replace(/\bfirst\b/g, '1').replace(/\bsecond\b/g, '2').replace(/\bthird\b/g, '3');
+    s = voiceWordsToDigits(s.replace(/\s+/g, ' '));
+    return (' ' + s.replace(/\s+/g, ' ').trim() + ' ').trim();
+}
 
-            const parsingPatternQuery = /(?:(?:(\d)\s*)?([a-zA-Z]+))\s*(\d+)(?:\s*[:\s]\s*(\d+))?/;
-            const patternMatchResult = normalizedInputStr.match(parsingPatternQuery);
+// Whole-word book names only (no loose prefixes) so ordinary words can never trigger a jump.
+const VOICE_BOOK_ALIASES = (() => {
+    const list = Object.entries(bookBollsIdMap).map(([name, id]) => [name, id]);
+    list.push(["revelations", 66], ["songs of solomon", 22], ["psalm of david", 19]);
+    return list.sort((a, b) => b[0].length - a[0].length).map(([name, id]) => ({
+        id, re: new RegExp(`(?:^|\\s)${name.replace(/\s+/g, '\\s+')}\\s+(?:chapter\\s+)?(\\d{1,3})(?:\\s+(?:verses?|vers|ver|vs)\\s*(?:number\\s+)?(\\d{1,3})|\\s+(\\d{1,3}))?(?=\\s|$)`, 'g')
+    }));
+})();
 
-            if (patternMatchResult) {
-                let leadingBookNumber = patternMatchResult[1] ? patternMatchResult[1].trim() : "";
-                let spokenBookLetters = patternMatchResult[2].trim();
-                let chapterNumber = parseInt(patternMatchResult[3]);
-                let verseNumber = patternMatchResult[4] ? parseInt(patternMatchResult[4]) : 1;
+const VOICE_FILLER = '(?:(?:ok|okay|and|now|then|please|alright|all right|so)\\s+)*';
+const VOICE_PATTERNS = {
+    chapter: /(?:^|\s)chapter\s+(\d{1,3})(?:\s+(?:verses?|vers|ver|vs)\s*(?:number\s+)?(\d{1,3}))?(?=\s|$)/g,
+    verse: /(?:^|\s)(?:verses?|vers|ver|vs)\s+(?:number\s+)?(\d{1,3})(?=\s|$)/g,
+    nextStrong: [/(?:^|\s)(?:next|following)\s+(?:verse|slide|line)(?=\s|$)/g, /(?:^|\s)(?:go|move|skip|jump|turn|proceed)\s+(?:on\s+)?(?:to\s+)?(?:the\s+)?next(?=\s|$)/g],
+    prevStrong: [/(?:^|\s)(?:previous|prior|preceding)\s+(?:verse|slide|line|one)(?=\s|$)/g, /(?:^|\s)(?:go|move|skip|jump|turn|step)\s+back\s+(?:one\s+|1\s+)?(?:verse|slide|line)(?=\s|$)/g, /(?:^|\s)back\s+(?:one\s+|1\s+)?verse(?=\s|$)/g, /(?:^|\s)verse\s+before(?=\s|$)/g],
+    nextChapter: /(?:^|\s)next\s+chapter(?=\s|$)/g,
+    prevChapter: /(?:^|\s)(?:previous|prior|last)\s+chapter(?=\s|$)/g,
+    nextWeak: new RegExp(`^${VOICE_FILLER}(?:next|next one|next please|forward)(?:\\s+please)?$`),
+    prevWeak: new RegExp(`^${VOICE_FILLER}(?:previous|previous one|previous please|back|back one|go back|go back one|back please)(?:\\s+please)?$`)
+};
 
-                let reconstructedBookStr = (leadingBookNumber ? leadingBookNumber + " " : "") + spokenBookLetters;
-                let resolvedSystemBollsId = null;
-                let resolvedSystemBookName = null;
+function voiceCollect(re, s, pri, build, cands) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(s)) !== null) {
+        cands.push({ start: m.index, end: m.index + m[0].length, pri, intent: build(m) });
+        if (m[0].length === 0) re.lastIndex++;
+    }
+}
 
-                for (let [fullName, id] of Object.entries(bookBollsIdMap)) {
-                    let code = bookAbbrevMap[fullName] || "";
-                    if (fullName === reconstructedBookStr || fullName.startsWith(reconstructedBookStr) || code.toLowerCase() === reconstructedBookStr) {
-                        resolvedSystemBollsId = id;
-                        resolvedSystemBookName = fullName.charAt(0).toUpperCase() + fullName.slice(1);
-                        break;
-                    }
-                }
+// Finds a verse of the LOADED chapter that the preacher is reading aloud (4+ matching words in a row).
+function voiceFindQuotedVerse(rawText) {
+    if (!activeChapterVerses.length) return null;
+    const spoken = String(rawText || '').toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean).slice(-10);
+    if (spoken.length < 5) return null;
+    const tri = words => { const set = new Set(); for (let i = 0; i + 2 < words.length; i++) set.add(words[i] + ' ' + words[i + 1] + ' ' + words[i + 2]); return set; };
+    const spokenTri = Array.from(tri(spoken));
+    let best = null;
+    activeChapterVerses.forEach(v => {
+        const verseTri = tri(String(v.text || '').toLowerCase().replace(/<[^>]*>/g, ' ').replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean));
+        let score = 0;
+        spokenTri.forEach(t => { if (verseTri.has(t)) score++; });
+        if (score < 2) return;
+        const distance = Math.abs(v.verse - currentVerse);
+        if (!best || score > best.score || (score === best.score && distance < best.distance)) best = { verse: v.verse, score, distance };
+    });
+    return best && best.verse !== currentVerse ? best.verse : null;
+}
 
-                if (resolvedSystemBollsId) {
-                    let calculatedReferenceKey = `${resolvedSystemBollsId} ${chapterNumber}:${verseNumber}`;
-                    
-                    if (calculatedReferenceKey !== lastAutoMatchedRef) {
-                        lastAutoMatchedRef = calculatedReferenceKey;
+function interpretSpeech(raw, allowQuote) {
+    const s = voiceNormalize(raw);
+    if (!s) return null;
+    const cands = [];
 
-                        const isNewChapterRequired = (resolvedSystemBollsId !== currentBookCode || chapterNumber !== currentChapter);
-                        currentBookCode = resolvedSystemBollsId;
-                        currentBookName = resolvedSystemBookName;
-                        currentChapter = chapterNumber;
-                        currentVerse = verseNumber;
+    VOICE_BOOK_ALIASES.forEach(({ id, re }) => voiceCollect(re, s, 5, m => ({
+        type: 'ref', bookId: id, chapter: parseInt(m[1], 10), verse: parseInt(m[2] || m[3] || '1', 10), delay: 450
+    }), cands));
+    voiceCollect(VOICE_PATTERNS.chapter, s, 4, m => ({ type: 'chapter', chapter: parseInt(m[1], 10), verse: parseInt(m[2] || '1', 10), delay: 450 }), cands);
+    voiceCollect(VOICE_PATTERNS.nextChapter, s, 4, () => ({ type: 'chapterStep', dir: 1, delay: 350 }), cands);
+    voiceCollect(VOICE_PATTERNS.prevChapter, s, 4, () => ({ type: 'chapterStep', dir: -1, delay: 350 }), cands);
+    voiceCollect(VOICE_PATTERNS.verse, s, 3, m => ({ type: 'verse', verse: parseInt(m[1], 10), delay: 350 }), cands);
+    VOICE_PATTERNS.nextStrong.forEach(re => voiceCollect(re, s, 2, () => ({ type: 'next', dir: 1, delay: 0 }), cands));
+    VOICE_PATTERNS.prevStrong.forEach(re => voiceCollect(re, s, 2, () => ({ type: 'prev', dir: -1, delay: 0 }), cands));
+    if (VOICE_PATTERNS.nextWeak.test(s)) cands.push({ start: 0, end: s.length, pri: 1, intent: { type: 'next', dir: 1, delay: 550 } });
+    if (VOICE_PATTERNS.prevWeak.test(s)) cands.push({ start: 0, end: s.length, pri: 1, intent: { type: 'prev', dir: -1, delay: 550 } });
 
-                        if (isNewChapterRequired) {
-                            fetchCurrentChapterFromAPI();
-                        } else {
-                            selectSpecificVerseCoordinate(currentVerse);
-                        }
-                    }
-                }
+    if (cands.length) {
+        // The most recently spoken instruction wins; on a tie the more specific pattern (book+chapter+verse) wins.
+        cands.sort((a, b) => (b.end - a.end) || (b.pri - a.pri) || (a.start - b.start));
+        const intent = cands[0].intent;
+        intent.sig = [intent.type, intent.bookId || '', intent.chapter || '', intent.verse || '', intent.dir || ''].join(':');
+        return intent;
+    }
+    if (allowQuote) {
+        const quotedVerse = voiceFindQuotedVerse(raw);
+        if (quotedVerse) return { type: 'quote', verse: quotedVerse, sig: 'quote:' + quotedVerse, delay: 500 };
+    }
+    return null;
+}
+
+function setVoiceNote(message) {
+    voiceActionNote = message;
+    const track = document.getElementById('transcriptTrack');
+    if (!track) return;
+    const old = track.querySelector('.voice-action-note');
+    if (old) old.remove();
+    track.insertAdjacentHTML('beforeend', ` <span class="voice-action-note" style="color: var(--accent-success); font-weight:800;">▶ ${message}</span>`);
+}
+
+// Loads a chapter (if needed) and shows the verse. If the chapter doesn't exist (bad chapter number heard),
+// everything is restored exactly as it was instead of leaving the verse list empty.
+async function voiceGoToChapterVerse(bookCode, bookName, chapter, verse) {
+    const isSameChapter = (bookCode === currentBookCode && chapter === currentChapter);
+    if (!isSameChapter) {
+        const previous = { code: currentBookCode, name: currentBookName, chapter: currentChapter, verse: currentVerse, verses: activeChapterVerses };
+        currentBookCode = bookCode; currentBookName = bookName; currentChapter = chapter; currentVerse = verse;
+        await fetchCurrentChapterFromAPI();
+        if (activeChapterVerses === previous.verses) {
+            currentBookCode = previous.code; currentBookName = previous.name; currentChapter = previous.chapter; currentVerse = previous.verse;
+            renderVerseNavigationPanel();
+            document.getElementById('statusDot').className = "status-dot active";
+            document.getElementById('statusText').innerText = "System Connected";
+            return false;
+        }
+    }
+    if (!activeChapterVerses.some(v => v.verse === verse)) verse = activeChapterVerses[0] ? activeChapterVerses[0].verse : verse;
+    forceTextVisibleOnDoubleClick();
+    selectSpecificVerseCoordinate(verse);
+    sendStagedToLiveView();
+    return true;
+}
+
+async function executeVoiceIntent(intent) {
+    if (voiceBusy) return;
+    voiceBusy = true;
+    try {
+        switch (intent.type) {
+            case 'next':
+            case 'prev': {
+                forceTextVisibleOnDoubleClick();
+                const songTabActive = document.getElementById('lyrics-tab') && document.getElementById('lyrics-tab').classList.contains('active');
+                if (songTabActive) { navigateSongSlide(intent.dir); }
+                else { navigateSequentialOffsetVerses(intent.dir); sendStagedToLiveView(); }
+                setVoiceNote(intent.dir > 0 ? 'Next verse' : 'Previous verse');
+                break;
+            }
+            case 'verse': {
+                if (!activeChapterVerses.some(v => v.verse === intent.verse)) { setVoiceNote(`Verse ${intent.verse} isn't in ${currentBookName} ${currentChapter}`); break; }
+                forceTextVisibleOnDoubleClick();
+                selectSpecificVerseCoordinate(intent.verse);
+                sendStagedToLiveView();
+                setVoiceNote(`Verse ${intent.verse}`);
+                break;
+            }
+            case 'quote': {
+                forceTextVisibleOnDoubleClick();
+                selectSpecificVerseCoordinate(intent.verse);
+                sendStagedToLiveView();
+                setVoiceNote(`Following your reading — verse ${intent.verse}`);
+                break;
+            }
+            case 'chapter':
+            case 'chapterStep': {
+                const targetChapter = intent.type === 'chapter' ? intent.chapter : currentChapter + intent.dir;
+                if (targetChapter < 1) break;
+                const ok = await voiceGoToChapterVerse(currentBookCode, currentBookName, targetChapter, intent.verse || 1);
+                setVoiceNote(ok ? `${currentBookName} ${currentChapter}` : `Chapter ${targetChapter} not found in ${currentBookName}`);
+                break;
+            }
+            case 'ref': {
+                const bookName = cleanBookNames[intent.bookId];
+                const ok = await voiceGoToChapterVerse(intent.bookId, bookName, intent.chapter, intent.verse);
+                setVoiceNote(ok ? `${bookName} ${currentChapter}:${currentVerse}` : `${bookName} ${intent.chapter} not found`);
+                break;
             }
         }
+    } catch (err) {
+        console.warn('Voice command failed:', err);
+    } finally {
+        voiceBusy = false;
+    }
+}
+
+// Called for every speech-recognition update. Clear commands run instantly; anything that could still be
+// changing mid-sentence (verse numbers, bare "next") waits a beat until the words settle — then fires once.
+function processContinuousSpeechForScriptures(event) {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const alternatives = [];
+        for (let a = 0; a < result.length; a++) alternatives.push(result[a].transcript);
+
+        let intent = null;
+        for (const alt of alternatives) { intent = interpretSpeech(alt, false); if (intent) break; }   // commands & references: try every guess
+        if (!intent && alternatives.length && !songTabIsActive()) intent = interpretSpeech(alternatives[0], true); // then: is the preacher reading the chapter?
+
+        clearTimeout(voicePendingTimer);
+        if (!intent) continue;
+        if (voiceCommitted.utterance === i && voiceCommitted.sig === intent.sig) continue; // this sentence already acted on
+
+        const run = () => { voiceCommitted = { utterance: i, sig: intent.sig }; executeVoiceIntent(intent); };
+        if (result.isFinal || intent.delay <= 0) run();
+        else voicePendingTimer = setTimeout(run, intent.delay);
+    }
+}
+
+function songTabIsActive() {
+    const tab = document.getElementById('lyrics-tab');
+    return !!(tab && tab.classList.contains('active'));
+}
 
         async function parseAndRouteInput(rawText, forceFetch = false) {
             if (!rawText.trim()) return;
@@ -1812,6 +2156,7 @@
                 const match = executionDisplayHistory[idx];
                 if(match) {
                     previewState = { ...match };
+                    liveState = previewState; // keep the single-scene link intact
                     document.getElementById('layoutSelector').value = previewState.layout;
                     document.getElementById('fontSizeInput').value = previewState.fontSize;
                     document.getElementById('bgColorPicker').value = previewState.bgColor;
@@ -1854,7 +2199,6 @@
                     document.getElementById('textBackingPanelCheckbox').checked = !!previewState.textBackingPanel;
                     document.getElementById('gradientGlowTextCheckbox').checked = !!previewState.gradientGlowText;
                 } else if (tabId === 'ribbon-background') {
-                    document.getElementById('videoBgEnabledCheckbox').checked = !!previewState.videoBgEnabled;
                     document.getElementById('bgOpacitySlider').value = previewState.bgOpacity == null ? 100 : previewState.bgOpacity;
                     document.getElementById('bgOpacityValue').innerText = `${previewState.bgOpacity == null ? 100 : previewState.bgOpacity}%`;
                 } else if (tabId === 'ribbon-message') {
@@ -1879,7 +2223,7 @@
                 if (!confirm('Start a new session? Unsaved changes to the current scene will be lost.')) return;
                 Object.assign(previewState, {
                     text: "", ref: "", flierId: "", textBgUrl: "", isScrolling: false,
-                    videoBgUrl: "", videoBgEnabled: false, announcementText: "", announcementVisible: false,
+                    announcementText: "", announcementVisible: false,
                     lowerThirdName: "", lowerThirdVisible: false
                 });
                 document.getElementById('fileMenuDropdown').classList.remove('open');
@@ -1981,130 +2325,29 @@
                 applySidebarPosition(sidebarPositionSelectorEl.value);
             });
 
-            // Background & Text Effects: Video Background
-            // NOTE: saved videos live only in this session's memory (not localStorage) — video files
-            // are too large to persist safely in browser storage, so this list resets on page reload.
-            let savedVideosLibrary = [];
-
-            function refreshSavedVideosDropdown() {
-                const dd = document.getElementById('savedVideosDropdown');
-                const currentVal = dd.value;
-                dd.innerHTML = '<option value="">-- Saved Videos --</option>';
-                savedVideosLibrary.forEach(v => {
-                    const opt = document.createElement('option');
-                    opt.value = v.id;
-                    opt.innerText = v.name;
-                    dd.appendChild(opt);
-                });
-                dd.value = currentVal;
-            }
-
-            document.getElementById('videoBgUploadBtn').addEventListener('click', () => {
-                document.getElementById('videoBgPicker').click();
-            });
-            document.getElementById('videoBgPicker').addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const objectUrl = URL.createObjectURL(file);
-                const videoEntry = { id: 'video_' + Date.now(), name: file.name, url: objectUrl };
-                savedVideosLibrary.push(videoEntry);
-                refreshSavedVideosDropdown();
-                document.getElementById('savedVideosDropdown').value = videoEntry.id;
-                previewState.videoBgUrl = objectUrl;
-                previewState.videoBgEnabled = true;
-                document.getElementById('videoBgEnabledCheckbox').checked = true;
-                document.getElementById('videoBgFileName').innerText = `Loaded: ${file.name} (session-only)`;
-                renderPreview();
-            });
-            document.getElementById('savedVideosDropdown').addEventListener('change', (e) => {
-                const id = e.target.value;
-                if (!id) return;
-                const entry = savedVideosLibrary.find(v => v.id === id);
-                if (!entry) return;
-                previewState.videoBgUrl = entry.url;
-                previewState.videoBgEnabled = true;
-                document.getElementById('videoBgEnabledCheckbox').checked = true;
-                document.getElementById('videoBgFileName').innerText = `Loaded: ${entry.name} (session-only)`;
-                renderPreview();
-            });
-            document.getElementById('deleteSavedVideoBtn').addEventListener('click', () => {
-                const dd = document.getElementById('savedVideosDropdown');
-                const id = dd.value;
-                if (!id) return;
-                const entry = savedVideosLibrary.find(v => v.id === id);
-                if (!entry) return;
-                if (!confirm(`Remove "${entry.name}" from this session's saved videos?`)) return;
-                if (previewState.videoBgUrl === entry.url) {
-                    previewState.videoBgUrl = "";
-                    previewState.videoBgEnabled = false;
-                    document.getElementById('videoBgEnabledCheckbox').checked = false;
-                    document.getElementById('videoBgFileName').innerText = "No video selected (session-only).";
-                    renderPreview();
-                }
-                URL.revokeObjectURL(entry.url);
-                savedVideosLibrary = savedVideosLibrary.filter(v => v.id !== id);
-                refreshSavedVideosDropdown();
-            });
-            document.getElementById('videoBgEnabledCheckbox').addEventListener('change', (e) => {
-                previewState.videoBgEnabled = e.target.checked;
-                renderPreview();
-            });
-            document.getElementById('videoBgClearBtn').addEventListener('click', () => {
-                previewState.videoBgUrl = "";
-                previewState.videoBgEnabled = false;
-                document.getElementById('videoBgEnabledCheckbox').checked = false;
-                document.getElementById('videoBgFileName').innerText = "No video selected. Videos are session-only and won't be saved to exports.";
-                document.getElementById('videoBgPicker').value = "";
-                document.getElementById('savedVideosDropdown').value = "";
-                renderPreview();
-            });
-
-            // Video overlay mode: overlay (text on top, video muted) vs video-alone (video plays with sound, nothing overlays it)
-            document.getElementById('videoOverlayModeCheckbox').addEventListener('change', (e) => {
-                previewState.videoOverlayMode = e.target.checked;
-                renderPreview();
-            });
-
-            // Video transport controls — act on every place the same video is currently rendered
-            // (Preview, Live, the OBS standalone canvas, and the OBS/NDI popup window) at once.
-            // Finds the master video currently backing whichever background video is active
-            // (Preview's, or Live's if Preview has none) — controlling this one element
-            // instantly reflects everywhere, since every sink just mirrors its live stream.
+            // Media transport controls — act on every place the current media video is rendered
+            // (Preview, Live, the OBS standalone canvas, and the OBS/NDI popup window) at once,
+            // since every sink just mirrors the one shared master stream.
             function getActiveMasterVideoEl() {
-                const url = (previewState.videoBgEnabled && previewState.videoBgUrl) ? previewState.videoBgUrl
-                    : (liveState.videoBgEnabled && liveState.videoBgUrl) ? liveState.videoBgUrl : null;
+                const url = (previewState.displayMode === 'media' && previewState.mediaKind === 'video' && previewState.mediaUrl) ? previewState.mediaUrl
+                    : (liveState.displayMode === 'media' && liveState.mediaKind === 'video' && liveState.mediaUrl) ? liveState.mediaUrl : null;
                 if (!url) return null;
                 const entry = masterVideoRegistry.get(url);
                 return entry ? entry.masterEl : null;
             }
-            document.getElementById('videoPlayPauseBtn').addEventListener('click', () => {
-                const master = getActiveMasterVideoEl();
-                if (!master) return;
-                if (master.paused) master.play(); else master.pause();
-            });
-            document.getElementById('videoSkipBackBtn').addEventListener('click', () => {
-                const master = getActiveMasterVideoEl();
-                if (!master) return;
-                master.currentTime = Math.max(0, master.currentTime - 10);
-            });
-            document.getElementById('videoSkipFwdBtn').addEventListener('click', () => {
-                const master = getActiveMasterVideoEl();
-                if (!master) return;
-                master.currentTime = Math.min(master.duration || master.currentTime + 10, master.currentTime + 10);
-            });
-            document.getElementById('videoSeekSlider').addEventListener('input', (e) => {
-                const master = getActiveMasterVideoEl();
-                if (!master || !master.duration) return;
-                master.currentTime = (parseFloat(e.target.value) / 100) * master.duration;
-            });
-            // Keep the seek slider in sync with whichever video is currently playing
+            // Keep the media seek slider in sync with whichever media video is currently playing
             setInterval(() => {
                 const master = getActiveMasterVideoEl();
-                const slider = document.getElementById('videoSeekSlider');
                 if (master && master.duration) {
-                    slider.value = (master.currentTime / master.duration) * 100;
+                    document.getElementById('mediaSeekSlider').value = (master.currentTime / master.duration) * 100;
                 }
             }, 500);
+
+            const activeMediaMaster = () => getActiveMasterVideoEl();
+            document.getElementById('mediaPlayPauseBtn').addEventListener('click', () => { const m = activeMediaMaster(); if (m) { if (m.paused) m.play(); else m.pause(); } });
+            document.getElementById('mediaSkipBackBtn').addEventListener('click', () => { const m = activeMediaMaster(); if (m) m.currentTime = Math.max(0, m.currentTime - 10); });
+            document.getElementById('mediaSkipFwdBtn').addEventListener('click', () => { const m = activeMediaMaster(); if (m) m.currentTime = Math.min(m.duration || m.currentTime + 10, m.currentTime + 10); });
+            document.getElementById('mediaSeekSlider').addEventListener('input', (e) => { const m = activeMediaMaster(); if (m && m.duration) m.currentTime = (parseFloat(e.target.value) / 100) * m.duration; });
 
             // Background & Text Effects: Opacity
             document.getElementById('bgOpacitySlider').addEventListener('input', (e) => {
@@ -2214,6 +2457,7 @@
                         document.getElementById('statusText').innerText = "Syncing Cloud...";
                         
                         parseAndRouteInput(inputVal, false).then(() => {
+                            switchToTextDisplay();
                             sendStagedToLiveView();
                         }).catch(err => {
                             console.error("Keyboard routing error:", err);
@@ -2314,14 +2558,28 @@
             });
         }
 
+        // Explains WHY voice can't work here, instead of failing silently.
+        function getVoiceEnvironmentProblem() {
+            if (!(window.SpeechRecognition || window.webkitSpeechRecognition) || !recognition) {
+                return "Live Voice needs the Web Speech API, which only Chrome and Edge provide. Embedded browsers (OBS docks / Browser Sources, vMix web pages) don't include it — run Live Voice in a normal Chrome/Edge tab and use OBS only for the output.";
+            }
+            if (!window.isSecureContext) {
+                return "The microphone is blocked on insecure pages. Open this app from https:// or http://localhost (an http://192.168.x.x address does not count), then try again.";
+            }
+            if (!navigator.onLine) return "Live Voice uses the browser's online speech service — you appear to be offline.";
+            return '';
+        }
+
         function toggleListening() {
             const btn = document.getElementById('listeningBtn');
             const dot = document.getElementById('statusDot');
             const txt = document.getElementById('statusText');
             const track = document.getElementById('transcriptTrack');
 
-            if (!isListening) { 
-                try { recognition.start(); } catch(e) {} 
+            if (!isListening) {
+                const voiceProblem = getVoiceEnvironmentProblem();
+                if (voiceProblem) { track.innerText = voiceProblem; txt.innerText = "Live Voice unavailable"; return; }
+                try { recognition.start(); } catch(e) { track.innerText = 'Could not start voice recognition: ' + (e.message || e); }
             } else { 
                 isListening = false; 
                 recognition.stop(); 
@@ -2335,6 +2593,11 @@
         }
 
         // Shared HTML template used by every independent output window (OBS popup + any Stage/Monitor outputs)
+        function bindOutputResizeRefit(win, containerId, getState) {
+            let timer = null;
+            win.addEventListener('resize', () => { clearTimeout(timer); timer = setTimeout(() => renderIntoOutputWindow(win, containerId, getState()), 120); });
+        }
+
         function buildOutputWindowDocument(titleText, canvasElementId) {
             return `
                 <!DOCTYPE html>
@@ -2344,12 +2607,13 @@
                     <style>
                         body, html { margin:0; padding:0; overflow:hidden; background-color:#000; width:100%; height:100%; display:flex; justify-content:center; align-items:center; }
                         :root { --canvas-font-size: 34px; --accent-primary: #38bdf8; }
-                        .display-canvas { width:100%; aspect-ratio: 2752 / 1536; max-width: 100%; max-height: 100%; display:flex; flex-direction:column; box-sizing:border-box; background-size:cover; background-position:center; background-repeat:no-repeat; position:relative; overflow:hidden; font-family: system-ui, sans-serif; color:#ffffff; container-type: inline-size; margin: auto; box-shadow: 0 0 60px rgba(0,0,0,0.9); }
+                        .display-canvas { width:min(100vw, calc(100vh * 2752 / 1536)); aspect-ratio: 2752 / 1536; display:flex; flex-direction:column; box-sizing:border-box; background-size:cover; background-position:center; background-repeat:no-repeat; position:relative; overflow:hidden; font-family: system-ui, sans-serif; color:#ffffff; container-type: inline-size; margin: auto; box-shadow: 0 0 60px rgba(0,0,0,0.9); }
                         .display-canvas.size-small { --canvas-font-size: 3.2cqw; }
                         .display-canvas.size-medium { --canvas-font-size: 4.8cqw; }
                         .display-canvas.size-large { --canvas-font-size: 6.4cqw; }
                         .display-canvas.size-xlarge { --canvas-font-size: 8.2cqw; }
-                        .text-display-box-container { padding: 1.5% 4%; border-radius:8px; background-size:cover; background-position:center; background-repeat:no-repeat; z-index:4; width:100%; box-sizing:border-box; display: flex; align-items: center; justify-content: center; max-height: 92%; }
+                        .text-display-box-container { position: relative; padding: 1.5% 4%; border-radius:8px; z-index:4; width:100%; box-sizing:border-box; display: flex; align-items: center; justify-content: center; max-height: 92%; }
+                        .text-display-box-container::before { content:''; position:absolute; inset:0; border-radius:inherit; background-image: var(--box-bg-image, none); background-size:cover; background-position:center; background-repeat:no-repeat; opacity: var(--box-bg-opacity, 1); z-index:-1; }
                         .ticker-wrapper { width: 100%; overflow: hidden; white-space: nowrap; box-sizing: border-box; }
                         .ticker-text { display: inline-block; padding-left: 100%; animation: translateMarquee 20s linear infinite; }
                         @keyframes translateMarquee { 0% { transform: translate3d(0, 0, 0); } 100% { transform: translate3d(-100%, 0, 0); } }
@@ -2380,7 +2644,9 @@
                         .ebp-transition-fade { animation: ebpTransFade 0.85s ease both; }
                         .ebp-transition-slide { animation: ebpTransSlide 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; }
                         .ebp-transition-zoom { animation: ebpTransZoom 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
-                        .canvas-video-bg-node { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; pointer-events: none; }
+                        .canvas-video-bg-node { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 1; pointer-events: none; }
+                        .media-layer-node { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; background: #000; pointer-events: none; object-fit: contain; }
+                        .canvas-video-bg-node.media-layer-node { z-index: 3; }
                         .text-out.gradient-glow-active { background: linear-gradient(180deg, #ffffff 0%, var(--dynamic-text-color, #38bdf8) 58%, var(--dynamic-text-color, #38bdf8) 100%); -webkit-background-clip: text; background-clip: text; color: transparent !important; filter: drop-shadow(0 0 10px var(--dynamic-text-color, #38bdf8)) drop-shadow(0 0 22px var(--dynamic-text-color, #38bdf8)); }
                         .text-display-box-container.backing-panel-active { background-color: rgba(2, 6, 15, 0.55) !important; backdrop-filter: blur(2px); }
                         .canvas-namebar-node { position: absolute; left: 4%; bottom: 5%; z-index: 7; display: none; align-items: stretch; border-radius: 6px; overflow: hidden; box-shadow: 0 8px 22px rgba(0,0,0,0.6); }
@@ -2400,6 +2666,20 @@
                 </head>
                 <body>
                     <div id="${canvasElementId}" class="display-canvas mode-center size-medium"></div>
+                    <div id="fsHint" style="position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:99999; background:rgba(0,0,0,0.78); color:#fff; font:600 14px system-ui,sans-serif; padding:8px 18px; border-radius:20px; cursor:pointer; transition:opacity 0.5s;">⛶ Click anywhere (or press F) for fullscreen · Esc to exit</div>
+                    <script>
+                    (function () {
+                        var hint = document.getElementById('fsHint'), idleTimer = null;
+                        function enter() { var el = document.documentElement; if (!document.fullscreenElement && el.requestFullscreen) { el.requestFullscreen().catch(function () {}); } }
+                        function sync() { var on = !!document.fullscreenElement; hint.style.opacity = on ? '0' : '1'; document.body.style.cursor = on ? 'none' : 'default'; }
+                        document.addEventListener('fullscreenchange', sync);
+                        document.addEventListener('click', enter);
+                        document.addEventListener('dblclick', function () { if (document.fullscreenElement) document.exitFullscreen(); });
+                        document.addEventListener('keydown', function (e) { if (e.key === 'f' || e.key === 'F' || e.key === 'F11') { e.preventDefault(); if (document.fullscreenElement) document.exitFullscreen(); else enter(); } });
+                        document.addEventListener('mousemove', function () { if (!document.fullscreenElement) return; document.body.style.cursor = 'default'; clearTimeout(idleTimer); idleTimer = setTimeout(function () { document.body.style.cursor = 'none'; }, 2000); });
+                        setTimeout(function () { if (!document.fullscreenElement) hint.style.opacity = '0'; }, 9000);
+                    })();
+                    </script>
                 </body>
                 </html>
             `;
@@ -2508,16 +2788,17 @@
             projectorWindowRef.document.write(buildOutputWindowDocument("Express Bible Presenter — Projector (fullscreen)", "directProjectorCanvas"));
             projectorWindowRef.document.close();
             renderIntoOutputWindow(projectorWindowRef, "directProjectorCanvas", liveState);
+            bindOutputResizeRefit(projectorWindowRef, "directProjectorCanvas", () => liveState);
 
             if (bounds) {
                 try {
                     const rootEl = projectorWindowRef.document.documentElement;
                     if (rootEl && rootEl.requestFullscreen) await rootEl.requestFullscreen();
                 } catch (e) {
-                    if (statusEl) statusEl.innerText = 'Opened on the extended screen, but fullscreen needs one more click — click inside that window once.';
+                    if (statusEl) statusEl.innerText = 'Projector opened on the extended screen — click once inside it (or press F) to go true fullscreen (hides the browser bar).';
                 }
             } else if (statusEl) {
-                statusEl.innerText = 'Opened without a detected second screen — drag it onto your projector display, then press F11 on that window.';
+                statusEl.innerText = 'Opened without a detected second screen — drag it onto your projector display, then click once inside it (or press F) for fullscreen.';
             }
 
             projectorWindowRef.addEventListener('beforeunload', () => { projectorWindowRef = null; updateProjectorConnectionStatusText(); });
@@ -2535,7 +2816,7 @@
             });
 
             // Channel 3: LocalStorage updates (reliable crossover inside same-machine docks/tabs)
-            localStorage.setItem('ebp_live_sync_state', JSON.stringify({ type: "SYSTEM_SYNC_STATE", ...stateSync }));
+            try { localStorage.setItem('ebp_live_sync_state', JSON.stringify({ type: "SYSTEM_SYNC_STATE", ...stateSync })); } catch (e) {}
         }
 
         function displayPanelFallbackNotice(msg) {
@@ -2554,7 +2835,8 @@
             const container = targetDoc.getElementById(containerId);
             if (!container) return;
 
-            const existingVideoEl = container.querySelector('.canvas-video-bg-node');
+            const existingVideoEl = container.querySelector('.canvas-video-bg-node:not(.media-layer-node)');
+            const existingMediaEl = container.querySelector('video.media-layer-node');
 
             const customFontFamily = document.getElementById('fontStyleOverrideSelector').value;
             const customShadow = document.getElementById('textShadowSelector').value;
@@ -2568,18 +2850,22 @@
             container.style.fontFamily = customFontFamily;
             container.style.backgroundImage = 'none';
             container.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
-            container.style.transition = getDisplayTransitionClass() ? 'background-color 0.5s ease' : 'none';
+            const outContentSig = computeSceneContentSig(stateObject);
+            const outContentChanged = container.dataset.contentSig !== outContentSig;
+            container.dataset.contentSig = outContentSig;
+            const outTransitionClass = outContentChanged ? getDisplayTransitionClass() : '';
+            const outReusableLayers = takeReusableLayers(container);
+            container.style.transition = outTransitionClass ? 'background-color 0.5s ease' : 'none';
 
             let contentNode = stateObject.text || '';
             if (stateObject.isScrolling && stateObject.text) {
                 contentNode = `<div class="ticker-wrapper"><div class="ticker-text">${contentNode}</div></div>`;
             }
 
-            const boxBgStyleString = stateObject.textBgUrl ? `background-image: url('${stateObject.textBgUrl}');` : '';
+            const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
             const textHiddenClass = (stateObject.timerVisible && stateObject.timerSolo) ? 'display: none !important;' : '';
-            const flierOnlyTextHide = stateObject.layout === 'mode-flieronly' ? 'display: none !important;' : '';
-            const isVideoAloneMode = stateObject.videoBgEnabled && stateObject.videoBgUrl && stateObject.videoOverlayMode === false;
-            const videoAloneHide = isVideoAloneMode ? 'display: none !important;' : '';
+            const flierOnlyTextHide = (stateObject.layout === 'mode-flieronly' || (stateObject.displayMode === 'media' && stateObject.mediaUrl)) ? 'display: none !important;' : '';
+            const videoAloneHide = ''; // Video BG feature removed — Media tab now covers full-screen video
             const autoFontScale = 1;
             const gradientGlowClass = stateObject.gradientGlowText ? 'gradient-glow-active' : '';
             const dynamicColorVar = `--dynamic-text-color: ${stateObject.textColor || '#38bdf8'};`;
@@ -2604,7 +2890,6 @@
                 <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''} ${announcementPosClass} ${announcementEffectClass}" style="${videoAloneHide} background: ${stateObject.announcementBgColor || '#b45309'};">${announcementInner}</div>
             `;
 
-            const outTransitionClass = getDisplayTransitionClass();
             container.innerHTML = `
                 <div class="text-display-box-container ${outTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
@@ -2614,6 +2899,8 @@
                 ${nameBarHtml}
                 ${announcementHtml}
             `;
+
+            restoreAnnouncementBanner(container, outReusableLayers, announcementHtml.trim());
 
             autoFitVerseText(container);
 
@@ -2626,17 +2913,18 @@
                 innerTimer.style.transform = `${stateObject.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${stateObject.timerScale || 1.0})`;
             }
 
-            if (stateObject.videoBgEnabled && stateObject.videoBgUrl) {
-                attachSharedVideoSink(
-                    container, targetDoc, stateObject.videoBgUrl, existingVideoEl,
-                    { className: `canvas-video-bg-node ${outTransitionClass}`, opacity: bgOpacity / 100, muted: stateObject.videoOverlayMode !== false }
-                );
-            } else if (stateObject.flierId) {
+            if (stateObject.flierId) {
                 const asset = importedAssetsLibrary.find(a => a.id === stateObject.flierId);
                 if (asset) {
-                    const flierLayer = targetDoc.createElement('div'); flierLayer.className = `flier-graphic-layer ${outTransitionClass}`;
-                    flierLayer.style.backgroundImage = `url('${asset.dataUrl}')`; flierLayer.style.opacity = bgOpacity / 100; container.appendChild(flierLayer);
-                    if (outTransitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
+                    const { node: flierLayer, reused: flierReused } = layerFromCache(outReusableLayers, 'flier:' + asset.id, () => {
+                        const el = targetDoc.createElement('div');
+                        el.style.backgroundImage = `url('${asset.dataUrl}')`;
+                        return el;
+                    });
+                    flierLayer.className = `flier-graphic-layer ${flierReused ? '' : outTransitionClass}`;
+                    flierLayer.style.opacity = bgOpacity / 100;
+                    container.appendChild(flierLayer);
+                    if (!flierReused && outTransitionClass) flierLayer.addEventListener('animationend', () => { flierLayer.style.opacity = bgOpacity / 100; }, { once: true });
                 }
             } else if (stateObject.layout === 'mode-flieronly') {
                 const placeholderLayer = targetDoc.createElement('div');
@@ -2645,10 +2933,11 @@
                 container.appendChild(placeholderLayer);
             }
 
+            attachMediaLayer(container, targetDoc, stateObject, existingMediaEl, outReusableLayers);
+
             if (cachedLogoDataUrl && stateObject.logoPosition) {
-                const logoImg = targetDoc.createElement('img');
+                const { node: logoImg } = layerFromCache(outReusableLayers, 'logo:' + cachedLogoDataUrl.length + ':' + cachedLogoDataUrl.slice(-32), () => { const el = targetDoc.createElement('img'); el.src = cachedLogoDataUrl; return el; });
                 const logoSizeValue = stateObject.logoSize || 6;
-                logoImg.src = cachedLogoDataUrl;
                 logoImg.className = `canvas-logo-node ${stateObject.logoPosition}`;
                 logoImg.style.width = `${logoSizeValue}%`;
                 logoImg.style.height = `${logoSizeValue * 1.5}%`;
@@ -2707,6 +2996,7 @@
             slot.windowRef.document.write(buildOutputWindowDocument(`Express Bible Presenter — ${slot.name}`, 'outputCanvas'));
             slot.windowRef.document.close();
             renderOutputSlot(slot);
+            bindOutputResizeRefit(slot.windowRef, 'outputCanvas', () => slot.sourceMode === 'preview' ? previewState : liveState);
 
             if (screenDetails) {
                 setTimeout(() => {
