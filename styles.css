@@ -438,6 +438,8 @@
 
         .canvas-container {
             flex: 1;
+            min-height: 0;
+            container-type: size; /* lets the canvas fit BOTH width and height while keeping its exact ratio */
             display: flex;
             align-items: center;
             justify-content: center;
@@ -448,9 +450,8 @@
 
         /* --- CANVAS RATIO LOCKED TO UPLOADED REFERENCE IMAGE (2752 x 1536) --- */
         .display-canvas {
-            width: 100%;
+            width: min(100cqw, calc(100cqh * 2752 / 1536)); /* largest box of the fixed ratio that fits the frame */
             aspect-ratio: 2752 / 1536;
-            max-height: 100%;
             border-radius: 8px;
             display: flex;
             flex-direction: column;
@@ -473,11 +474,9 @@
         .display-canvas.size-xlarge { --canvas-font-size: 8.2cqw; }
 
         .text-display-box-container {
+            position: relative;
             padding: 1.5% 4%;
             border-radius: 8px;
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
             z-index: 4;
             width: 100%;
             box-sizing: border-box;
@@ -485,6 +484,20 @@
             align-items: center;
             justify-content: center;
             max-height: 92%;
+        }
+        /* Box-fill background image lives on its own layer behind the text, so the Opacity slider
+           fades only the image — never the text, logo or timer sitting on top of it. */
+        .text-display-box-container::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background-image: var(--box-bg-image, none);
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            opacity: var(--box-bg-opacity, 1);
+            z-index: -1;
         }
 
         .ticker-wrapper { width: 100%; overflow: hidden; white-space: nowrap; box-sizing: border-box; }
@@ -600,10 +613,13 @@
             inset: 0;
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            object-fit: contain; /* whole video always visible, centred, never cropped */
             z-index: 1;
             pointer-events: none;
         }
+        /* MEDIA DISPLAY LAYER (flier / image / video shown on its own) */
+        .media-layer-node { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; background: #000; pointer-events: none; object-fit: contain; }
+        .canvas-video-bg-node.media-layer-node { z-index: 3; }
 
         /* GRADIENT + GLOW TEXT STYLE */
         .text-out.gradient-glow-active {
