@@ -2669,13 +2669,24 @@ function songTabIsActive() {
                     <div id="fsHint" style="position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:99999; background:rgba(0,0,0,0.78); color:#fff; font:600 14px system-ui,sans-serif; padding:8px 18px; border-radius:20px; cursor:pointer; transition:opacity 0.5s;">⛶ Click anywhere (or press F) for fullscreen · Esc to exit</div>
                     <script>
                     (function () {
-                        var hint = document.getElementById('fsHint'), idleTimer = null;
+                        var hint = document.getElementById('fsHint'), idleTimer = null, userExited = false, resumeTimer = null;
                         function enter() { var el = document.documentElement; if (!document.fullscreenElement && el.requestFullscreen) { el.requestFullscreen().catch(function () {}); } }
-                        function sync() { var on = !!document.fullscreenElement; hint.style.opacity = on ? '0' : '1'; document.body.style.cursor = on ? 'none' : 'default'; }
+                        function sync() {
+                            var on = !!document.fullscreenElement;
+                            hint.style.opacity = on ? '0' : '1';
+                            document.body.style.cursor = on ? 'none' : 'default';
+                            // A file/print dialog opened elsewhere in the browser forces every fullscreen window
+                            // to drop out — not something this app or an Esc key press did. Snap straight back.
+                            if (!on && !userExited) { clearTimeout(resumeTimer); resumeTimer = setTimeout(enter, 60); }
+                            userExited = false;
+                        }
                         document.addEventListener('fullscreenchange', sync);
                         document.addEventListener('click', enter);
-                        document.addEventListener('dblclick', function () { if (document.fullscreenElement) document.exitFullscreen(); });
-                        document.addEventListener('keydown', function (e) { if (e.key === 'f' || e.key === 'F' || e.key === 'F11') { e.preventDefault(); if (document.fullscreenElement) document.exitFullscreen(); else enter(); } });
+                        document.addEventListener('dblclick', function () { if (document.fullscreenElement) { userExited = true; document.exitFullscreen(); } });
+                        document.addEventListener('keydown', function (e) {
+                            if (e.key === 'Escape') { userExited = true; return; }
+                            if (e.key === 'f' || e.key === 'F' || e.key === 'F11') { e.preventDefault(); if (document.fullscreenElement) { userExited = true; document.exitFullscreen(); } else enter(); }
+                        });
                         document.addEventListener('mousemove', function () { if (!document.fullscreenElement) return; document.body.style.cursor = 'default'; clearTimeout(idleTimer); idleTimer = setTimeout(function () { document.body.style.cursor = 'none'; }, 2000); });
                         setTimeout(function () { if (!document.fullscreenElement) hint.style.opacity = '0'; }, 9000);
                     })();
