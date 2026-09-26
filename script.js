@@ -214,7 +214,8 @@
             refColor: "", lowerThirdColor: "#ffffff",
             announcementText: "", announcementVisible: false, announcementEffect: "none", announcementPosition: "bottom", announcementBgColor: "#b45309",
             bgTransparent: false,
-            displayMode: "text", mediaUrl: "", mediaKind: "", mediaName: "", mediaFit: "contain"
+            displayMode: "text", mediaUrl: "", mediaKind: "", mediaName: "", mediaFit: "contain",
+            mediaPdfId: "", mediaPdfPage: 1, mediaPdfPageCount: 0
         };
 
         // SINGLE SCENE: liveState is the SAME object as previewState (not a copy) — there's only
@@ -922,27 +923,48 @@ function updateMediaPanelStatus() {
     const el = document.getElementById('mediaStatus');
     if (!el) return;
     const on = previewState.displayMode === 'media' && previewState.mediaUrl;
-    el.innerText = on ? `● On screen: ${previewState.mediaName}` : 'Media hidden — text is showing';
+    const isPagedKind = previewState.mediaKind === 'pdf' || previewState.mediaKind === 'pptx';
+    const pageSuffix = (on && isPagedKind && previewState.mediaPdfPageCount) ? ` (page ${previewState.mediaPdfPage}/${previewState.mediaPdfPageCount})` : '';
+    el.innerText = on ? `● On screen: ${previewState.mediaName}${pageSuffix}` : 'Media hidden — text is showing';
     el.style.color = on ? 'var(--accent-live)' : 'var(--text-muted)';
     const showBtn = document.getElementById('mediaShowBtn');
     if (showBtn) showBtn.classList.toggle('toggle-active', !!on);
+    updateMediaPdfNavUI();
+}
+
+// Shows/hides the Prev/Next Page controls and keeps the "Page X / Y" indicator current — only relevant while a PDF is on screen.
+function updateMediaPdfNavUI() {
+    const wrap = document.getElementById('mediaPdfNavGroup');
+    const indicator = document.getElementById('mediaPdfPageIndicator');
+    if (!wrap || !indicator) return;
+    const showingPaged = previewState.displayMode === 'media' && (previewState.mediaKind === 'pdf' || previewState.mediaKind === 'pptx') && previewState.mediaPdfPageCount > 0;
+    wrap.style.display = showingPaged ? '' : 'none';
+    if (showingPaged) indicator.innerText = `${previewState.mediaKind === 'pptx' ? 'Slide' : 'Page'} ${previewState.mediaPdfPage} / ${previewState.mediaPdfPageCount}`;
 }
 
 // Text is chosen (double-click / arrows / Enter) -> media steps aside automatically instead of overlaying.
+// Stops every OTHER video's sound the instant new media is selected — pass the URL that should keep
+// playing (or nothing to stop everything). Without this, every video ever shown kept looping and
+// playing its audio in the background forever, since only "Hide Media" used to pause anything.
+function pauseAllMasterVideosExcept(exceptUrl) {
+    masterVideoRegistry.forEach((entry, url) => {
+        if (url !== exceptUrl && !entry.masterEl.paused) entry.masterEl.pause();
+    });
+}
+
 function switchToTextDisplay() {
     if (previewState.displayMode !== 'media') return;
     previewState.displayMode = 'text';
-    const entry = masterVideoRegistry.get(previewState.mediaUrl);
-    if (entry) entry.masterEl.pause();
+    pauseAllMasterVideosExcept(null);
     updateMediaPanelStatus();
 }
 
 function refreshMediaDropdown(selectedId) {
     const dd = document.getElementById('mediaLibraryDropdown');
-    dd.innerHTML = '<option value="">-- Saved Media (images & videos) --</option>';
+    dd.innerHTML = '<option value="">-- Saved Media (images, videos &amp; PDFs) --</option>';
     mediaLibrary.forEach(m => {
         const opt = document.createElement('option');
-        opt.value = m.id; opt.innerText = `${m.kind === 'video' ? '🎞' : '🖼'} ${m.name}`;
+        opt.value = m.id; opt.innerText = `${m.kind === 'video' ? '🎞' : (m.kind === 'pdf' ? '📄' : (m.kind === 'pptx' ? '📽' : '🖼'))} ${m.name}`;
         dd.appendChild(opt);
     });
     dd.value = selectedId || '';
@@ -951,11 +973,223 @@ function refreshMediaDropdown(selectedId) {
 function showMedia(id) {
     const m = mediaLibrary.find(x => x.id === id);
     if (!m) return;
-    Object.assign(previewState, { mediaUrl: m.url, mediaKind: m.kind, mediaName: m.name, displayMode: 'media' });
+    if (m.kind === 'pdf') { showPdfMediaPage(m, 1); return; }
+    if (m.kind === 'pptx') { showPptxMediaPage(m, 1); return; }
+    pauseAllMasterVideosExcept(m.kind === 'video' ? m.url : null);
+    Object.assign(previewState, { mediaUrl: m.url, mediaKind: m.kind, mediaName: m.name, displayMode: 'media', mediaPdfId: '', mediaPdfPage: 1, mediaPdfPageCount: 0 });
     const entry = masterVideoRegistry.get(m.url);
     if (m.kind === 'video' && entry) { entry.masterEl.currentTime = 0; entry.masterEl.play().catch(() => {}); }
     updateMediaPanelStatus();
     renderPreview();
+}
+
+// ===================== PDF MEDIA (presentations, slide handouts, etc. — shown page by page) =====================
+// Each page is rendered to an image once (cached per document) and displayed exactly like an
+// uploaded image, so it reuses all the existing display/fit/output-window plumbing untouched.
+const pdfDocCache = new Map(); // media library id -> loaded pdf.js document
+let currentPagedMediaObjectUrl = ''; // the previous PDF page / PPTX slide's rendered image, revoked once replaced
+
+async function getPdfDocument(m) {
+    let doc = pdfDocCache.get(m.id);
+    if (doc) return doc;
+    if (typeof pdfjsLib === 'undefined') throw new Error('PDF reader library did not load (no internet access?).');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    const arrayBuffer = await (await fetch(m.url)).arrayBuffer();
+    doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    pdfDocCache.set(m.id, doc);
+    return doc;
+}
+
+async function renderPdfPageToObjectUrl(doc, pageNum) {
+    const page = await doc.getPage(pageNum);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = Math.max(0.5, Math.min(1600 / baseViewport.width, 1600 / baseViewport.height, 3));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    return await new Promise(resolve => canvas.toBlob(blob => resolve(URL.createObjectURL(blob)), 'image/jpeg', 0.92));
+}
+
+async function showPdfMediaPage(m, pageNum) {
+    pauseAllMasterVideosExcept(null);
+    const statusEl = document.getElementById('mediaStatus');
+    if (statusEl) { statusEl.innerText = `Loading "${m.name}"…`; statusEl.style.color = 'var(--text-muted)'; }
+    try {
+        const doc = await getPdfDocument(m);
+        const clampedPage = Math.max(1, Math.min(pageNum, doc.numPages));
+        const pageUrl = await renderPdfPageToObjectUrl(doc, clampedPage);
+        const oldUrl = currentPagedMediaObjectUrl;
+        currentPagedMediaObjectUrl = pageUrl;
+        Object.assign(previewState, {
+            mediaUrl: pageUrl, mediaKind: 'pdf', mediaName: m.name, displayMode: 'media',
+            mediaPdfId: m.id, mediaPdfPage: clampedPage, mediaPdfPageCount: doc.numPages
+        });
+        updateMediaPanelStatus();
+        renderPreview();
+        if (oldUrl && oldUrl !== pageUrl) URL.revokeObjectURL(oldUrl);
+    } catch (err) {
+        console.warn('Could not display PDF page:', err);
+        if (statusEl) { statusEl.innerText = `Could not open "${m.name}" — ${err.message || err}`; statusEl.style.color = '#f87171'; }
+    }
+}
+
+function navigatePagedMedia(direction) {
+    if (!previewState.mediaPdfId) return;
+    const m = mediaLibrary.find(x => x.id === previewState.mediaPdfId);
+    if (!m) return;
+    if (m.kind === 'pdf') showPdfMediaPage(m, previewState.mediaPdfPage + direction);
+    else if (m.kind === 'pptx') showPptxMediaPage(m, previewState.mediaPdfPage + direction);
+}
+
+// ===================== PPTX MEDIA (PowerPoint files — shown slide by slide) =====================
+// A .pptx is a ZIP of XML files. There is no lightweight, reliable way to reproduce PowerPoint's exact
+// visual design in the browser (fonts, master-slide themes, animations), so each slide is rendered as a
+// clean, readable image built from that slide's own text and embedded pictures — same page-by-page
+// display as PDF, just not a pixel-perfect copy of the original design. For an exact visual match,
+// exporting the deck to PDF from PowerPoint first (File > Export > Create PDF) and uploading that works
+// through the PDF path above instead.
+const pptxDocCache = new Map(); // media library id -> { zip, slidePaths, numPages, cx, cy }
+
+async function getPptxDocument(m) {
+    let doc = pptxDocCache.get(m.id);
+    if (doc) return doc;
+    if (typeof JSZip === 'undefined') throw new Error('Presentation reader library did not load (no internet access?).');
+    const arrayBuffer = await (await fetch(m.url)).arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const slidePaths = Object.keys(zip.files)
+        .filter(p => /^ppt\/slides\/slide\d+\.xml$/.test(p))
+        .sort((a, b) => parseInt(a.match(/(\d+)/)[1], 10) - parseInt(b.match(/(\d+)/)[1], 10));
+    if (!slidePaths.length) throw new Error('No slides found in this file.');
+    let cx = 12192000, cy = 6858000; // EMUs — standard 16:9 fallback if presentation.xml can't be read
+    try {
+        const presXml = await zip.file('ppt/presentation.xml').async('string');
+        const sizeMatch = presXml.match(/<p:sldSz[^>]*cx="(\d+)"[^>]*cy="(\d+)"/);
+        if (sizeMatch) { cx = parseInt(sizeMatch[1], 10); cy = parseInt(sizeMatch[2], 10); }
+    } catch (e) {}
+    doc = { zip, slidePaths, numPages: slidePaths.length, cx, cy };
+    pptxDocCache.set(m.id, doc);
+    return doc;
+}
+
+function decodeXmlEntities(text) {
+    return text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+}
+
+// Text grouped by shape (<p:sp>), so a title and body still read as separate blocks even though their
+// exact on-slide position/styling isn't reproduced.
+function extractSlideTextBlocks(slideXmlText) {
+    const blocks = [];
+    const shapeRegex = /<p:sp>[\s\S]*?<\/p:sp>/g;
+    let shapeMatch;
+    while ((shapeMatch = shapeRegex.exec(slideXmlText)) !== null) {
+        const paraRegex = /<a:p>([\s\S]*?)<\/a:p>/g;
+        const lines = [];
+        let paraMatch;
+        while ((paraMatch = paraRegex.exec(shapeMatch[0])) !== null) {
+            const runRegex = /<a:t>([\s\S]*?)<\/a:t>/g;
+            let runMatch, text = '';
+            while ((runMatch = runRegex.exec(paraMatch[1])) !== null) text += runMatch[1];
+            lines.push(decodeXmlEntities(text));
+        }
+        const joined = lines.join('\n').trim();
+        if (joined) blocks.push(joined);
+    }
+    return blocks;
+}
+
+async function extractSlideImageUrls(zip, slidePath) {
+    const relsPath = slidePath.replace('ppt/slides/', 'ppt/slides/_rels/') + '.rels';
+    const relsFile = zip.file(relsPath);
+    if (!relsFile) return [];
+    const relsXml = await relsFile.async('string');
+    const urls = [];
+    const relRegex = /<Relationship[^>]*Type="[^"]*\/image"[^>]*Target="([^"]+)"[^>]*\/?>/g;
+    let m;
+    while ((m = relRegex.exec(relsXml)) !== null) {
+        const target = m[1].replace(/^\.\.\//, 'ppt/');
+        const imgFile = zip.file(target);
+        if (imgFile) urls.push(URL.createObjectURL(await imgFile.async('blob')));
+    }
+    return urls;
+}
+
+async function renderPptxPageToObjectUrl(doc, pageNum) {
+    const slidePath = doc.slidePaths[pageNum - 1];
+    const slideXmlText = await doc.zip.file(slidePath).async('string');
+    const [textBlocks, imageUrls] = await Promise.all([
+        Promise.resolve(extractSlideTextBlocks(slideXmlText)),
+        extractSlideImageUrls(doc.zip, slidePath)
+    ]);
+
+    const W = 1280, H = Math.max(1, Math.round(1280 * (doc.cy / doc.cx)));
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+
+    let cursorY = 50;
+    if (imageUrls.length) {
+        try {
+            const img = await new Promise((resolve, reject) => { const el = new Image(); el.onload = () => resolve(el); el.onerror = reject; el.src = imageUrls[0]; });
+            const maxW = W - 100, maxH = H * 0.55;
+            const ratio = Math.min(maxW / img.width, maxH / img.height, 1);
+            const dw = img.width * ratio, dh = img.height * ratio;
+            ctx.drawImage(img, (W - dw) / 2, cursorY, dw, dh);
+            cursorY += dh + 35;
+        } catch (e) { /* image failed to decode — continue with text only */ }
+        imageUrls.forEach(u => URL.revokeObjectURL(u));
+    }
+
+    ctx.fillStyle = '#111111'; ctx.textAlign = 'center';
+    textBlocks.forEach((block, blockIndex) => {
+        const fontSize = blockIndex === 0 ? 50 : 30;
+        ctx.font = `${blockIndex === 0 ? '700' : '400'} ${fontSize}px system-ui, -apple-system, sans-serif`;
+        const maxWidth = W - 140;
+        block.split('\n').forEach(paragraph => {
+            const words = paragraph.split(/\s+/).filter(Boolean);
+            let line = '';
+            words.forEach(word => {
+                const testLine = line ? line + ' ' + word : word;
+                if (ctx.measureText(testLine).width > maxWidth && line) {
+                    ctx.fillText(line, W / 2, cursorY); cursorY += fontSize * 1.25; line = word;
+                } else line = testLine;
+            });
+            if (line) { ctx.fillText(line, W / 2, cursorY); cursorY += fontSize * 1.25; }
+        });
+        cursorY += fontSize * 0.5;
+    });
+
+    if (!imageUrls.length && !textBlocks.length) {
+        ctx.fillStyle = '#9ca3af'; ctx.font = '400 26px system-ui, sans-serif';
+        ctx.fillText('(This slide has no extractable text or images)', W / 2, H / 2);
+    }
+
+    return await new Promise(resolve => canvas.toBlob(blob => resolve(URL.createObjectURL(blob)), 'image/png'));
+}
+
+async function showPptxMediaPage(m, pageNum) {
+    pauseAllMasterVideosExcept(null);
+    const statusEl = document.getElementById('mediaStatus');
+    if (statusEl) { statusEl.innerText = `Loading "${m.name}"…`; statusEl.style.color = 'var(--text-muted)'; }
+    try {
+        const doc = await getPptxDocument(m);
+        const clampedPage = Math.max(1, Math.min(pageNum, doc.numPages));
+        const pageUrl = await renderPptxPageToObjectUrl(doc, clampedPage);
+        const oldUrl = currentPagedMediaObjectUrl;
+        currentPagedMediaObjectUrl = pageUrl;
+        Object.assign(previewState, {
+            mediaUrl: pageUrl, mediaKind: 'pptx', mediaName: m.name, displayMode: 'media',
+            mediaPdfId: m.id, mediaPdfPage: clampedPage, mediaPdfPageCount: doc.numPages
+        });
+        updateMediaPanelStatus();
+        renderPreview();
+        if (oldUrl && oldUrl !== pageUrl) URL.revokeObjectURL(oldUrl);
+    } catch (err) {
+        console.warn('Could not display PowerPoint slide:', err);
+        if (statusEl) { statusEl.innerText = `Could not open "${m.name}" — ${err.message || err}`; statusEl.style.color = '#f87171'; }
+    }
 }
 
 // Draws the media on any canvas (main, OBS, projector, extra outputs). Videos reuse the shared master
@@ -1000,7 +1234,7 @@ function attachMediaLayer(container, ownerDoc, state, existingMediaEl, reusable)
     const fit = state.mediaFit === 'cover' ? 'cover' : 'contain';
     if (state.mediaKind === 'video') {
         const sink = attachSharedVideoSink(container, ownerDoc, state.mediaUrl, existingMediaEl,
-            { className: 'canvas-video-bg-node media-layer-node', opacity: 1, muted: false });
+            { className: 'canvas-video-bg-node media-layer-node', opacity: 1, muted: true });
         sink.style.objectFit = fit;
     } else {
         const { node: img } = layerFromCache(reusable, 'media:' + state.mediaUrl, () => { const el = ownerDoc.createElement('img'); el.src = state.mediaUrl; return el; });
@@ -1022,7 +1256,7 @@ async function initMediaEngine() {
     $('mediaFilePicker').addEventListener('change', async (e) => {
         let lastId = '';
         for (const file of Array.from(e.target.files || [])) {
-            const kind = file.type.startsWith('video/') ? 'video' : (file.type.startsWith('image/') ? 'image' : '');
+            const kind = file.type.startsWith('video/') ? 'video' : (file.type.startsWith('image/') ? 'image' : ((file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) ? 'pdf' : ((file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' || /\.pptx$/i.test(file.name)) ? 'pptx' : '')));
             if (!kind) continue;
             const rec = { id: 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), name: file.name, kind, addedAt: Date.now(), blob: file };
             mediaLibrary.unshift({ id: rec.id, name: rec.name, kind, addedAt: rec.addedAt, url: URL.createObjectURL(file) });
@@ -1039,18 +1273,23 @@ async function initMediaEngine() {
         if (id) showMedia(id);
     });
     $('mediaHideBtn').addEventListener('click', () => { switchToTextDisplay(); renderPreview(); });
+    $('mediaPdfPrevBtn').addEventListener('click', () => navigatePagedMedia(-1));
+    $('mediaPdfNextBtn').addEventListener('click', () => navigatePagedMedia(1));
     $('mediaFitSelector').addEventListener('change', (e) => { previewState.mediaFit = e.target.value; renderPreview(); });
     $('mediaDeleteBtn').addEventListener('click', async () => {
         const id = $('mediaLibraryDropdown').value;
         const m = mediaLibrary.find(x => x.id === id);
         if (!m || !confirm(`Remove "${m.name}" from the saved media library?`)) return;
-        if (previewState.mediaUrl === m.url) {
+        if (previewState.mediaUrl === m.url || ((m.kind === 'pdf' || m.kind === 'pptx') && previewState.mediaPdfId === m.id)) {
             switchToTextDisplay();
-            Object.assign(previewState, { mediaUrl: '', mediaKind: '', mediaName: '' });
+            Object.assign(previewState, { mediaUrl: '', mediaKind: '', mediaName: '', mediaPdfId: '', mediaPdfPage: 1, mediaPdfPageCount: 0 });
+            if (currentPagedMediaObjectUrl) { URL.revokeObjectURL(currentPagedMediaObjectUrl); currentPagedMediaObjectUrl = ''; }
             renderPreview();
         }
         const entry = masterVideoRegistry.get(m.url);
         if (entry) { entry.masterEl.remove(); masterVideoRegistry.delete(m.url); }
+        if (pdfDocCache.has(m.id)) { try { pdfDocCache.get(m.id).destroy(); } catch (e) {} pdfDocCache.delete(m.id); }
+        if (pptxDocCache.has(m.id)) pptxDocCache.delete(m.id);
         URL.revokeObjectURL(m.url);
         mediaLibrary = mediaLibrary.filter(x => x.id !== id);
         try { await mediaDB.remove(id); } catch (err) {}
@@ -1393,14 +1632,14 @@ async function initMediaEngine() {
             const masterEl = document.createElement('video');
             masterEl.src = videoUrl;
             masterEl.loop = true;
-            masterEl.muted = true; // the master itself is always muted — each sink controls its own audibility
+            masterEl.muted = false; // the master is the single authoritative audio source — every visible sink stays muted so the same video's sound is never played twice at once (which was causing the echoed/off "tone")
             masterEl.autoplay = true;
             masterEl.playsInline = true;
             masterEl.style.cssText = 'position:fixed; width:1px; height:1px; opacity:0; pointer-events:none; left:-9999px;';
             document.body.appendChild(masterEl);
             masterEl.play().catch(() => {});
 
-            entry = { masterEl, stream: null };
+            entry = { masterEl, stream: null, readyCallbacks: [] };
             masterVideoRegistry.set(videoUrl, entry);
 
             const captureWhenReady = () => {
@@ -1409,6 +1648,11 @@ async function initMediaEngine() {
                     if (masterEl.captureStream) entry.stream = masterEl.captureStream();
                     else if (masterEl.mozCaptureStream) entry.stream = masterEl.mozCaptureStream();
                 } catch (e) {}
+                // Hand the now-ready stream to every sink that started playing directly while waiting for it.
+                if (entry.stream && entry.readyCallbacks.length) {
+                    const callbacks = entry.readyCallbacks.splice(0);
+                    callbacks.forEach(cb => { try { cb(entry.stream); } catch (e) {} });
+                }
             };
             masterEl.addEventListener('loadedmetadata', captureWhenReady, { once: true });
             masterEl.addEventListener('playing', captureWhenReady, { once: true });
@@ -1444,23 +1688,25 @@ async function initMediaEngine() {
                     const playPromise = sinkEl.play();
                     if (playPromise && playPromise.catch) playPromise.catch(() => {});
                 }
-            } else if (!sinkEl.dataset.fallbackDirect) {
-                let attempts = 0;
-                const retry = () => {
-                    attempts++;
-                    const freshEntry = masterVideoRegistry.get(videoUrl);
-                    if (freshEntry && freshEntry.stream) {
-                        sinkEl.srcObject = freshEntry.stream;
+            } else {
+                // The shared stream isn't captured yet (unavoidable on the very first play — the source
+                // has to start loading first) — play this sink directly, right now, so it starts
+                // immediately without losing the click that triggered it, then hand it over to the
+                // perfectly-synced shared stream the instant that becomes ready (see readyCallbacks above).
+                if (!sinkEl.dataset.directPlaybackActive && !sinkEl.srcObject) {
+                    sinkEl.dataset.directPlaybackActive = '1';
+                    sinkEl.src = videoUrl; sinkEl.loop = true;
+                    const p = sinkEl.play(); if (p && p.catch) p.catch(() => {});
+                }
+                if (!sinkEl.dataset.awaitingStream) {
+                    sinkEl.dataset.awaitingStream = '1';
+                    entry.readyCallbacks.push((stream) => {
+                        delete sinkEl.dataset.awaitingStream;
+                        delete sinkEl.dataset.directPlaybackActive;
+                        sinkEl.srcObject = stream;
                         const p = sinkEl.play(); if (p && p.catch) p.catch(() => {});
-                    } else if (attempts < 15) {
-                        setTimeout(retry, 200);
-                    } else if (!sinkEl.srcObject) {
-                        sinkEl.dataset.fallbackDirect = '1';
-                        sinkEl.src = videoUrl; sinkEl.loop = true;
-                        const p = sinkEl.play(); if (p && p.catch) p.catch(() => {});
-                    }
-                };
-                retry();
+                    });
+                }
             }
             return sinkEl;
         }
@@ -2157,6 +2403,7 @@ function songTabIsActive() {
                 if(match) {
                     previewState = { ...match };
                     liveState = previewState; // keep the single-scene link intact
+                    pauseAllMasterVideosExcept(previewState.mediaKind === 'video' ? previewState.mediaUrl : null);
                     document.getElementById('layoutSelector').value = previewState.layout;
                     document.getElementById('fontSizeInput').value = previewState.fontSize;
                     document.getElementById('bgColorPicker').value = previewState.bgColor;
