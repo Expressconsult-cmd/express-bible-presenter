@@ -1942,7 +1942,7 @@ async function initMediaEngine() {
             recognition = new SpeechRecognition();
             recognition.continuous = true; 
             recognition.interimResults = true; 
-            recognition.maxAlternatives = 3; // extra guesses make spoken numbers/commands far more reliable
+            recognition.maxAlternatives = 5; // more guesses per phrase = far better accuracy for version names and spoken numbers
             recognition.lang = 'en-US';
 
             recognition.onstart = () => {
@@ -2083,6 +2083,26 @@ const VOICE_PATTERNS = {
     prevWeak: new RegExp(`^${VOICE_FILLER}(?:previous|previous one|previous please|back|back one|go back|go back one|back please)(?:\\s+please)?$`)
 };
 
+// Bible-version switch commands — "let's read from NKJV", "switch to the ESV", "read in the message", etc.
+// Matched only after a clear trigger phrase (never a bare acronym on its own) so ordinary reading is never
+// mistaken for a version change. Codes must match the <option value="..."> list in the Version selector.
+const VOICE_VERSION_ALIASES = [
+    ['NKJV', 'new king james version'], ['NKJV', 'new king james'], ['NKJV', 'n k j v'], ['NKJV', 'nkjv'],
+    ['NIV2011', 'new international version twenty eleven'], ['NIV2011', 'niv twenty eleven'],
+    ['NIV', 'new international version'], ['NIV', 'n i v'], ['NIV', 'niv'],
+    ['AMP', 'amplified bible'], ['AMP', 'amplified'], ['AMP', 'amp'],
+    ['NLT', 'new living translation'], ['NLT', 'n l t'], ['NLT', 'nlt'],
+    ['MSG', 'the message bible'], ['MSG', 'the message'], ['MSG', 'message bible'], ['MSG', 'msg'],
+    ['ESV', 'english standard version'], ['ESV', 'e s v'], ['ESV', 'esv'],
+    ['NASB', 'new american standard bible'], ['NASB', 'new american standard'], ['NASB', 'n a s b'], ['NASB', 'nasb'],
+    ['KJV', 'king james version'], ['KJV', 'king james'], ['KJV', 'k j v'], ['KJV', 'kjv']
+];
+const VOICE_VERSION_MAP = new Map(VOICE_VERSION_ALIASES.map(([code, phrase]) => [phrase, code]));
+const VOICE_VERSION_TRIGGER = "(?:let s read from|lets read from|let s use|lets use|reading from|read from|read in|read|switch the version to|switch version to|switch to|change the version to|change version to|change to|use the|use|turn to|go to|move to)";
+const VOICE_VERSION_REGEX = new RegExp(
+    `(?:^|\\s)${VOICE_VERSION_TRIGGER}\\s+(?:the\\s+)?(${VOICE_VERSION_ALIASES.map(a => a[1]).sort((a, b) => b.length - a.length).map(p => p.replace(/\s+/g, '\\s+')).join('|')})(?=\\s|$)`, 'g'
+);
+
 function voiceCollect(re, s, pri, build, cands) {
     re.lastIndex = 0;
     let m;
@@ -2116,28 +2136,29 @@ function interpretSpeech(raw, allowQuote) {
     if (!s) return null;
     const cands = [];
 
+    voiceCollect(VOICE_VERSION_REGEX, s, 6, m => ({ type: 'version', code: VOICE_VERSION_MAP.get(m[1].replace(/\s+/g, ' ')), delay: 0 }), cands);
     VOICE_BOOK_ALIASES.forEach(({ id, re }) => voiceCollect(re, s, 5, m => ({
-        type: 'ref', bookId: id, chapter: parseInt(m[1], 10), verse: parseInt(m[2] || m[3] || '1', 10), delay: 450
+        type: 'ref', bookId: id, chapter: parseInt(m[1], 10), verse: parseInt(m[2] || m[3] || '1', 10), delay: 300
     }), cands));
-    voiceCollect(VOICE_PATTERNS.chapter, s, 4, m => ({ type: 'chapter', chapter: parseInt(m[1], 10), verse: parseInt(m[2] || '1', 10), delay: 450 }), cands);
-    voiceCollect(VOICE_PATTERNS.nextChapter, s, 4, () => ({ type: 'chapterStep', dir: 1, delay: 350 }), cands);
-    voiceCollect(VOICE_PATTERNS.prevChapter, s, 4, () => ({ type: 'chapterStep', dir: -1, delay: 350 }), cands);
-    voiceCollect(VOICE_PATTERNS.verse, s, 3, m => ({ type: 'verse', verse: parseInt(m[1], 10), delay: 350 }), cands);
+    voiceCollect(VOICE_PATTERNS.chapter, s, 4, m => ({ type: 'chapter', chapter: parseInt(m[1], 10), verse: parseInt(m[2] || '1', 10), delay: 300 }), cands);
+    voiceCollect(VOICE_PATTERNS.nextChapter, s, 4, () => ({ type: 'chapterStep', dir: 1, delay: 0 }), cands);
+    voiceCollect(VOICE_PATTERNS.prevChapter, s, 4, () => ({ type: 'chapterStep', dir: -1, delay: 0 }), cands);
+    voiceCollect(VOICE_PATTERNS.verse, s, 3, m => ({ type: 'verse', verse: parseInt(m[1], 10), delay: 220 }), cands);
     VOICE_PATTERNS.nextStrong.forEach(re => voiceCollect(re, s, 2, () => ({ type: 'next', dir: 1, delay: 0 }), cands));
     VOICE_PATTERNS.prevStrong.forEach(re => voiceCollect(re, s, 2, () => ({ type: 'prev', dir: -1, delay: 0 }), cands));
-    if (VOICE_PATTERNS.nextWeak.test(s)) cands.push({ start: 0, end: s.length, pri: 1, intent: { type: 'next', dir: 1, delay: 550 } });
-    if (VOICE_PATTERNS.prevWeak.test(s)) cands.push({ start: 0, end: s.length, pri: 1, intent: { type: 'prev', dir: -1, delay: 550 } });
+    if (VOICE_PATTERNS.nextWeak.test(s)) cands.push({ start: 0, end: s.length, pri: 1, intent: { type: 'next', dir: 1, delay: 450 } });
+    if (VOICE_PATTERNS.prevWeak.test(s)) cands.push({ start: 0, end: s.length, pri: 1, intent: { type: 'prev', dir: -1, delay: 450 } });
 
     if (cands.length) {
         // The most recently spoken instruction wins; on a tie the more specific pattern (book+chapter+verse) wins.
         cands.sort((a, b) => (b.end - a.end) || (b.pri - a.pri) || (a.start - b.start));
         const intent = cands[0].intent;
-        intent.sig = [intent.type, intent.bookId || '', intent.chapter || '', intent.verse || '', intent.dir || ''].join(':');
+        intent.sig = [intent.type, intent.bookId || '', intent.chapter || '', intent.verse || '', intent.dir || '', intent.code || ''].join(':');
         return intent;
     }
     if (allowQuote) {
         const quotedVerse = voiceFindQuotedVerse(raw);
-        if (quotedVerse) return { type: 'quote', verse: quotedVerse, sig: 'quote:' + quotedVerse, delay: 500 };
+        if (quotedVerse) return { type: 'quote', verse: quotedVerse, sig: 'quote:' + quotedVerse, delay: 350 };
     }
     return null;
 }
@@ -2215,6 +2236,18 @@ async function executeVoiceIntent(intent) {
                 const bookName = cleanBookNames[intent.bookId];
                 const ok = await voiceGoToChapterVerse(intent.bookId, bookName, intent.chapter, intent.verse);
                 setVoiceNote(ok ? `${bookName} ${currentChapter}:${currentVerse}` : `${bookName} ${intent.chapter} not found`);
+                break;
+            }
+            case 'version': {
+                const versionSel = document.getElementById('versionSelector');
+                if (!intent.code || ![...versionSel.options].some(o => o.value === intent.code)) { setVoiceNote(`That version isn't available`); break; }
+                if (versionSel.value === intent.code) { setVoiceNote(`Already reading ${getVersionDisplayLabel(intent.code)}`); break; }
+                versionSel.value = intent.code;
+                await fetchCurrentChapterFromAPI(); // reloads the current chapter in the new version — same as picking it from the dropdown
+                forceTextVisibleOnDoubleClick();
+                selectSpecificVerseCoordinate(currentVerse);
+                sendStagedToLiveView();
+                setVoiceNote(`Switched to ${getVersionDisplayLabel(intent.code)}`);
                 break;
             }
         }
