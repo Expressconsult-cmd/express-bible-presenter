@@ -1108,3 +1108,107 @@
             transition: height 0.09s linear;
         }
         .vu-label { font-size: 0.5rem; color: #64748b; font-weight: 800; letter-spacing: 0.08em; }
+
+/* ===================== SIGN-IN OVERLAY (passwordless magic-link authentication) ===================== */
+.auth-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 999999; /* above the welcome splash (99999) and everything else */
+    background: radial-gradient(ellipse at center, #0c1424 0%, #01040a 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+.auth-box {
+    width: 100%;
+    max-width: 380px;
+    background: #0f172a;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 2rem 1.75rem;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.auth-brand { display: flex; align-items: center; gap: 0.6rem; color: #f8fafc; margin-bottom: 0.5rem; }
+.auth-brand svg { color: #eab308; flex-shrink: 0; }
+.auth-brand h2 { font-size: 1.2rem; margin: 0; }
+.auth-subtext { font-size: 0.82rem; color: #94a3b8; margin: 0 0 1.1rem 0; line-height: 1.4; }
+.auth-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.65rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: #1e293b;
+    color: #f8fafc;
+    font-size: 0.9rem;
+    margin-bottom: 0.85rem;
+}
+.auth-input:focus { outline: none; border-color: #eab308; }
+.auth-btn-primary {
+    width: 100%;
+    background: #b45309;
+    border-color: #d97706;
+    padding: 0.7rem;
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+.auth-status { font-size: 0.78rem; color: #94a3b8; margin: 0.85rem 0 0 0; line-height: 1.4; min-height: 1em; }
+
+.auth-btn-google {
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    padding: 0.65rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: #ffffff;
+    color: #1f2937;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 1rem;
+}
+.auth-btn-google:hover { background: #f3f4f6; }
+.auth-divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    color: #64748b;
+    font-size: 0.72rem;
+    margin-bottom: 1rem;
+}
+.auth-divider::before, .auth-divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.auth-divider span { padding: 0 0.7rem; }
+
+.auth-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1000000; /* above the sign-in overlay itself */
+    background: rgba(0,0,0,0.6);
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+.auth-modal {
+    width: 100%;
+    max-width: 380px;
+    background: #0f172a;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 14px;
+    padding: 1.75rem;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    color: #f8fafc;
+}
+.auth-modal h3 { margin: 0 0 1rem 0; font-size: 1.05rem; }
+.auth-modal label { display: block; font-size: 0.78rem; color: #94a3b8; margin-bottom: 0.35rem; }
+.auth-modal-desc { font-size: 0.78rem; color: #94a3b8; line-height: 1.4; margin: 0.4rem 0 1.2rem 0; }
+.auth-modal-actions { display: flex; gap: 0.6rem; justify-content: flex-end; }
