@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Each signed-in user can only read/write their OWN session-tracking document.
+    // This is what makes the "2 devices at a time" limit work — auth.js stores each
+    // active device's session ID here, evicting the oldest one beyond the limit.
+    match /sessions/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Nothing else is readable or writable by clients.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
