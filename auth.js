@@ -3,23 +3,22 @@
 // shows/hides a full-screen overlay (#authOverlay) that sits on top of the whole app until someone is
 // signed in. The presenter itself is untouched: it initializes normally underneath the overlay.
 //
-// Flow:
-//   1a. "Sign in with Google" — one click, instant, for anyone with a Google account.
-//   1b. Or by email -> if it's a brand-new email, show the "Create Login Account" confirmation (with
-//       your exact description text) before sending the link; if it's a known email, send the link
-//       right away. Clicking the emailed link brings them back here and signs them in automatically.
-//   2. Firebase itself guarantees one account per email address — if someone signs in with Google using
-//      an email that already has an email-link account (or vice versa), the two are linked into one
-//      account rather than creating a duplicate.
-//   3. Concurrency limit: at most 2 devices/browsers may be signed in at once on the SAME account — a
-//      3rd sign-in evicts the oldest session automatically (that device gets signed out with a message).
+// Sign-in:
+//   • "Sign in with Google" — one click.
+//   • Or by email -> brand-new emails see the "Create Login Account" confirmation first; known emails get
+//     the link right away. Clicking the emailed link signs them in automatically.
+//   • Firebase guarantees one account per email; Google + email-link accounts for the same email are linked.
 //
-// ==================== REQUIRED SETUP (see PASSWORDLESS_AUTH_SETUP.md for full steps) ====================
-//   1. Paste your real Firebase project config into firebaseConfig below (Project Settings > General > Your apps).
-//   2. Set APP_URL below to the exact URL this app is hosted at (must be in Firebase Auth > Authorized domains).
-//   3. In Firebase Console > Authentication > Sign-in method, enable "Google" AND "Email link (passwordless sign-in)".
-//   4. In Firebase Console > Firestore, create a database, then paste firestore.rules (provided) into
-//      Firestore > Rules — this is required for the 2-device session limit to work.
+// Access control (all managed from the admin dashboard, admin.html):
+//   • Device limit per account (default 2) — an extra sign-in evicts the oldest device.
+//   • Block / unblock people, and sign them out remotely.
+//   • Maintenance lock (operators see a "temporarily unavailable" screen; admins are exempt).
+//   • Broadcast message shown to everyone who is signed in.
+//   • Open / close new sign-ups.
+//   • Each signed-in person keeps a profile + a 60-second "last seen" heartbeat so the dashboard can show
+//     who is active and when they last used the presenter.
+//
+// SETUP: put your Firebase config in firebase-config.js (see ADMIN_DASHBOARD_SETUP.md).
 // ============================================================================================================
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
@@ -29,40 +28,67 @@ import {
     fetchSignInMethodsForEmail, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
-    getFirestore, doc, runTransaction, onSnapshot
+    getFirestore, doc, getDoc, setDoc, updateDoc, runTransaction, onSnapshot, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
-// ---- 1) REPLACE with your real Firebase project config ----
-const firebaseConfig = {
-    apiKey: "AIzaSyA_JxvHMsbdb4fmGlX4_s1CGim7O5hRMys",
-    authDomain: "express-bible-presenter.firebaseapp.com",
-    projectId: "express-bible-presenter",
-    storageBucket: "express-bible-presenter.firebasestorage.app",
-    messagingSenderId: "917707548685",
-    appId: "1:917707548685:web:d8346e5dc13eca9a434d44"
-};
+// The sign-in link brings people back to whatever address the app is running at (works locally and hosted).
+const APP_URL = window.location.origin + window.location.pathname;
 
-// ---- 2) REPLACE with the exact URL this app is hosted at (the sign-in link brings people back here) ----
-const APP_URL = "expressconsult-cmd.github.io/express-bible-presenter/";
-
-const MAX_CONCURRENT_SESSIONS = 2; // per account — a 3rd sign-in evicts the oldest device
+const DEFAULT_MAX_SESSIONS = 2;      // used until an admin changes it in the dashboard
+const HEARTBEAT_MS = 60000;          // how often "last seen" is refreshed while the presenter is open
 const LOCAL_EMAIL_KEY = 'ebp_auth_pending_email';
 const LOCAL_SESSION_KEY = 'ebp_auth_session_id';
+const BROADCAST_DISMISSED_KEY = 'ebp_broadcast_dismissed';
+
+const $ = (id) => document.getElementById(id);
+function showAuthOverlay() { const el = $('authOverlay'); if (el) el.style.display = 'flex'; }
+function hideAuthOverlay() { const el = $('authOverlay'); if (el) el.style.display = 'none'; }
+function setAuthStatus(message, isError) {
+    const el = $('authStatusMsg');
+    if (!el) return;
+    el.innerText = message || '';
+    el.style.color = isError ? '#f87171' : '';
+}
+
+// "Chrome on Windows" — shown to the admin so they can tell which device is which.
+function describeDevice() {
+    const ua = navigator.userAgent || '';
+    const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox'
+        : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+    const os = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad|iPod/.test(ua) ? 'iOS'
+        : /Mac OS X/.test(ua) ? 'macOS' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : 'unknown OS';
+    return `${browser} on ${os}`;
+}
 
 // The OBS/output URL (?mode=obs) is a passive capture source with no operator present — never gate it
 // behind a login screen, or OBS capture would break entirely.
 const isObsOutputPage = new URLSearchParams(window.location.search).get('mode') === 'obs';
 
 if (isObsOutputPage) {
-    const overlay = document.getElementById('authOverlay');
+    const overlay = $('authOverlay');
     if (overlay) overlay.style.display = 'none';
-    const modal = document.getElementById('createAccountModal');
+    const modal = $('createAccountModal');
     if (modal) modal.style.display = 'none';
 } else {
-    runAuthModule();
+    startAuth();
 }
 
-function runAuthModule() {
+async function startAuth() {
+    let firebaseConfig;
+    try {
+        ({ firebaseConfig } = await import('./firebase-config.js'));
+    } catch (err) {
+        setAuthStatus("Setup incomplete: firebase-config.js could not be loaded. Upload it next to index.html.", true);
+        return;
+    }
+    if (!firebaseConfig || JSON.stringify(firebaseConfig).includes('REPLACE_WITH')) {
+        setAuthStatus('Setup incomplete: paste your Firebase config into firebase-config.js.', true);
+        return;
+    }
+    runAuthModule(firebaseConfig);
+}
+
+function runAuthModule(firebaseConfig) {
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
@@ -70,18 +96,14 @@ function runAuthModule() {
     const actionCodeSettings = { url: APP_URL, handleCodeInApp: true };
     const PENDING_LINK_CRED_KEY = 'ebp_auth_pending_link_cred'; // holds a Google credential awaiting linking
 
-    let evictionUnsub = null;
+    let watchers = [];          // live Firestore listeners, torn down on sign-out
+    let heartbeatTimer = null;
+    let currentIsAdmin = false; // admins are exempt from the maintenance lock
+    let forcedOut = false;      // prevents double sign-out messages
+    let shownBroadcastId = '';
 
-    const $ = (id) => document.getElementById(id);
+    setAuthStatus('Checking sign-in…');
 
-    function showAuthOverlay() { $('authOverlay').style.display = 'flex'; }
-    function hideAuthOverlay() { $('authOverlay').style.display = 'none'; }
-    function setAuthStatus(message, isError) {
-        const el = $('authStatusMsg');
-        if (!el) return;
-        el.innerText = message || '';
-        el.style.color = isError ? '#f87171' : '';
-    }
     function openCreateAccountModal(prefillEmail) {
         $('createAccountEmailInput').value = prefillEmail || '';
         $('createAccountModal').style.display = 'flex';
@@ -89,6 +111,71 @@ function runAuthModule() {
     function closeCreateAccountModal() { $('createAccountModal').style.display = 'none'; }
     function isValidEmail(email) { return /^\S+@\S+\.\S+$/.test(email); }
 
+    // ---------- Small UI pieces injected by this file (maintenance screen + broadcast message) ----------
+    function ensureExtras() {
+        if ($('ebpExtrasStyle')) return;
+        const style = document.createElement('style');
+        style.id = 'ebpExtrasStyle';
+        style.textContent = `
+            #ebpMaintenanceOverlay { display:none; position:fixed; inset:0; z-index:999998; align-items:center; justify-content:center;
+                padding:1rem; background:radial-gradient(ellipse at center,#0c1424 0%,#01040a 100%); }
+            #ebpMaintenanceOverlay .box { max-width:420px; text-align:center; background:#0f172a; border:1px solid rgba(255,255,255,.08);
+                border-radius:14px; padding:2rem 1.75rem; color:#f8fafc; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+            #ebpMaintenanceOverlay .icon { font-size:2rem; margin-bottom:.4rem; }
+            #ebpMaintenanceOverlay h2 { margin:.2rem 0 .6rem; font-size:1.15rem; }
+            #ebpMaintenanceOverlay p { margin:0 0 1.2rem; color:#94a3b8; font-size:.88rem; line-height:1.5; white-space:pre-wrap; }
+            #ebpMaintenanceOverlay button { background:#475569; border:1px solid #64748b; color:#fff; border-radius:8px; padding:.5rem 1.1rem; cursor:pointer; font-size:.85rem; }
+            #ebpBroadcastBanner { display:none; position:fixed; right:16px; bottom:16px; z-index:999997; max-width:380px; gap:.7rem;
+                align-items:flex-start; background:#0f172a; color:#f8fafc; border:1px solid #d97706; border-radius:12px;
+                padding:.85rem 1rem; box-shadow:0 12px 40px rgba(0,0,0,.5); font-size:.85rem; line-height:1.45; }
+            #ebpBroadcastBanner .text { flex:1; white-space:pre-wrap; }
+            #ebpBroadcastBanner .label { display:block; font-size:.68rem; letter-spacing:.06em; text-transform:uppercase; color:#eab308; font-weight:700; margin-bottom:.2rem; }
+            #ebpBroadcastBanner button { background:transparent; border:none; color:#94a3b8; cursor:pointer; font-size:1.1rem; line-height:1; padding:0 .2rem; }`;
+        document.head.appendChild(style);
+
+        const maint = document.createElement('div');
+        maint.id = 'ebpMaintenanceOverlay';
+        maint.innerHTML = `<div class="box"><div class="icon">🛠</div><h2>Bible Presenter is temporarily unavailable</h2>
+            <p id="ebpMaintenanceMsg"></p><button id="ebpMaintenanceSignOut" type="button">Sign out</button></div>`;
+        document.body.appendChild(maint);
+
+        const banner = document.createElement('div');
+        banner.id = 'ebpBroadcastBanner';
+        banner.innerHTML = `<div class="text"><span class="label">📢 Message from your administrator</span><span id="ebpBroadcastText"></span></div>
+            <button id="ebpBroadcastClose" type="button" title="Dismiss">✕</button>`;
+        document.body.appendChild(banner);
+
+        $('ebpMaintenanceSignOut').addEventListener('click', () => doSignOut());
+        $('ebpBroadcastClose').addEventListener('click', () => {
+            if (shownBroadcastId) window.localStorage.setItem(BROADCAST_DISMISSED_KEY, shownBroadcastId);
+            $('ebpBroadcastBanner').style.display = 'none';
+        });
+    }
+
+    // Applies the admin-controlled settings (maintenance lock + broadcast message).
+    function applySettings(settings) {
+        ensureExtras();
+        const locked = settings.maintenanceMode === true && !currentIsAdmin;
+        $('ebpMaintenanceMsg').textContent = settings.maintenanceMessage || 'The presenter is undergoing maintenance. Please try again shortly.';
+        $('ebpMaintenanceOverlay').style.display = locked ? 'flex' : 'none';
+
+        const b = settings.broadcast;
+        const dismissed = window.localStorage.getItem(BROADCAST_DISMISSED_KEY);
+        if (b && b.id && b.text && String(b.id) !== dismissed) {
+            shownBroadcastId = String(b.id);
+            $('ebpBroadcastText').textContent = b.text;
+            $('ebpBroadcastBanner').style.display = 'flex';
+        } else {
+            shownBroadcastId = '';
+            $('ebpBroadcastBanner').style.display = 'none';
+        }
+    }
+    function hideExtras() {
+        if ($('ebpMaintenanceOverlay')) $('ebpMaintenanceOverlay').style.display = 'none';
+        if ($('ebpBroadcastBanner')) $('ebpBroadcastBanner').style.display = 'none';
+    }
+
+    // ---------- Sending the sign-in link ----------
     async function sendMagicLink(email) {
         setAuthStatus('Sending sign-in link…');
         try {
@@ -174,9 +261,63 @@ function runAuthModule() {
         }
     }
 
-    // ---- Session-slot management: max MAX_CONCURRENT_SESSIONS devices signed in per account at once.
+    // ---------- Access checks + profile (what the admin dashboard lists) ----------
+    async function checkIsAdmin(user) {
+        if (!user.email) return false;
+        try { return (await getDoc(doc(db, 'admins', user.email.toLowerCase()))).exists(); }
+        catch (err) { return false; }
+    }
+
+    // Creates/refreshes this person's profile. Returns {ok:false, message} if they must not get in.
+    async function syncProfileAndCheckAccess(user) {
+        const userRef = doc(db, 'users', user.uid);
+        const meta = user.metadata || {};
+        const profile = {
+            email: (user.email || '').toLowerCase(),
+            displayName: user.displayName || '',
+            photoURL: user.photoURL || '',
+            providers: (user.providerData || []).map(p => p.providerId),
+            lastSignIn: Date.parse(meta.lastSignInTime) || Date.now(),
+            lastSeen: serverTimestamp()
+        };
+        let snap;
+        try {
+            snap = await getDoc(userRef);
+        } catch (err) {
+            console.error('Reading users/' + user.uid + ' failed:', err);
+            return { ok: false, message: `Couldn't read your profile — [${err.code || 'error'}] ${err.message || err}` };
+        }
+        if (snap.exists()) {
+            if (snap.data().blocked === true) return { ok: false, message: 'This account has been blocked by the administrator.' };
+            try {
+                await updateDoc(userRef, profile);
+            } catch (err) {
+                console.error('Updating users/' + user.uid + ' failed:', err);
+                return { ok: false, message: `Couldn't update your profile — [${err.code || 'error'}] ${err.message || err}` };
+            }
+        } else {
+            try {
+                await setDoc(userRef, { ...profile, createdAt: Date.parse(meta.creationTime) || Date.now(), blocked: false });
+            } catch (err) {
+                console.error('Creating users/' + user.uid + ' failed:', err);
+                if (err.code === 'permission-denied') return { ok: false, message: 'New sign-ups are currently closed. Please contact the administrator.' };
+                return { ok: false, message: `Couldn't create your profile — [${err.code || 'error'}] ${err.message || err}` };
+            }
+        }
+        return { ok: true };
+    }
+
+    async function readMaxSessions() {
+        try {
+            const snap = await getDoc(doc(db, 'settings', 'app'));
+            const n = parseInt(snap.exists() ? snap.data().maxSessions : DEFAULT_MAX_SESSIONS, 10);
+            return Math.min(10, Math.max(1, n || DEFAULT_MAX_SESSIONS));
+        } catch (err) { return DEFAULT_MAX_SESSIONS; }
+    }
+
+    // ---- Session-slot management: at most `maxSessions` devices signed in per account at once.
     // A new sign-in always keeps the newest N sessions and evicts anything older than that.
-    async function registerSession(uid) {
+    async function registerSession(uid, maxSessions) {
         let sessionId = window.localStorage.getItem(LOCAL_SESSION_KEY);
         if (!sessionId) {
             sessionId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + '-' + Math.random().toString(36).slice(2));
@@ -187,25 +328,12 @@ function runAuthModule() {
             const snap = await tx.get(sessionRef);
             let sessions = (snap.exists() && snap.data().activeSessions) || [];
             sessions = sessions.filter(s => s.sessionId !== sessionId);
-            sessions.push({ sessionId, createdAt: Date.now() });
+            sessions.push({ sessionId, createdAt: Date.now(), device: describeDevice() });
             sessions.sort((a, b) => b.createdAt - a.createdAt); // newest first
-            sessions = sessions.slice(0, MAX_CONCURRENT_SESSIONS); // evict anything older than the limit
-            tx.set(sessionRef, { activeSessions: sessions }, { merge: true });
+            sessions = sessions.slice(0, maxSessions);          // evict anything older than the limit
+            tx.set(sessionRef, { activeSessions: sessions, kickedReason: '' }, { merge: true });
         });
         return sessionId;
-    }
-
-    function listenForEviction(uid, mySessionId) {
-        if (evictionUnsub) evictionUnsub();
-        evictionUnsub = onSnapshot(doc(db, 'sessions', uid), (snap) => {
-            const sessions = (snap.data() || {}).activeSessions || [];
-            const stillActive = sessions.some(s => s.sessionId === mySessionId);
-            if (!stillActive) {
-                showAuthOverlay();
-                setAuthStatus('You were signed out because this account signed in on another device (2-device limit).', true);
-                signOut(auth);
-            }
-        });
     }
 
     async function releaseSession(uid, sessionId) {
@@ -221,21 +349,85 @@ function runAuthModule() {
         } catch (err) { /* best-effort cleanup only */ }
     }
 
+    // ---------- Live listeners + heartbeat ----------
+    async function forceSignOut(message) {
+        if (forcedOut) return;
+        forcedOut = true;
+        setAuthStatus(message, true);
+        showAuthOverlay();
+        try { await signOut(auth); } catch (err) { /* ignore */ }
+    }
+
+    function stopWatchers() {
+        watchers.forEach(unsub => { try { unsub(); } catch (err) { /* ignore */ } });
+        watchers = [];
+    }
+    function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }
+
+    function startWatchers(user, sessionId) {
+        stopWatchers();
+        // 1) my device slot — removed when a newer device evicts me, or an admin signs me out
+        watchers.push(onSnapshot(doc(db, 'sessions', user.uid), (snap) => {
+            const data = snap.data() || {};
+            const stillActive = (data.activeSessions || []).some(s => s.sessionId === sessionId);
+            if (stillActive) return;
+            if (data.kickedReason === 'admin') forceSignOut('You were signed out by an administrator.');
+            else if (data.kickedReason === 'blocked') forceSignOut('This account has been blocked by the administrator.');
+            else forceSignOut('You were signed out because this account signed in on another device (device limit reached).');
+        }, (err) => console.warn('Session listener error:', err)));
+        // 2) my profile — blocked flag
+        watchers.push(onSnapshot(doc(db, 'users', user.uid), (snap) => {
+            if (snap.exists() && snap.data().blocked === true) forceSignOut('This account has been blocked by the administrator.');
+        }, (err) => console.warn('Profile listener error:', err)));
+        // 3) admin-controlled settings (maintenance lock, broadcast message)
+        watchers.push(onSnapshot(doc(db, 'settings', 'app'), (snap) => {
+            applySettings(snap.data() || {});
+        }, (err) => console.warn('Settings listener error:', err)));
+    }
+
+    function startHeartbeat(uid) {
+        stopHeartbeat();
+        const userRef = doc(db, 'users', uid);
+        heartbeatTimer = setInterval(() => {
+            updateDoc(userRef, { lastSeen: serverTimestamp() }).catch(() => { /* offline or removed — ignore */ });
+        }, HEARTBEAT_MS);
+    }
+
+    async function doSignOut() {
+        const user = auth.currentUser;
+        const sessionId = window.localStorage.getItem(LOCAL_SESSION_KEY);
+        if (user) await releaseSession(user.uid, sessionId);
+        window.localStorage.removeItem(LOCAL_SESSION_KEY);
+        await signOut(auth);
+    }
+
     onAuthStateChanged(auth, async (user) => {
         const signOutBtn = $('appSignOutBtn');
-        if (user) {
-            try {
-                const sessionId = await registerSession(user.uid);
-                listenForEviction(user.uid, sessionId);
-                hideAuthOverlay();
-                if (signOutBtn) signOutBtn.style.display = '';
-            } catch (err) {
-                setAuthStatus("Signed in, but couldn't register this device session — " + (err.message || err), true);
-            }
-        } else {
-            if (evictionUnsub) { evictionUnsub(); evictionUnsub = null; }
+        if (!user) {
+            stopWatchers();
+            stopHeartbeat();
+            currentIsAdmin = false;
+            hideExtras();
             if (signOutBtn) signOutBtn.style.display = 'none';
+            const statusEl = $('authStatusMsg');
+            if (statusEl && statusEl.innerText === 'Checking sign-in…') setAuthStatus('');
             showAuthOverlay();
+            return;
+        }
+        forcedOut = false;
+        try {
+            currentIsAdmin = await checkIsAdmin(user);
+            const access = await syncProfileAndCheckAccess(user);
+            if (!access.ok) { await forceSignOut(access.message); return; }
+            const maxSessions = await readMaxSessions();
+            const sessionId = await registerSession(user.uid, maxSessions);
+            startWatchers(user, sessionId);
+            startHeartbeat(user.uid);
+            setAuthStatus('');
+            hideAuthOverlay();
+            if (signOutBtn) signOutBtn.style.display = '';
+        } catch (err) {
+            setAuthStatus(`Signed in, but couldn't finish setting up this session — [${err.code || 'error'}] ${err.message || err}`, true);
         }
     });
 
@@ -254,13 +446,5 @@ function runAuthModule() {
     $('createAccountCancelBtn').addEventListener('click', closeCreateAccountModal);
 
     const signOutBtn = $('appSignOutBtn');
-    if (signOutBtn) {
-        signOutBtn.addEventListener('click', async () => {
-            const user = auth.currentUser;
-            const sessionId = window.localStorage.getItem(LOCAL_SESSION_KEY);
-            if (user) await releaseSession(user.uid, sessionId);
-            window.localStorage.removeItem(LOCAL_SESSION_KEY);
-            await signOut(auth);
-        });
-    }
+    if (signOutBtn) signOutBtn.addEventListener('click', () => doSignOut());
 }
