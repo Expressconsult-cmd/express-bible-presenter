@@ -215,7 +215,8 @@
             announcementText: "", announcementVisible: false, announcementEffect: "none", announcementPosition: "bottom", announcementBgColor: "#b45309",
             bgTransparent: false,
             displayMode: "text", mediaUrl: "", mediaKind: "", mediaName: "", mediaFit: "contain",
-            mediaPdfId: "", mediaPdfPage: 1, mediaPdfPageCount: 0
+            mediaPdfId: "", mediaPdfPage: 1, mediaPdfPageCount: 0,
+            bgPreset: ""
         };
 
         // SINGLE SCENE: liveState is the SAME object as previewState (not a copy) — there's only
@@ -1719,6 +1720,30 @@ async function initMediaEngine() {
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
 
+        // ===================== DEFAULT BACKGROUNDS (ready-made gradients, no upload needed) =====================
+        // A quick set of good-looking backgrounds anyone can pick straight from the dropdown, as an
+        // alternative to always having to choose a plain Solid BG color.
+        const DEFAULT_BG_PRESETS = {
+            ocean:    { angle: 135, stops: ['#0f2027', '#203a43', '#2c5364'] },
+            midnight: { angle: 160, stops: ['#0f0c29', '#302b63', '#24243e'] },
+            royal:    { angle: 135, stops: ['#41295a', '#2f0743'] },
+            sunset:   { angle: 120, stops: ['#ff512f', '#dd2476'] },
+            golden:   { angle: 135, stops: ['#f2994a', '#f2c94c'] },
+            forest:   { angle: 135, stops: ['#134e5e', '#71b280'] },
+            crimson:  { angle: 135, stops: ['#c94b4b', '#4b134f'] },
+            aurora:   { angle: 135, stops: ['#43cea2', '#185a9d'] },
+            cosmic:   { angle: 135, stops: ['#1a1a2e', '#16213e', '#0f3460'] },
+            ember:    { angle: 135, stops: ['#8e0e00', '#1f1c18'] }
+        };
+        // Builds the gradient CSS for a preset, baking the Opacity slider into each color stop —
+        // same visual effect the slider already has on Solid BG and Box Fill.
+        function buildPresetBackgroundCss(presetId, opacityPct) {
+            const preset = DEFAULT_BG_PRESETS[presetId];
+            if (!preset) return '';
+            const stops = preset.stops.map(hex => hexToRgbaWithOpacity(hex, opacityPct)).join(', ');
+            return `linear-gradient(${preset.angle}deg, ${stops})`;
+        }
+
         // Responsive font scaling: shrinks/grows the text size based on how much text is on the slide
         function computeAutoFontScale(text) {
             const len = (text || '').length;
@@ -1770,8 +1795,13 @@ async function initMediaEngine() {
 
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
-            canvasElement.style.backgroundImage = 'none';
-            canvasElement.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
+            if (!stateObject.bgTransparent && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
+                canvasElement.style.backgroundColor = 'transparent';
+                canvasElement.style.backgroundImage = buildPresetBackgroundCss(stateObject.bgPreset, bgOpacity);
+            } else {
+                canvasElement.style.backgroundImage = 'none';
+                canvasElement.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
+            }
 
             let contentNode = stateObject.text || '';
             if (stateObject.isScrolling && stateObject.text) {
@@ -2344,7 +2374,8 @@ function songTabIsActive() {
                 renderPreview();
             });
 
-            document.getElementById('bgColorPicker').addEventListener('input', () => { previewState.bgColor = document.getElementById('bgColorPicker').value; renderPreview(); });
+            document.getElementById('bgColorPicker').addEventListener('input', () => { previewState.bgColor = document.getElementById('bgColorPicker').value; previewState.bgPreset = ""; document.getElementById('bgPresetSelector').value = ""; renderPreview(); });
+            document.getElementById('bgPresetSelector').addEventListener('change', (e) => { previewState.bgPreset = e.target.value; renderPreview(); });
             document.getElementById('bgTransparentCheckbox').addEventListener('change', (e) => { previewState.bgTransparent = e.target.checked; renderPreview(); });
             document.getElementById('textColorPicker').addEventListener('input', () => { previewState.textColor = document.getElementById('textColorPicker').value; renderPreview(); });
             document.getElementById('refColorPicker').addEventListener('input', () => { previewState.refColor = document.getElementById('refColorPicker').value; renderPreview(); });
@@ -3139,8 +3170,13 @@ function songTabIsActive() {
 
             container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize}`;
             container.style.fontFamily = customFontFamily;
-            container.style.backgroundImage = 'none';
-            container.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
+            if (!stateObject.bgTransparent && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
+                container.style.backgroundColor = 'transparent';
+                container.style.backgroundImage = buildPresetBackgroundCss(stateObject.bgPreset, bgOpacity);
+            } else {
+                container.style.backgroundImage = 'none';
+                container.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
+            }
             const outContentSig = computeSceneContentSig(stateObject);
             const outContentChanged = container.dataset.contentSig !== outContentSig;
             container.dataset.contentSig = outContentSig;
@@ -3418,7 +3454,7 @@ function songTabIsActive() {
                         : (importedData.savedPreviewState || importedData.savedLiveState || previewState);
                     Object.assign(previewState, restoredState);
                     liveState = previewState;
-                    document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || "";
+                    document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('bgPresetSelector').value = previewState.bgPreset || ""; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || "";
                     fetchCurrentChapterFromAPI(); renderPreview();
                 } catch (err) { console.error("Import failure: ", err); }
             };
