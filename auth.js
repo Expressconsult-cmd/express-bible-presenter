@@ -183,7 +183,7 @@ function runAuthModule(firebaseConfig) {
             window.localStorage.setItem(LOCAL_EMAIL_KEY, email);
             setAuthStatus(`Check ${email} for a sign-in link, then open it on this device. You can close this tab.`);
         } catch (err) {
-            setAuthStatus("Couldn't send the sign-in link — " + (err.message || err), true);
+            setAuthStatus(`Couldn't send the sign-in link — [${err.code || 'error'}] ${err.message || err}`, true);
         }
     }
 
