@@ -148,6 +148,7 @@ function startDashboard(config) {
         adminUser = user;
         $('adminEmail').textContent = user.email;
         showScreen('app');
+        setDiag('you', 'ok', `Signed in as ${user.email} (uid ${user.uid}) — confirmed administrator.`);
         startListeners();
     });
 
@@ -156,27 +157,53 @@ function startDashboard(config) {
         unsubs = [];
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
         usersById.clear(); sessionsById.clear(); settings = {}; adminUser = null;
+        diagState = {};
+        renderDiag();
     }
 
-    function listenerError(err) {
-        toast("Live data error — " + (err.message || err), true);
+    // ---------- diagnostics: shows exactly what each live data source is doing, so nothing fails silently ----------
+    let diagState = {};
+    const DIAG_LABEL = { you: 'Your admin session', users: 'users collection', sessions: 'sessions collection', settings: 'settings/app document' };
+    function setDiag(key, status, details) {
+        diagState[key] = { status, details: details || '' };
+        renderDiag();
+    }
+    function renderDiag() {
+        const order = ['you', 'users', 'sessions', 'settings'];
+        $('diagBody').innerHTML = order.map((key) => {
+            const d = diagState[key] || { status: 'pending', details: 'Waiting…' };
+            const cls = d.status === 'ok' ? 'diag-ok' : d.status === 'error' ? 'diag-err' : 'diag-pending';
+            const label = d.status === 'ok' ? 'OK' : d.status === 'error' ? 'ERROR' : 'Waiting…';
+            return `<tr><td>${esc(DIAG_LABEL[key] || key)}</td><td class="${cls}">${label}</td><td class="details">${esc(d.details)}</td></tr>`;
+        }).join('');
+    }
+    renderDiag();
+
+    function listenerError(sourceKey) {
+        return (err) => {
+            setDiag(sourceKey, 'error', `[${err.code || 'unknown'}] ${err.message || err}`);
+            toast(`Couldn't load ${DIAG_LABEL[sourceKey] || sourceKey} — ${err.message || err}`, true);
+        };
     }
     function startListeners() {
         unsubs.push(onSnapshot(collection(db, 'users'), (snap) => {
             usersById.clear();
             snap.forEach((d) => usersById.set(d.id, { id: d.id, ...d.data() }));
+            setDiag('users', 'ok', `${snap.size} document${snap.size === 1 ? '' : 's'} loaded.`);
             renderUsers();
-        }, listenerError));
+        }, listenerError('users')));
         unsubs.push(onSnapshot(collection(db, 'sessions'), (snap) => {
             sessionsById.clear();
             snap.forEach((d) => sessionsById.set(d.id, d.data()));
+            setDiag('sessions', 'ok', `${snap.size} document${snap.size === 1 ? '' : 's'} loaded.`);
             renderUsers();
-        }, listenerError));
+        }, listenerError('sessions')));
         unsubs.push(onSnapshot(doc(db, 'settings', 'app'), (snap) => {
             settings = snap.data() || {};
+            setDiag('settings', 'ok', snap.exists() ? 'Loaded.' : 'No document yet — using defaults (this is normal until you save a setting).');
             renderSettings();
             renderUsers();
-        }, listenerError));
+        }, listenerError('settings')));
         // keep "3 min ago" and Active/Idle fresh even when no data changes
         refreshTimer = setInterval(renderUsers, 20000);
     }
