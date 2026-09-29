@@ -6,11 +6,10 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
 
-    // An administrator = a signed-in, email-verified person whose (lower-case) email is the ID of a
-    // document in the "admins" collection. Create/edit those documents in the Firebase Console only.
+    // An administrator = a signed-in person whose (lower-case) email is the ID of a document in the
+    // "admins" collection. Create/edit those documents in the Firebase Console only.
     function isAdmin() {
       return signedIn()
-        && request.auth.token.email_verified == true
         && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
     }
 
