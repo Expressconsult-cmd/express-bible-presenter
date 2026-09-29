@@ -2,11 +2,50 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Each signed-in user can only read/write their OWN session-tracking document.
-    // This is what makes the "2 devices at a time" limit work — auth.js stores each
-    // active device's session ID here, evicting the oldest one beyond the limit.
+    // ---------- helpers ----------
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // An administrator = a signed-in person whose (lower-case) email is the ID of a document in the
+    // "admins" collection. Create/edit those documents in the Firebase Console only.
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+    }
+
+    // Sign-ups are open unless an admin switched them off in the dashboard.
+    function signupsOpen() {
+      let path = /databases/$(database)/documents/settings/app;
+      return !exists(path) || get(path).data.get('signupsOpen', true) == true;
+    }
+
+    // ---------- admins: a person may only check whether THEY are an admin ----------
+    match /admins/{adminEmail} {
+      allow get: if signedIn() && request.auth.token.email.lower() == adminEmail;
+      allow list, write: if false;
+    }
+
+    // ---------- users: profile + "last seen" written by the presenter, managed by admins ----------
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isOwner(uid) && signupsOpen()
+                    && request.resource.data.get('blocked', false) == false;
+      // people can update their own profile/heartbeat, but never the block fields
+      allow update: if isAdmin()
+                    || (isOwner(uid)
+                        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['blocked', 'blockedAt', 'blockedBy']));
+      allow delete: if isAdmin();
+    }
+
+    // ---------- sessions: which devices are signed in (device limit + remote sign-out) ----------
     match /sessions/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isOwner(uid) || isAdmin();
+    }
+
+    // ---------- settings: presenter-wide controls, only admins can change ----------
+    match /settings/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
     }
 
     // Nothing else is readable or writable by clients.
