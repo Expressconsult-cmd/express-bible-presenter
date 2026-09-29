@@ -321,6 +321,23 @@
                 <div class="control-group"><label for="bgColorPicker">Solid BG:</label><input type="color" id="bgColorPicker" value="#0f172a"></div>
 
                 <div class="control-group">
+                    <label for="bgPresetSelector">Default Background:</label>
+                    <select id="bgPresetSelector" style="max-width: 170px;">
+                        <option value="">-- None (use Solid BG) --</option>
+                        <option value="ocean">Deep Ocean</option>
+                        <option value="midnight">Midnight Sky</option>
+                        <option value="royal">Royal Purple</option>
+                        <option value="sunset">Sunset Glow</option>
+                        <option value="golden">Golden Hour</option>
+                        <option value="forest">Forest Depth</option>
+                        <option value="crimson">Crimson Dusk</option>
+                        <option value="aurora">Northern Lights</option>
+                        <option value="cosmic">Cosmic Night</option>
+                        <option value="ember">Warm Ember</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
                     <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; white-space:nowrap; text-transform:none; letter-spacing:0;" title="No background at all behind your text — fully see-through, useful for OBS overlay-style output">
                         <input type="checkbox" id="bgTransparentCheckbox"> Transparent background (no color)
                     </label>
