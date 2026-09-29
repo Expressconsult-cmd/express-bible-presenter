@@ -97,6 +97,11 @@
         color: var(--text); border-radius: 10px; padding: .6rem 1rem; font-size: .82rem; opacity: 0; pointer-events: none; transition: .25s; z-index: 50; max-width: 90vw; }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     #toast.err { border-color: var(--bad); color: #fecaca; }
+    #diagPanel { margin-bottom: 1.25rem; }
+    .diag-ok { color: var(--ok); font-weight: 700; }
+    .diag-err { color: var(--bad); font-weight: 700; }
+    .diag-pending { color: var(--muted); font-weight: 700; }
+    #diagTable td.details { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: .74rem; color: var(--muted); word-break: break-all; }
 </style>
 </head>
 <body>
@@ -135,6 +140,14 @@
         <h1>Bible Presenter <span>Admin</span></h1>
         <div class="who"><span id="adminEmail"></span><button id="adminSignOutBtn" class="btn btn-sm" type="button">Sign out</button></div>
     </header>
+
+    <section class="panel" id="diagPanel">
+        <h2>Diagnostics <span class="muted small" style="font-weight:400">— what the dashboard can currently see</span></h2>
+        <div class="table-wrap"><table id="diagTable">
+            <thead><tr><th>Source</th><th>Status</th><th>Details</th></tr></thead>
+            <tbody id="diagBody"></tbody>
+        </table></div>
+    </section>
 
     <section class="stats">
         <div class="stat accent"><div class="n" id="statTotal">0</div><div class="l">Total users</div></div>
