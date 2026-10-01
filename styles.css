@@ -50,7 +50,7 @@
         .main-production-suite.sidebar-right .verse-navigation-panel { border-right: none; border-left: 2px solid var(--bg-accent); }
         .content-column { display: flex; flex-direction: column; flex: 1; height: 100%; min-width: 0; overflow: hidden; }
         .remote-standalone-view { display: none; flex-direction: column; height: 100%; width: 100%; background: #070b12; overflow: hidden; }
-        .obs-standalone-view { display: none; width: 100vw; height: 100vh; overflow: hidden; background: transparent; }
+        .obs-standalone-view { display: none; width: 100vw; height: 100vh; overflow: hidden; background: transparent; align-items: center; justify-content: center; container-type: size; /* lets the OBS source fit both width and height while keeping the exact same ratio as the studio and projector */ }
 
         body.is-remote-mode .main-production-suite { display: none !important; }
         body.is-remote-mode .remote-standalone-view { display: flex !important; }
