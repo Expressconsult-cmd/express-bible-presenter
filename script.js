@@ -205,7 +205,9 @@
 
         // STATE PARAMS INCLUDING LOGO SIZE AND THEME DETAILS
         let previewState = { 
-            text: "", ref: "", layout: "mode-center", fontSize: "medium", bgColor: "#0f172a", textColor: "#ffffff",
+            text: "", ref: "", layout: "mode-center", lowerThirdPosition: "bottom", fontSize: "medium", bgColor: "#0f172a", textColor: "#ffffff",
+            fontFamilyOverride: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", fontBold: false, fontItalic: false,
+            textShadowStyle: "0 4px 12px rgba(0,0,0,0.98)",
             flierId: "", textBgUrl: "", isScrolling: false, logoPosition: "", logoSize: 6,
             timerVisible: false, timerSolo: false, timerText: "05:00", timerPosition: "timer-top-right", timerSize: "timer-size-medium",
             timerScale: 1.0,
@@ -1785,7 +1787,7 @@ async function initMediaEngine() {
             const existingVideoEl = canvasElement.querySelector('.canvas-video-bg-node:not(.media-layer-node)');
             const existingMediaEl = canvasElement.querySelector('video.media-layer-node');
 
-            canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize}`;
+            canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'}`;
             const contentSig = computeSceneContentSig(stateObject);
             const contentChanged = canvasElement.dataset.contentSig !== contentSig;
             canvasElement.dataset.contentSig = contentSig;
@@ -1809,10 +1811,10 @@ async function initMediaEngine() {
             }
 
             const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
-            const customFontFamily = document.getElementById('fontStyleOverrideSelector').value;
-            const customShadow = document.getElementById('textShadowSelector').value;
-            const isTextBold = document.getElementById('fontBoldToggleBtn').classList.contains('toggle-active');
-            const isTextItalic = document.getElementById('fontItalicToggleBtn').classList.contains('toggle-active');
+            const customFontFamily = stateObject.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+            const customShadow = stateObject.textShadowStyle != null ? stateObject.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)";
+            const isTextBold = !!stateObject.fontBold;
+            const isTextItalic = !!stateObject.fontItalic;
             const customFontWeight = isTextBold ? '900' : '400';
             const customFontStyle = isTextItalic ? 'italic' : 'normal';
 
@@ -2367,7 +2369,8 @@ function songTabIsActive() {
             document.getElementById('enableExtendedDisplayBtn').addEventListener('click', enableExtendedDisplayDetection);
             manualSearchInput.addEventListener('input', () => { parseAndRouteInput(manualSearchInput.value, false); });
             versionSelector.addEventListener('change', () => { fetchCurrentChapterFromAPI(); });
-            layoutSelector.addEventListener('change', () => { previewState.layout = layoutSelector.value; renderPreview(); });
+            layoutSelector.addEventListener('change', () => { previewState.layout = layoutSelector.value; document.getElementById('lowerThirdPositionGroup').style.display = (layoutSelector.value === 'mode-lowerthird') ? '' : 'none'; renderPreview(); });
+            document.getElementById('lowerThirdPositionSelector').addEventListener('change', (e) => { previewState.lowerThirdPosition = e.target.value; renderPreview(); });
 
             document.getElementById('fontSizeInput').addEventListener('change', () => {
                 previewState.fontSize = document.getElementById('fontSizeInput').value;
@@ -2469,6 +2472,8 @@ function songTabIsActive() {
                     liveState = previewState; // keep the single-scene link intact
                     pauseAllMasterVideosExcept(previewState.mediaKind === 'video' ? previewState.mediaUrl : null);
                     document.getElementById('layoutSelector').value = previewState.layout;
+                    document.getElementById('lowerThirdPositionSelector').value = previewState.lowerThirdPosition || 'bottom';
+                    document.getElementById('lowerThirdPositionGroup').style.display = (previewState.layout === 'mode-lowerthird') ? '' : 'none';
                     document.getElementById('fontSizeInput').value = previewState.fontSize;
                     document.getElementById('bgColorPicker').value = previewState.bgColor;
                     document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff';
@@ -2591,23 +2596,23 @@ function songTabIsActive() {
             });
 
             // Aesthetic selectors inside settings
-            document.getElementById('fontStyleOverrideSelector').addEventListener('change', () => {
+            document.getElementById('fontStyleOverrideSelector').addEventListener('change', (e) => {
+                previewState.fontFamilyOverride = e.target.value;
                 renderPreview();
-                renderLive();
             });
-            document.getElementById('textShadowSelector').addEventListener('change', () => {
+            document.getElementById('textShadowSelector').addEventListener('change', (e) => {
+                previewState.textShadowStyle = e.target.value;
                 renderPreview();
-                renderLive();
             });
             document.getElementById('fontBoldToggleBtn').addEventListener('click', (e) => {
-                e.target.classList.toggle('toggle-active');
+                previewState.fontBold = !previewState.fontBold;
+                e.target.classList.toggle('toggle-active', previewState.fontBold);
                 renderPreview();
-                renderLive();
             });
             document.getElementById('fontItalicToggleBtn').addEventListener('click', (e) => {
-                e.target.classList.toggle('toggle-active');
+                previewState.fontItalic = !previewState.fontItalic;
+                e.target.classList.toggle('toggle-active', previewState.fontItalic);
                 renderPreview();
-                renderLive();
             });
 
             // Appearance: Interface Theme (UI chrome only — never touches the live/OBS/projector display colors)
@@ -2945,9 +2950,10 @@ function songTabIsActive() {
                         .display-canvas.mode-center .text-display-box-container { margin-bottom: 1.5%; }
                         .display-canvas.mode-fullscreen { justify-content: center; align-items: center; text-align: center; padding: 2%; }
                         .display-canvas.mode-lowerthird { justify-content: flex-end; align-items: center; text-align: center; padding: 0 4% 4% 4% !important; }
-                        .display-canvas.mode-lowerthird .text-display-box-container { background: #0f172a; border: 2px solid rgba(255, 255, 255, 0.1); border-left: 6px solid var(--accent-primary); margin-bottom: 1%; text-shadow: none; box-shadow: 0 10px 30px rgba(0,0,0,0.7); padding: 1.2% 2%; }
-                        .display-canvas.mode-lowerthird .text-out { font-size: calc(var(--canvas-font-size) * 0.85); text-shadow: none; }
-                        .display-canvas.mode-lowerthird .ref-out { background: rgba(0,0,0,0.8); padding: 0.4% 1.2%; border-radius: 4px; }
+                        .display-canvas.mode-lowerthird.lt-pos-top { justify-content: flex-start; padding: 4% 4% 0 4% !important; }
+                        .display-canvas.mode-lowerthird.lt-pos-center { justify-content: center; padding: 0 4% !important; }
+                        .display-canvas.mode-lowerthird .text-display-box-container { margin-bottom: 1%; }
+                        .display-canvas.mode-lowerthird .text-out { font-size: calc(var(--canvas-font-size) * 0.85); }
                         .display-canvas.mode-flieronly .text-display-box-container, .display-canvas.mode-flieronly .ref-out { display: none !important; }
                         @keyframes ebpTransFade { from { opacity: 0; } to { opacity: 1; } }
                         @keyframes ebpTransSlide { from { opacity: 0; transform: translateX(18%); } to { opacity: 1; transform: translateX(0); } }
@@ -3160,15 +3166,15 @@ function songTabIsActive() {
             const existingVideoEl = container.querySelector('.canvas-video-bg-node:not(.media-layer-node)');
             const existingMediaEl = container.querySelector('video.media-layer-node');
 
-            const customFontFamily = document.getElementById('fontStyleOverrideSelector').value;
-            const customShadow = document.getElementById('textShadowSelector').value;
-            const isTextBold = document.getElementById('fontBoldToggleBtn').classList.contains('toggle-active');
-            const isTextItalic = document.getElementById('fontItalicToggleBtn').classList.contains('toggle-active');
+            const customFontFamily = stateObject.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+            const customShadow = stateObject.textShadowStyle != null ? stateObject.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)";
+            const isTextBold = !!stateObject.fontBold;
+            const isTextItalic = !!stateObject.fontItalic;
             const customFontWeight = isTextBold ? '900' : '400';
             const customFontStyle = isTextItalic ? 'italic' : 'normal';
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
-            container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize}`;
+            container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'}`;
             container.style.fontFamily = customFontFamily;
             if (!stateObject.bgTransparent && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
                 container.style.backgroundColor = 'transparent';
@@ -3454,7 +3460,7 @@ function songTabIsActive() {
                         : (importedData.savedPreviewState || importedData.savedLiveState || previewState);
                     Object.assign(previewState, restoredState);
                     liveState = previewState;
-                    document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('bgPresetSelector').value = previewState.bgPreset || ""; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || "";
+                    document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('lowerThirdPositionSelector').value = previewState.lowerThirdPosition || 'bottom'; document.getElementById('lowerThirdPositionGroup').style.display = (previewState.layout === 'mode-lowerthird') ? '' : 'none'; document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('bgPresetSelector').value = previewState.bgPreset || ""; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || ""; document.getElementById('fontStyleOverrideSelector').value = previewState.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"; document.getElementById('textShadowSelector').value = previewState.textShadowStyle != null ? previewState.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)"; document.getElementById('fontBoldToggleBtn').classList.toggle('toggle-active', !!previewState.fontBold); document.getElementById('fontItalicToggleBtn').classList.toggle('toggle-active', !!previewState.fontItalic);
                     fetchCurrentChapterFromAPI(); renderPreview();
                 } catch (err) { console.error("Import failure: ", err); }
             };
