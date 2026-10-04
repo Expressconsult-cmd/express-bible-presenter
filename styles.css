@@ -707,9 +707,11 @@
         .display-canvas.mode-fullscreen { justify-content: center; align-items: center; text-align: center; padding: 2%; }
 
         .display-canvas.mode-lowerthird { justify-content: flex-end; align-items: center; text-align: center; padding: 0 4% 4% 4% !important; }
-        .display-canvas.mode-lowerthird .text-display-box-container { background-color: #0f172a; border: 2px solid rgba(255, 255, 255, 0.1); border-left: 6px solid var(--accent-primary); margin-bottom: 1%; text-shadow: none; box-shadow: 0 10px 30px rgba(0,0,0,0.7); padding: 1.2% 2%; }
-        .display-canvas.mode-lowerthird .text-out { font-size: calc(var(--canvas-font-size) * 0.85); text-shadow: none; }
-        .display-canvas.mode-lowerthird .ref-out { background: rgba(0,0,0,0.8); padding: 0.4% 1.2%; border-radius: 4px; }
+        .display-canvas.mode-lowerthird.lt-pos-top { justify-content: flex-start; padding: 4% 4% 0 4% !important; }
+        .display-canvas.mode-lowerthird.lt-pos-center { justify-content: center; padding: 0 4% !important; }
+        /* No background box/border/shadow in lower-third — bare text only, same as transparent full-screen text */
+        .display-canvas.mode-lowerthird .text-display-box-container { margin-bottom: 1%; }
+        .display-canvas.mode-lowerthird .text-out { font-size: calc(var(--canvas-font-size) * 0.85); }
 
         /* FLIER ONLY BRANDING MATRIX */
         .display-canvas.mode-flieronly { justify-content: center; align-items: center; }
