@@ -466,6 +466,9 @@
         }
         #previewCanvas { border: 2px dashed #334155; }
         #liveCanvas { border: 2px solid #1e293b; }
+        /* Transparent background = nothing behind the text at all, including the frame's own drop
+           shadow — so it keys/overlays cleanly onto a camera feed or other video with no dark edges. */
+        .display-canvas.bg-is-transparent { box-shadow: none !important; }
 
         /* Dynamic scale properties based on exact container width queries */
         .display-canvas.size-small { --canvas-font-size: 3.2cqw; }
