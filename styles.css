@@ -403,8 +403,11 @@
         .verse-preview-text {
             font-size: 0.8rem;
             line-height: 1.35;
-            opacity: 0.8;
+            opacity: 1;
+            color: var(--text-muted);
         }
+        .verse-row .verse-num-badge { color: var(--text-muted); }
+        .verse-row.active, .verse-row.active .verse-preview-text, .verse-row.active .verse-num-badge { color: #ffffff !important; opacity: 1; }
 
         .screen-column {
             display: flex;
