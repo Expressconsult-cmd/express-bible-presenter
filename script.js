@@ -213,7 +213,7 @@
             timerScale: 1.0,
             bgOpacity: 100, textBackingPanel: false, gradientGlowText: false,
             lowerThirdName: "", lowerThirdRole: "Ministering", lowerThirdVisible: false,
-            refColor: "", lowerThirdColor: "#ffffff",
+            refColor: "", refVisible: true, lowerThirdColor: "#ffffff",
             announcementText: "", announcementVisible: false, announcementEffect: "none", announcementPosition: "bottom", announcementBgColor: "#b45309",
             bgTransparent: false,
             displayMode: "text", mediaUrl: "", mediaKind: "", mediaName: "", mediaFit: "contain",
@@ -270,6 +270,7 @@
         window.onload = () => {
             if (isObsMode) {
                 document.body.classList.add('is-obs-mode');
+                document.documentElement.classList.add('obs-html');
                 bootObsSourceApplication();
             } else {
                 bootMainStudioPresentationSuite();
@@ -1811,7 +1812,10 @@ async function initMediaEngine() {
             }
 
             const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
-            const nudgeTransformStyle = (stateObject.textNudgeX || stateObject.textNudgeY) ? `transform: translate(${stateObject.textNudgeX || 0}%, ${stateObject.textNudgeY || 0}%);` : '';
+            // Nudge only applies in Lower Third. Uses the CSS "translate" property in canvas-width units (cqw), applied
+            // identically to the text AND the reference so they always move together, with no limit on distance.
+            const nudgeIsActive = stateObject.layout === 'mode-lowerthird' && (stateObject.textNudgeX || stateObject.textNudgeY);
+            const nudgeTransformStyle = nudgeIsActive ? `translate: ${stateObject.textNudgeX || 0}cqw ${stateObject.textNudgeY || 0}cqw;` : '';
             const customFontFamily = stateObject.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
             const customShadow = stateObject.textShadowStyle != null ? stateObject.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)";
             const isTextBold = !!stateObject.fontBold;
@@ -1866,7 +1870,7 @@ async function initMediaEngine() {
                 <div class="text-display-box-container ${transitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${nudgeTransformStyle} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
-                <div class="ref-out ${transitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
+                <div class="ref-out ${transitionClass}" style="${nudgeTransformStyle} ${stateObject.refVisible === false ? 'display: none !important;' : ''} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
                 <div class="canvas-timer-node ${stateObject.timerPosition || 'timer-top-right'} ${stateObject.timerSize || 'timer-size-medium'} ${stateObject.timerVisible ? 'timer-visible' : ''}" id="${canvasElement.id}OverlayTimer">${stateObject.timerText || '00:00'}</div>
                 ${nameBarHtml}
                 ${announcementHtml}
@@ -2362,6 +2366,16 @@ function songTabIsActive() {
             }
         }
 
+        function updateLowerThirdControlsVisibility() {
+            const isLowerThird = previewState.layout === 'mode-lowerthird';
+            const posGroup = document.getElementById('lowerThirdPositionGroup');
+            const nudgeGroup = document.getElementById('nudgeControlGroup');
+            if (posGroup) posGroup.style.display = isLowerThird ? '' : 'none';
+            if (nudgeGroup) nudgeGroup.style.display = isLowerThird ? '' : 'none';
+            const refEye = document.getElementById('refEyeToggleBtn');
+            if (refEye) refEye.classList.toggle('toggle-active', previewState.refVisible !== false);
+        }
+
         function setupStudioEventBindings() {
             listeningBtn.addEventListener('click', toggleListening);
             document.getElementById('freezeLiveBtn').addEventListener('click', () => {
@@ -2376,12 +2390,12 @@ function songTabIsActive() {
             document.getElementById('enableExtendedDisplayBtn').addEventListener('click', enableExtendedDisplayDetection);
             manualSearchInput.addEventListener('input', () => { parseAndRouteInput(manualSearchInput.value, false); });
             versionSelector.addEventListener('change', () => { fetchCurrentChapterFromAPI(); });
-            layoutSelector.addEventListener('change', () => { previewState.layout = layoutSelector.value; document.getElementById('lowerThirdPositionGroup').style.display = (layoutSelector.value === 'mode-lowerthird') ? '' : 'none'; renderPreview(); });
+            layoutSelector.addEventListener('change', () => { previewState.layout = layoutSelector.value; updateLowerThirdControlsVisibility(); renderPreview(); });
             document.getElementById('lowerThirdPositionSelector').addEventListener('change', (e) => { previewState.lowerThirdPosition = e.target.value; renderPreview(); });
 
             // Fine nudge — small, clamped percentage offsets so text can never be pushed fully off-frame
-            const NUDGE_STEP = 2, NUDGE_LIMIT = 30;
-            const clampNudge = (v) => Math.max(-NUDGE_LIMIT, Math.min(NUDGE_LIMIT, v));
+            const NUDGE_STEP = 1; // no limit — move as far up/down/left/right as you like
+            const clampNudge = (v) => v;
             document.getElementById('nudgeUpBtn').addEventListener('click', () => { previewState.textNudgeY = clampNudge((previewState.textNudgeY || 0) - NUDGE_STEP); renderPreview(); });
             document.getElementById('nudgeDownBtn').addEventListener('click', () => { previewState.textNudgeY = clampNudge((previewState.textNudgeY || 0) + NUDGE_STEP); renderPreview(); });
             document.getElementById('nudgeLeftBtn').addEventListener('click', () => { previewState.textNudgeX = clampNudge((previewState.textNudgeX || 0) - NUDGE_STEP); renderPreview(); });
@@ -2398,6 +2412,11 @@ function songTabIsActive() {
             document.getElementById('bgTransparentCheckbox').addEventListener('change', (e) => { previewState.bgTransparent = e.target.checked; renderPreview(); });
             document.getElementById('textColorPicker').addEventListener('input', () => { previewState.textColor = document.getElementById('textColorPicker').value; renderPreview(); });
             document.getElementById('refColorPicker').addEventListener('input', () => { previewState.refColor = document.getElementById('refColorPicker').value; renderPreview(); });
+            document.getElementById('refEyeToggleBtn').addEventListener('click', () => {
+                previewState.refVisible = previewState.refVisible === false;
+                updateLowerThirdControlsVisibility();
+                renderPreview();
+            });
             
             document.getElementById('masterImagePicker').addEventListener('change', (e) => {
                 const file = e.target.files[0];
@@ -2489,7 +2508,7 @@ function songTabIsActive() {
                     pauseAllMasterVideosExcept(previewState.mediaKind === 'video' ? previewState.mediaUrl : null);
                     document.getElementById('layoutSelector').value = previewState.layout;
                     document.getElementById('lowerThirdPositionSelector').value = previewState.lowerThirdPosition || 'bottom';
-                    document.getElementById('lowerThirdPositionGroup').style.display = (previewState.layout === 'mode-lowerthird') ? '' : 'none';
+                    updateLowerThirdControlsVisibility();
                     document.getElementById('fontSizeInput').value = previewState.fontSize;
                     document.getElementById('bgColorPicker').value = previewState.bgColor;
                     document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff';
@@ -3212,7 +3231,10 @@ function songTabIsActive() {
             }
 
             const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
-            const nudgeTransformStyle = (stateObject.textNudgeX || stateObject.textNudgeY) ? `transform: translate(${stateObject.textNudgeX || 0}%, ${stateObject.textNudgeY || 0}%);` : '';
+            // Nudge only applies in Lower Third. Uses the CSS "translate" property in canvas-width units (cqw), applied
+            // identically to the text AND the reference so they always move together, with no limit on distance.
+            const nudgeIsActive = stateObject.layout === 'mode-lowerthird' && (stateObject.textNudgeX || stateObject.textNudgeY);
+            const nudgeTransformStyle = nudgeIsActive ? `translate: ${stateObject.textNudgeX || 0}cqw ${stateObject.textNudgeY || 0}cqw;` : '';
             const textHiddenClass = (stateObject.timerVisible && stateObject.timerSolo) ? 'display: none !important;' : '';
             const flierOnlyTextHide = (stateObject.layout === 'mode-flieronly' || (stateObject.displayMode === 'media' && stateObject.mediaUrl)) ? 'display: none !important;' : '';
             const videoAloneHide = ''; // Video BG feature removed — Media tab now covers full-screen video
@@ -3244,7 +3266,7 @@ function songTabIsActive() {
                 <div class="text-display-box-container ${outTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${nudgeTransformStyle} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
-                <div class="ref-out ${outTransitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
+                <div class="ref-out ${outTransitionClass}" style="${nudgeTransformStyle} ${stateObject.refVisible === false ? 'display: none !important;' : ''} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
                 <div class="canvas-timer-node" id="${containerId}OverlayTimer">00:00</div>
                 ${nameBarHtml}
                 ${announcementHtml}
@@ -3477,7 +3499,7 @@ function songTabIsActive() {
                         : (importedData.savedPreviewState || importedData.savedLiveState || previewState);
                     Object.assign(previewState, restoredState);
                     liveState = previewState;
-                    document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('lowerThirdPositionSelector').value = previewState.lowerThirdPosition || 'bottom'; document.getElementById('lowerThirdPositionGroup').style.display = (previewState.layout === 'mode-lowerthird') ? '' : 'none'; document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('bgPresetSelector').value = previewState.bgPreset || ""; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || ""; document.getElementById('fontStyleOverrideSelector').value = previewState.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"; document.getElementById('textShadowSelector').value = previewState.textShadowStyle != null ? previewState.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)"; document.getElementById('fontBoldToggleBtn').classList.toggle('toggle-active', !!previewState.fontBold); document.getElementById('fontItalicToggleBtn').classList.toggle('toggle-active', !!previewState.fontItalic);
+                    document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('lowerThirdPositionSelector').value = previewState.lowerThirdPosition || 'bottom'; updateLowerThirdControlsVisibility(); document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('bgPresetSelector').value = previewState.bgPreset || ""; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || ""; document.getElementById('fontStyleOverrideSelector').value = previewState.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"; document.getElementById('textShadowSelector').value = previewState.textShadowStyle != null ? previewState.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)"; document.getElementById('fontBoldToggleBtn').classList.toggle('toggle-active', !!previewState.fontBold); document.getElementById('fontItalicToggleBtn').classList.toggle('toggle-active', !!previewState.fontItalic);
                     fetchCurrentChapterFromAPI(); renderPreview();
                 } catch (err) { console.error("Import failure: ", err); }
             };
