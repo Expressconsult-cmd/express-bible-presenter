@@ -5,11 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EXPRESS BIBLE PRESENTER V2 - PRODUCTION SUITE</title>
     <!-- APP ICON — upload the icons/ folder alongside index.html -->
-    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
-    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-    <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png?v=2">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=2">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#050a14">
     <!-- WEBRTC PEER CONNECTION CONTEXT LAYER -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <!-- DOCUMENT PARSING: for loading song lyrics from local .docx / .pdf files -->
@@ -252,7 +253,7 @@
                 </div>
 
                 <!-- Fine nudge — works in any layout, lets you fine-tune after picking a Position above -->
-                <div class="control-group" title="Fine-tune text position">
+                <div class="control-group" id="nudgeControlGroup" style="display:none;" title="Fine-tune lower-third position (moves text and reference together)">
                     <label>Nudge:</label>
                     <button id="nudgeUpBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▲</button>
                     <button id="nudgeDownBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▼</button>
@@ -273,7 +274,7 @@
 
                 <div class="control-group"><label for="textColorPicker">Text Colour:</label><input type="color" id="textColorPicker" value="#ffffff"></div>
 
-                <div class="control-group"><label for="refColorPicker" title="Colour of the Bible name/version reference shown under the text">Ref. Colour:</label><input type="color" id="refColorPicker" value="#38bdf8"></div>
+                <div class="control-group"><label for="refColorPicker" title="Colour of the Bible name/version reference shown under the text">Ref. Colour:</label><input type="color" id="refColorPicker" value="#38bdf8"><button id="refEyeToggleBtn" class="btn toggle-active" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" type="button" title="Show/hide the Bible name/version reference (text stays on screen)">👁</button></div>
 
                 <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; position: relative;">
                     <button id="textStyleToggleBtn" type="button" class="btn" style="background:#4c1d95; border-color:#6d28d9; padding: 0.4rem 0.75rem; font-size: 0.75rem;">TEXT STYLE ▾</button>
@@ -488,7 +489,7 @@
                 <div class="control-group" style="display: flex; gap: 0.4rem; flex-wrap: wrap; row-gap: 0.4rem; border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
                     <label style="color:#f59e0b;">Broadcast Timer:</label>
                     <input type="number" id="timerMinInput" value="5" min="0" max="99" style="width: 50px; padding: 0.25rem 0.4rem; text-align: center;">
-                    <span style="color:#475569;">:</span>
+                    <span style="color:var(--text-muted);">:</span>
                     <input type="number" id="timerSecInput" value="0" min="0" max="59" style="width: 50px; padding: 0.25rem 0.4rem; text-align: center;">
                     <button id="timerToggleStartBtn" class="btn" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; background: #0284c7; border-color: #0369a1;">Start</button>
                     <button id="timerResetBtn" class="btn" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; background: #334155; border-color: #475569;">Reset</button>
