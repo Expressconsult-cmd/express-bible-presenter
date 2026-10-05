@@ -207,7 +207,7 @@
         let previewState = { 
             text: "", ref: "", layout: "mode-center", lowerThirdPosition: "bottom", fontSize: "medium", bgColor: "#0f172a", textColor: "#ffffff",
             fontFamilyOverride: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif", fontBold: false, fontItalic: false,
-            textShadowStyle: "0 4px 12px rgba(0,0,0,0.98)",
+            textShadowStyle: "0 4px 12px rgba(0,0,0,0.98)", textNudgeX: 0, textNudgeY: 0,
             flierId: "", textBgUrl: "", isScrolling: false, logoPosition: "", logoSize: 6,
             timerVisible: false, timerSolo: false, timerText: "05:00", timerPosition: "timer-top-right", timerSize: "timer-size-medium",
             timerScale: 1.0,
@@ -1787,7 +1787,7 @@ async function initMediaEngine() {
             const existingVideoEl = canvasElement.querySelector('.canvas-video-bg-node:not(.media-layer-node)');
             const existingMediaEl = canvasElement.querySelector('video.media-layer-node');
 
-            canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'}`;
+            canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'} ${stateObject.bgTransparent ? 'bg-is-transparent' : ''}`;
             const contentSig = computeSceneContentSig(stateObject);
             const contentChanged = canvasElement.dataset.contentSig !== contentSig;
             canvasElement.dataset.contentSig = contentSig;
@@ -1811,6 +1811,7 @@ async function initMediaEngine() {
             }
 
             const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
+            const nudgeTransformStyle = (stateObject.textNudgeX || stateObject.textNudgeY) ? `transform: translate(${stateObject.textNudgeX || 0}%, ${stateObject.textNudgeY || 0}%);` : '';
             const customFontFamily = stateObject.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
             const customShadow = stateObject.textShadowStyle != null ? stateObject.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)";
             const isTextBold = !!stateObject.fontBold;
@@ -1838,7 +1839,7 @@ async function initMediaEngine() {
             const dynamicColorVar = `--dynamic-text-color: ${stateObject.textColor || '#38bdf8'};`;
 
             // Text backing panel (readability box behind text over busy backgrounds)
-            const backingPanelClass = stateObject.textBackingPanel ? 'backing-panel-active' : '';
+            const backingPanelClass = (stateObject.textBackingPanel && !stateObject.bgTransparent) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
 
             // Lower third name tag (e.g. "Ministering: Pastor Ade")
             const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
@@ -1862,7 +1863,7 @@ async function initMediaEngine() {
             `;
 
             canvasElement.innerHTML = `
-                <div class="text-display-box-container ${transitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
+                <div class="text-display-box-container ${transitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${nudgeTransformStyle} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
                 <div class="ref-out ${transitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
@@ -2127,6 +2128,12 @@ const VOICE_VERSION_ALIASES = [
     ['MSG', 'the message bible'], ['MSG', 'the message'], ['MSG', 'message bible'], ['MSG', 'msg'],
     ['ESV', 'english standard version'], ['ESV', 'e s v'], ['ESV', 'esv'],
     ['NASB', 'new american standard bible'], ['NASB', 'new american standard'], ['NASB', 'n a s b'], ['NASB', 'nasb'],
+    ['LSB', 'legacy standard bible'], ['LSB', 'l s b'], ['LSB', 'lsb'],
+    ['MEV', 'modern english version'], ['MEV', 'm e v'], ['MEV', 'mev'],
+    ['WEB', 'world english bible'], ['WEB', 'w e b'],
+    ['ASV', 'american standard version'], ['ASV', 'a s v'], ['ASV', 'asv'],
+    ['YLT', "young's literal translation"], ['YLT', 'youngs literal translation'], ['YLT', 'y l t'], ['YLT', 'ylt'],
+    ['DRB', 'douay rheims bible'], ['DRB', 'douay rheims'],
     ['KJV', 'king james version'], ['KJV', 'king james'], ['KJV', 'k j v'], ['KJV', 'kjv']
 ];
 const VOICE_VERSION_MAP = new Map(VOICE_VERSION_ALIASES.map(([code, phrase]) => [phrase, code]));
@@ -2371,6 +2378,15 @@ function songTabIsActive() {
             versionSelector.addEventListener('change', () => { fetchCurrentChapterFromAPI(); });
             layoutSelector.addEventListener('change', () => { previewState.layout = layoutSelector.value; document.getElementById('lowerThirdPositionGroup').style.display = (layoutSelector.value === 'mode-lowerthird') ? '' : 'none'; renderPreview(); });
             document.getElementById('lowerThirdPositionSelector').addEventListener('change', (e) => { previewState.lowerThirdPosition = e.target.value; renderPreview(); });
+
+            // Fine nudge — small, clamped percentage offsets so text can never be pushed fully off-frame
+            const NUDGE_STEP = 2, NUDGE_LIMIT = 30;
+            const clampNudge = (v) => Math.max(-NUDGE_LIMIT, Math.min(NUDGE_LIMIT, v));
+            document.getElementById('nudgeUpBtn').addEventListener('click', () => { previewState.textNudgeY = clampNudge((previewState.textNudgeY || 0) - NUDGE_STEP); renderPreview(); });
+            document.getElementById('nudgeDownBtn').addEventListener('click', () => { previewState.textNudgeY = clampNudge((previewState.textNudgeY || 0) + NUDGE_STEP); renderPreview(); });
+            document.getElementById('nudgeLeftBtn').addEventListener('click', () => { previewState.textNudgeX = clampNudge((previewState.textNudgeX || 0) - NUDGE_STEP); renderPreview(); });
+            document.getElementById('nudgeRightBtn').addEventListener('click', () => { previewState.textNudgeX = clampNudge((previewState.textNudgeX || 0) + NUDGE_STEP); renderPreview(); });
+            document.getElementById('nudgeResetBtn').addEventListener('click', () => { previewState.textNudgeX = 0; previewState.textNudgeY = 0; renderPreview(); });
 
             document.getElementById('fontSizeInput').addEventListener('change', () => {
                 previewState.fontSize = document.getElementById('fontSizeInput').value;
@@ -3174,7 +3190,7 @@ function songTabIsActive() {
             const customFontStyle = isTextItalic ? 'italic' : 'normal';
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
-            container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'}`;
+            container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'} ${stateObject.bgTransparent ? 'bg-is-transparent' : ''}`;
             container.style.fontFamily = customFontFamily;
             if (!stateObject.bgTransparent && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
                 container.style.backgroundColor = 'transparent';
@@ -3196,13 +3212,14 @@ function songTabIsActive() {
             }
 
             const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
+            const nudgeTransformStyle = (stateObject.textNudgeX || stateObject.textNudgeY) ? `transform: translate(${stateObject.textNudgeX || 0}%, ${stateObject.textNudgeY || 0}%);` : '';
             const textHiddenClass = (stateObject.timerVisible && stateObject.timerSolo) ? 'display: none !important;' : '';
             const flierOnlyTextHide = (stateObject.layout === 'mode-flieronly' || (stateObject.displayMode === 'media' && stateObject.mediaUrl)) ? 'display: none !important;' : '';
             const videoAloneHide = ''; // Video BG feature removed — Media tab now covers full-screen video
             const autoFontScale = 1;
             const gradientGlowClass = stateObject.gradientGlowText ? 'gradient-glow-active' : '';
             const dynamicColorVar = `--dynamic-text-color: ${stateObject.textColor || '#38bdf8'};`;
-            const backingPanelClass = stateObject.textBackingPanel ? 'backing-panel-active' : '';
+            const backingPanelClass = (stateObject.textBackingPanel && !stateObject.bgTransparent) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
 
             const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
             const nameBarHtml = `
@@ -3224,7 +3241,7 @@ function songTabIsActive() {
             `;
 
             container.innerHTML = `
-                <div class="text-display-box-container ${outTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
+                <div class="text-display-box-container ${outTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${nudgeTransformStyle} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
                 <div class="ref-out ${outTransitionClass}" style="${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
