@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EXPRESS BIBLE PRESENTER V2 - PRODUCTION SUITE</title>
+    <!-- APP ICON — upload the icons/ folder alongside index.html -->
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
     <!-- WEBRTC PEER CONNECTION CONTEXT LAYER -->
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <!-- DOCUMENT PARSING: for loading song lyrics from local .docx / .pdf files -->
@@ -206,15 +212,21 @@
             <!-- RIBBON PANEL: TEXT -->
             <div id="ribbon-text" class="ribbon-panel active">
                 <select id="versionSelector">
-                    <option value="KJV">KJV (King James Version, 1769)</option>
-                    <option value="NKJV">NKJV (New King James Version, 1982)</option>
-                    <option value="NIV">NIV (New International Version, 1984)</option>
-                    <option value="NIV2011">NIV (New International Version, 2011)</option>
-                    <option value="AMP">AMP (Amplified Bible, 2015)</option>
-                    <option value="NLT">NLT (New Living Translation, 2015)</option>
-                    <option value="MSG">MSG (The Message, 2002)</option>
-                    <option value="ESV">ESV (English Standard Version, 2016)</option>
-                    <option value="NASB">NASB (New American Standard Bible, 1995)</option>
+                    <option value="KJV">KJV (King James Version)</option>
+                    <option value="NKJV">NKJV (New King James Version)</option>
+                    <option value="NIV">NIV (New International Version)</option>
+                    <option value="NIV2011">NIV (New International Version, Updated Edition)</option>
+                    <option value="AMP">AMP (Amplified Bible)</option>
+                    <option value="NLT">NLT (New Living Translation)</option>
+                    <option value="MSG">MSG (The Message)</option>
+                    <option value="ESV">ESV (English Standard Version)</option>
+                    <option value="NASB">NASB (New American Standard Bible)</option>
+                    <option value="LSB">LSB (Legacy Standard Bible)</option>
+                    <option value="MEV">MEV (Modern English Version)</option>
+                    <option value="WEB">WEB (World English Bible)</option>
+                    <option value="ASV">ASV (American Standard Version)</option>
+                    <option value="YLT">YLT (Young's Literal Translation)</option>
+                    <option value="DRB">DRB (Douay-Rheims Bible)</option>
                 </select>
                 <input type="text" id="manualSearchInput" value="1 Cor 3" placeholder="Search reference... (e.g., Romans 12)">
                 <button id="listeningBtn" class="btn">Enable Live Voice</button>
@@ -237,6 +249,16 @@
                         <option value="center">Centered</option>
                         <option value="top">Top</option>
                     </select>
+                </div>
+
+                <!-- Fine nudge — works in any layout, lets you fine-tune after picking a Position above -->
+                <div class="control-group" title="Fine-tune text position">
+                    <label>Nudge:</label>
+                    <button id="nudgeUpBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▲</button>
+                    <button id="nudgeDownBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▼</button>
+                    <button id="nudgeLeftBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">◀</button>
+                    <button id="nudgeRightBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▶</button>
+                    <button id="nudgeResetBtn" class="btn" style="padding:0.3rem 0.5rem; font-size:0.7rem;" type="button" title="Reset to default position">Reset</button>
                 </div>
 
                 <div class="control-group">
