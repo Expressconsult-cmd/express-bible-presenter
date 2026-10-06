@@ -962,6 +962,7 @@ function pauseAllMasterVideosExcept(exceptUrl) {
 }
 
 function switchToTextDisplay() {
+    if (typeof slidesNoteExternalChange === 'function') slidesNoteExternalChange();
     if (previewState.displayMode !== 'media') return;
     previewState.displayMode = 'text';
     pauseAllMasterVideosExcept(null);
@@ -982,6 +983,8 @@ function refreshMediaDropdown(selectedId) {
 function showMedia(id) {
     const m = mediaLibrary.find(x => x.id === id);
     if (!m) return;
+    if (typeof slidesNoteExternalChange === 'function') slidesNoteExternalChange();
+    previewState.slideTransition = ''; previewState.slidePrevUrl = '';
     if (m.kind === 'pdf') { showPdfMediaPage(m, 1); return; }
     if (m.kind === 'pptx') { showPptxMediaPage(m, 1); return; }
     pauseAllMasterVideosExcept(m.kind === 'video' ? m.url : null);
@@ -1246,8 +1249,20 @@ function attachMediaLayer(container, ownerDoc, state, existingMediaEl, reusable)
             { className: 'canvas-video-bg-node media-layer-node', opacity: 1, muted: true });
         sink.style.objectFit = fit;
     } else {
+        const slideAnim = state.slideTransition && state.slideTransition !== 'cut' ? state.slideTransition : '';
+        if (slideAnim && state.slidePrevUrl && state.slidePrevUrl !== state.mediaUrl) {
+            const { node: prevImg } = layerFromCache(reusable, 'media:' + state.slidePrevUrl, () => { const el = ownerDoc.createElement('img'); el.src = state.slidePrevUrl; return el; });
+            prevImg.className = 'media-layer-node'; prevImg.style.objectFit = fit;
+            container.appendChild(prevImg); // the outgoing slide stays underneath so transitions blend instead of flashing black
+        }
         const { node: img } = layerFromCache(reusable, 'media:' + state.mediaUrl, () => { const el = ownerDoc.createElement('img'); el.src = state.mediaUrl; return el; });
         img.className = 'media-layer-node'; img.style.objectFit = fit;
+        if (slideAnim && String(state.slideSeq || '') !== img.dataset.slSeq) { // play the entry animation once per slide change
+            img.dataset.slSeq = String(state.slideSeq || '');
+            const cls = 'ebp-sl-' + slideAnim;
+            img.classList.add(cls);
+            img.addEventListener('animationend', () => img.classList.remove(cls), { once: true });
+        }
         container.appendChild(img);
     }
 }
@@ -1304,6 +1319,7 @@ async function initMediaEngine() {
         try { await mediaDB.remove(id); } catch (err) {}
         refreshMediaDropdown(); updateMediaPanelStatus();
     });
+    initSlidesDisplay();
 }
 
 // BROADCAST CHRONOMETER TIMER SERVICE MODULE
@@ -1989,6 +2005,7 @@ async function initMediaEngine() {
 
             recognition.onstart = () => {
                 voiceCommitted = { utterance: -1, sig: '' }; // fresh recognition session -> fresh utterance numbering
+                if (typeof aiState !== 'undefined') aiState.results = {};
                 isListening = true; 
                 const btn = document.getElementById('listeningBtn');
                 btn.innerText = "Disable Live Voice"; 
@@ -2052,7 +2069,7 @@ async function initMediaEngine() {
 
                 renderTranscriptLog(finalTranscriptText, interimTranscriptText);
                 processContinuousSpeechForScriptures(event);
-                updateScriptureSuggestions(event);
+                aiOnSpeech(event);
             };
         }
 
@@ -2176,15 +2193,11 @@ function renderScriptureSuggestions(spokenStems) {
             const lw = part.toLowerCase();
             return (spokenStems && !SUGGEST_STOP.has(lw) && lw.length >= 3 && spokenStems.has(suggestStem(lw))) ? `<mark>${safe}</mark>` : safe;
         }).join('');
-        row.innerHTML = `<span class="ws-ref">${ref}${idx === 0 ? ' · best match' : ''}</span><span class="ws-snippet">${snippet}</span>`;
-        const open = async (live) => {
-            if (live) forceTextVisibleOnDoubleClick();
-            currentBookCode = item.book; currentBookName = cleanBookNames[item.book]; currentChapter = item.chapter; currentVerse = item.verse;
-            await fetchCurrentChapterFromAPI();
-            selectSpecificVerseCoordinate(item.verse);
-            if (live) sendStagedToLiveView();
-        };
-        row.addEventListener('click', () => open(false));
+        const confBadge = item.conf != null ? `<span class="ws-conf ${item.conf >= 90 ? 'hi' : (item.conf >= 80 ? 'mid' : 'lo')}">${item.conf}%</span>` : '';
+        row.innerHTML = `<span class="ws-ref">${confBadge}${ref}${idx === 0 ? ' · best match' : ''}${item.autoShown ? ' · ✓ shown automatically' : ''}</span><span class="ws-snippet">${snippet}</span>`
+            + `<span class="ws-actions"><button type="button" class="btn" data-act="show">▶ Display</button></span>`;
+        const open = (live) => openSuggestedScripture(item, live);
+        row.addEventListener('click', (e) => { if (e.target.dataset && e.target.dataset.act === 'show') open(true); else open(false); });
         row.addEventListener('dblclick', () => open(true));
         box.appendChild(row);
     });
@@ -3155,6 +3168,24 @@ function songTabIsActive() {
                         .ebp-transition-fade { animation: ebpTransFade 0.85s ease both; }
                         .ebp-transition-slide { animation: ebpTransSlide 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; }
                         .ebp-transition-zoom { animation: ebpTransZoom 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+                        @keyframes ebpSlFade { from { opacity: 0; } to { opacity: 1; } }
+                        @keyframes ebpSlLeft { from { transform: translateX(100%); } to { transform: translateX(0); } }
+                        @keyframes ebpSlRight { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+                        @keyframes ebpSlUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+                        @keyframes ebpSlZoomIn { from { opacity: 0; transform: scale(0.75); } to { opacity: 1; transform: scale(1); } }
+                        @keyframes ebpSlZoomOut { from { opacity: 0; transform: scale(1.3); } to { opacity: 1; transform: scale(1); } }
+                        @keyframes ebpSlBlur { from { opacity: 0; filter: blur(28px); } to { opacity: 1; filter: blur(0); } }
+                        @keyframes ebpSlFlip { from { opacity: 0; transform: perspective(1400px) rotateY(88deg); } to { opacity: 1; transform: perspective(1400px) rotateY(0); } }
+                        @keyframes ebpSlWipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+                        .ebp-sl-fade { animation: ebpSlFade 0.9s ease both; }
+                        .ebp-sl-left { animation: ebpSlLeft 0.8s cubic-bezier(0.22,1,0.36,1) both; }
+                        .ebp-sl-right { animation: ebpSlRight 0.8s cubic-bezier(0.22,1,0.36,1) both; }
+                        .ebp-sl-up { animation: ebpSlUp 0.8s cubic-bezier(0.22,1,0.36,1) both; }
+                        .ebp-sl-zoomin { animation: ebpSlZoomIn 0.8s cubic-bezier(0.22,1,0.36,1) both; }
+                        .ebp-sl-zoomout { animation: ebpSlZoomOut 0.8s cubic-bezier(0.22,1,0.36,1) both; }
+                        .ebp-sl-blur { animation: ebpSlBlur 0.9s ease both; }
+                        .ebp-sl-flip { animation: ebpSlFlip 0.9s ease both; }
+                        .ebp-sl-wipe { animation: ebpSlWipe 0.8s ease both; }
                         .canvas-video-bg-node { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 1; pointer-events: none; }
                         .media-layer-node { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; background: #000; pointer-events: none; object-fit: contain; }
                         .canvas-video-bg-node.media-layer-node { z-index: 3; }
@@ -3763,3 +3794,401 @@ function songTabIsActive() {
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
+
+// ===================== SLIDES DISPLAY (Media tab): many images, one after another, with transitions + timing =====================
+const slides = { items: [], index: 0, visible: false, playing: true, internal: false, timer: null, seq: 0,
+                 interval: 6, transition: 'fade', fit: 'contain', auto: true, loop: true };
+const SLIDES_STORE = 'ebpSlidesConfig';
+
+function slidesSave() {
+    try { localStorage.setItem(SLIDES_STORE, JSON.stringify({ items: slides.items, interval: slides.interval, transition: slides.transition, fit: slides.fit, auto: slides.auto, loop: slides.loop })); } catch (e) {}
+}
+function slidesMedia(id) { return mediaLibrary.find(m => m.id === id && m.kind === 'image'); }
+
+// Any other media / text taking over the screen stops the slideshow (so it never fights the operator).
+function slidesNoteExternalChange() {
+    if (slides.internal || !slides.visible) return;
+    slides.visible = false; clearTimeout(slides.timer);
+    slidesRefreshUI();
+}
+
+function slidesStopTimer() { clearTimeout(slides.timer); slides.timer = null; }
+function slidesScheduleNext() {
+    slidesStopTimer();
+    if (!slides.visible || !slides.auto || !slides.playing || slides.items.length < 2) return;
+    slides.timer = setTimeout(() => {
+        const last = slides.index >= slides.items.length - 1;
+        if (last && !slides.loop) { slides.playing = false; slidesRefreshUI(); return; }
+        slidesGo((slides.index + 1) % slides.items.length);
+    }, Math.max(1, slides.interval) * 1000);
+}
+
+function slidesGo(i) {
+    const n = slides.items.length;
+    if (!n) return;
+    slides.index = ((i % n) + n) % n;
+    const m = slidesMedia(slides.items[slides.index]);
+    if (!m) { slidesRefreshUI(); return; }
+    const wasShowingSlide = previewState.displayMode === 'media' && previewState.mediaKind === 'image';
+    const prevUrl = wasShowingSlide ? previewState.mediaUrl : '';
+    slides.internal = true;
+    try {
+        pauseAllMasterVideosExcept(null);
+        slides.seq++;
+        Object.assign(previewState, { mediaUrl: m.url, mediaKind: 'image', mediaName: m.name, displayMode: 'media', mediaFit: slides.fit,
+            mediaPdfId: '', mediaPdfPage: 1, mediaPdfPageCount: 0, slideTransition: slides.transition, slideSeq: slides.seq, slidePrevUrl: prevUrl });
+        slides.visible = true;
+        updateMediaPanelStatus();
+        renderPreview();
+        const seq = slides.seq;
+        if (prevUrl) setTimeout(() => { if (slides.seq === seq && previewState.mediaUrl === m.url) { previewState.slidePrevUrl = ''; renderPreview(); } }, 1100);
+    } finally { slides.internal = false; }
+    slidesRefreshUI();
+    slidesScheduleNext();
+}
+
+function slidesSetVisible(on) {
+    if (on) {
+        if (!slides.items.length) { slidesRefreshUI(); return; }
+        slides.playing = true;
+        slidesGo(Math.min(slides.index, slides.items.length - 1));
+    } else {
+        slidesStopTimer();
+        slides.visible = false;
+        slides.internal = true;
+        try { switchToTextDisplay(); previewState.slideTransition = ''; previewState.slidePrevUrl = ''; renderPreview(); } finally { slides.internal = false; }
+        slidesRefreshUI();
+    }
+}
+
+function slidesRefreshUI() {
+    const $ = id => document.getElementById(id);
+    if (!$('slidesList')) return;
+    const eye = $('slidesEyeBtn');
+    eye.classList.toggle('toggle-active', slides.visible);
+    eye.style.opacity = slides.visible ? '1' : '0.6';
+    $('slidesStatus').innerText = !slides.items.length ? 'No slides yet' : (slides.visible ? `● Slide ${slides.index + 1} / ${slides.items.length} on screen` : `${slides.items.length} slide${slides.items.length > 1 ? 's' : ''} ready (eye is closed)`);
+    $('slidesStatus').style.color = slides.visible ? 'var(--accent-live)' : 'var(--text-muted)';
+    $('slidesCounter').innerText = slides.items.length ? `${slides.index + 1} / ${slides.items.length}` : '— / —';
+    $('slidesPlayBtn').innerText = slides.playing ? '⏸ Pause' : '▶ Play';
+    const list = $('slidesList');
+    list.innerHTML = '';
+    if (!slides.items.length) { list.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted);">Add several pictures, choose a transition and the time per slide, then open the eye to show them.</div>'; }
+    slides.items.forEach((id, i) => {
+        const m = slidesMedia(id);
+        const row = document.createElement('div');
+        row.className = 'slide-row' + (i === slides.index ? ' is-current' : '');
+        row.innerHTML = `<span style="font-size:0.7rem; color:var(--text-muted); width:1.2rem;">${i + 1}</span><img src="${m ? m.url : ''}" alt=""><span class="slide-name">${m ? escapeHtmlText(m.name) : 'Missing image'}</span>`
+            + `<button type="button" class="btn" data-act="up" title="Move up">↑</button><button type="button" class="btn" data-act="down" title="Move down">↓</button><button type="button" class="btn" data-act="del" title="Remove" style="background:#7f1d1d; border-color:#991b1b;">✕</button>`;
+        row.addEventListener('click', (e) => {
+            const act = e.target.dataset && e.target.dataset.act;
+            if (act === 'up' && i > 0) { [slides.items[i - 1], slides.items[i]] = [slides.items[i], slides.items[i - 1]]; if (slides.index === i) slides.index--; else if (slides.index === i - 1) slides.index++; }
+            else if (act === 'down' && i < slides.items.length - 1) { [slides.items[i + 1], slides.items[i]] = [slides.items[i], slides.items[i + 1]]; if (slides.index === i) slides.index++; else if (slides.index === i + 1) slides.index--; }
+            else if (act === 'del') { slides.items.splice(i, 1); if (slides.index >= slides.items.length) slides.index = Math.max(0, slides.items.length - 1); if (!slides.items.length && slides.visible) { slidesSave(); slidesSetVisible(false); return; } }
+            else if (!act) { slidesSave(); slidesGo(i); return; }
+            slidesSave(); slidesRefreshUI();
+        });
+        list.appendChild(row);
+    });
+    const sel = $('slidesLibrarySelect');
+    sel.innerHTML = '<option value="">Add from saved media…</option>' + mediaLibrary.filter(m => m.kind === 'image').map(m => `<option value="${m.id}">🖼 ${escapeHtmlText(m.name)}</option>`).join('');
+}
+
+function initSlidesDisplay() {
+    const $ = id => document.getElementById(id);
+    if (!$('slidesToggleBtn')) return;
+    try {
+        const saved = JSON.parse(localStorage.getItem(SLIDES_STORE) || 'null');
+        if (saved) Object.assign(slides, { items: Array.isArray(saved.items) ? saved.items : [], interval: saved.interval || 6, transition: saved.transition || 'fade', fit: saved.fit || 'contain', auto: saved.auto !== false, loop: saved.loop !== false });
+    } catch (e) {}
+    slides.items = slides.items.filter(id => slidesMedia(id)); // drop images that were deleted from the library
+    $('slidesIntervalInput').value = slides.interval; $('slidesTransitionSelect').value = slides.transition; $('slidesFitSelect').value = slides.fit;
+    $('slidesAutoCheck').checked = slides.auto; $('slidesLoopCheck').checked = slides.loop;
+
+    $('slidesToggleBtn').addEventListener('click', (e) => { e.stopPropagation(); $('slidesDropdown').classList.toggle('open'); });
+    $('slidesDropdown').addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => $('slidesDropdown').classList.remove('open'));
+    $('slidesEyeBtn').addEventListener('click', () => slidesSetVisible(!slides.visible));
+
+    $('slidesAddBtn').addEventListener('click', () => $('slidesFilePicker').click());
+    $('slidesFilePicker').addEventListener('change', async (e) => {
+        for (const file of Array.from(e.target.files || [])) {
+            if (!file.type.startsWith('image/')) continue;
+            const rec = { id: 'media_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), name: file.name, kind: 'image', addedAt: Date.now(), blob: file };
+            mediaLibrary.unshift({ id: rec.id, name: rec.name, kind: 'image', addedAt: rec.addedAt, url: URL.createObjectURL(file) });
+            try { await mediaDB.put(rec); } catch (err) { console.warn('Could not save image permanently (session-only):', err); }
+            slides.items.push(rec.id);
+        }
+        e.target.value = '';
+        refreshMediaDropdown($('mediaLibraryDropdown').value);
+        slidesSave(); slidesRefreshUI();
+    });
+    $('slidesLibrarySelect').addEventListener('change', (e) => {
+        if (e.target.value) { slides.items.push(e.target.value); slidesSave(); }
+        slidesRefreshUI();
+    });
+    $('slidesClearBtn').addEventListener('click', () => {
+        if (!slides.items.length || !confirm('Remove all images from the slideshow? (They stay in your saved media.)')) return;
+        slides.items = []; slides.index = 0; slidesSave();
+        if (slides.visible) slidesSetVisible(false); else slidesRefreshUI();
+    });
+    $('slidesTransitionSelect').addEventListener('change', (e) => { slides.transition = e.target.value; slidesSave(); });
+    $('slidesIntervalInput').addEventListener('change', (e) => { slides.interval = Math.max(1, Math.min(600, parseInt(e.target.value, 10) || 6)); e.target.value = slides.interval; slidesSave(); slidesScheduleNext(); });
+    $('slidesFitSelect').addEventListener('change', (e) => {
+        slides.fit = e.target.value; slidesSave();
+        if (slides.visible) { previewState.mediaFit = slides.fit; const fitSel = $('mediaFitSelector'); if (fitSel) fitSel.value = slides.fit; renderPreview(); }
+    });
+    $('slidesAutoCheck').addEventListener('change', (e) => { slides.auto = e.target.checked; slidesSave(); slidesScheduleNext(); });
+    $('slidesLoopCheck').addEventListener('change', (e) => { slides.loop = e.target.checked; slidesSave(); });
+    $('slidesPrevBtn').addEventListener('click', () => { if (slides.items.length) slidesGo(slides.index - 1); });
+    $('slidesNextBtn').addEventListener('click', () => { if (slides.items.length) slidesGo(slides.index + 1); });
+    $('slidesPlayBtn').addEventListener('click', () => {
+        slides.playing = !slides.playing;
+        slidesRefreshUI();
+        if (slides.playing) slidesScheduleNext(); else slidesStopTimer();
+    });
+    slidesRefreshUI();
+}
+
+// ===================== AI SCRIPTURE DETECTION (offline Bible index + confidence-scored matching) =====================
+// Pipeline: microphone -> browser speech engine -> rolling transcript (last N seconds) -> local Bible index
+//           -> confidence % -> auto-display / operator suggestion. After the one-time index download it needs no internet.
+const AI_STORE = 'ebpAiConfig';
+const AI_SURE_THRESHOLD = 95;   // at or above this, a match is displayed automatically
+const aiConfig = { enabled: false, auto: false, autoThreshold: 90, suggestThreshold: 70, windowSeconds: 20 };
+const AI_CHAPTERS = [50,40,27,36,34,24,21,4,31,24,22,25,29,36,10,13,10,42,150,31,12,8,66,52,5,48,12,14,3,9,1,4,7,3,3,3,2,14,4,28,16,24,21,28,16,16,13,6,6,4,4,5,3,6,4,3,1,13,5,5,3,5,1,1,1,22];
+const aiIndex = { ready: false, building: false, version: '', verses: [], seqs: [], sets: [], idf: new Map(), post: new Map(), vIdfTotal: [] };
+const aiState = { results: {}, floor: 0, lastKey: '', stableCount: 0, lastAutoKey: '', lastAutoTime: 0, timer: null, lastRun: 0 };
+
+const AI_SYN = (() => {
+    const g = (canon, words) => words.split(' ').reduce((o, w) => (o[w] = canon, o), {});
+    return Object.assign({},
+        { thou: 'you', thee: 'you', ye: 'you', thy: 'your', thine: 'your', hath: 'have', hast: 'have', doth: 'do', dost: 'do', art: 'are', wilt: 'will', shalt: 'shall', unto: 'to', saith: 'say', said: 'say', says: 'say', lord: 'god', jehovah: 'god', yahweh: 'god', dont: 'not', cant: 'not', wont: 'not', nor: 'not', neither: 'not', never: 'not', 'no': 'not' },
+        g('weary', 'tired exhausted labour labor labours laboured toil toiling worn fatigued'),
+        g('burden', 'burdens burdened burdensome laden loaded load loads weight weights carrying'),
+        g('fear', 'afraid scared frightened terrified fearful dread dismayed anxious worry worried worry'),
+        g('lean', 'depend depends rely relies rest'),
+        g('understand', 'understanding wisdom insight'),
+        g('forsak', 'abandon abandoned abandons forsake forsaken forsook desert deserted'),
+        g('leav', 'leave leaves leaving left'),
+        g('promis', 'promise promised promises pledged'),
+        g('strong', 'strength strengthen strengthens mighty power powerful courage courageous'),
+        g('help', 'helper helps helped assist aid'),
+        g('save', 'saved saves saving savior saviour salvation rescue rescued deliver delivered'),
+        g('peace', 'calm calmness quiet tranquil'),
+        g('joy', 'joyful rejoice rejoicing glad gladness happy happiness'),
+        g('forgiv', 'forgive forgave forgiven forgiveness pardon'),
+        g('sin', 'sins sinned sinner sinners wrongdoing transgression transgressions iniquity trespass trespasses'),
+        g('father', 'dad daddy abba'),
+        g('whosoev', 'whoever anyone everyone whomever'),
+        g('believ', 'believe believes believed believing faith trust trusts trusted'),
+        g('everlast', 'eternal forever endless perpetual'),
+        g('perish', 'die dies destroyed destroy destruction'),
+        g('begotten', 'only unique'),
+        g('hope', 'hopes hoped hopeful expectation'),
+        g('path', 'paths way ways road roads direct directs guide guides lead leads'),
+        g('wait', 'waits waited patient patience'),
+        g('heal', 'heals healed healing healer cure cured'),
+        g('creat', 'create created creator made make makes'),
+        g('beginn', 'beginning start started origin'),
+        g('shepherd', 'shepherds pastor'),
+        g('mind', 'thoughts thinking intellect'),
+        g('child', 'children kids kid son sons'),
+        g('righteous', 'righteousness upright just justice'),
+        g('prais', 'praise worship worships worshipped exalt glorify')
+    );
+})();
+const AI_STOP = new Set('a an the and or of to in on at by for with from as is are was were be been being am it its he him she her they them their we us our you your i me my this that these those there here which who whom what when then so but if do does did will would shall should can could may might must have has had also all-the'.split(' '));
+function aiStem(w) {
+    if (w.length > 4) w = w.replace(/(ing|eth|est|ed|es|s)$/, '');
+    return w;
+}
+function aiCanon(raw) {
+    let w = raw;
+    if (AI_SYN[w]) w = AI_SYN[w];
+    else { const s = aiStem(w); w = AI_SYN[s] || s; }
+    return w;
+}
+// text -> ordered list of canonical content stems (function words dropped)
+function aiTokens(text) {
+    let t = String(text || '').toLowerCase().replace(/[‘’']/g, "'")
+        .replace(/n't\b/g, ' not').replace(/'(ll|ve|re|d|s|m)\b/g, ' ').replace(/[^a-z\s]/g, ' ');
+    return t.split(/\s+/).filter(Boolean).map(aiCanon).filter(w => w && !AI_STOP.has(w));
+}
+
+// ---- storage (IndexedDB) so the Bible is only downloaded once per version ----
+const aiDB = (() => {
+    const open = () => new Promise((res, rej) => { const r = indexedDB.open('ebpBibleIndex', 1); r.onupgradeneeded = () => r.result.createObjectStore('idx', { keyPath: 'version' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const run = (mode, fn) => open().then(db => new Promise((res, rej) => { const tx = db.transaction('idx', mode); const rq = fn(tx.objectStore('idx')); tx.oncomplete = () => res(rq.result); tx.onerror = tx.onabort = () => rej(tx.error); }));
+    return { get: v => run('readonly', s => s.get(v)), put: rec => run('readwrite', s => s.put(rec)), keys: () => run('readonly', s => s.getAllKeys()) };
+})();
+
+function aiBuildStructures(version, verses) {
+    aiIndex.version = version; aiIndex.verses = verses;
+    aiIndex.seqs = new Array(verses.length); aiIndex.sets = new Array(verses.length);
+    const df = new Map();
+    verses.forEach((v, i) => {
+        const seq = aiTokens(v[3]); aiIndex.seqs[i] = seq;
+        const set = new Set(seq); aiIndex.sets[i] = set;
+        set.forEach(s => df.set(s, (df.get(s) || 0) + 1));
+    });
+    const N = verses.length;
+    aiIndex.idf = new Map(); aiIndex.post = new Map();
+    df.forEach((d, s) => aiIndex.idf.set(s, Math.log(1 + N / d)));
+    aiIndex.sets.forEach((set, i) => set.forEach(s => { if (df.get(s) <= 1500) { let p = aiIndex.post.get(s); if (!p) aiIndex.post.set(s, p = []); p.push(i); } }));
+    aiIndex.vIdfTotal = aiIndex.sets.map(set => { let t = 0; set.forEach(s => t += aiIndex.idf.get(s)); return t; });
+    aiIndex.ready = verses.length > 1000 || verses._test === true;
+}
+
+async function aiLoadSavedIndex(preferVersion) {
+    try {
+        const keys = await aiDB.keys();
+        if (!keys.length) return false;
+        const pick = keys.includes(preferVersion) ? preferVersion : (keys.includes('KJV') ? 'KJV' : keys[0]);
+        const rec = await aiDB.get(pick);
+        if (rec && rec.verses && rec.verses.length) { aiBuildStructures(pick, rec.verses); return true; }
+    } catch (e) { console.warn('AI index unavailable:', e); }
+    return false;
+}
+
+async function aiBuildIndex(version, onProgress) {
+    if (aiIndex.building) return;
+    aiIndex.building = true;
+    const jobs = [];
+    AI_CHAPTERS.forEach((n, b) => { for (let c = 1; c <= n; c++) jobs.push([b + 1, c]); });
+    const verses = []; let done = 0, failed = 0;
+    const worker = async () => {
+        while (jobs.length) {
+            const [book, chap] = jobs.shift();
+            let data = null;
+            for (let attempt = 0; attempt < 3 && !data; attempt++) {
+                try { const r = await fetch(`https://bolls.life/get-text/${version}/${book}/${chap}/`); if (r.ok) data = await r.json(); } catch (e) {}
+            }
+            if (Array.isArray(data)) data.forEach(v => verses.push([book, chap, v.verse, String(v.text || '').replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()]));
+            else failed++;
+            done++;
+            if (onProgress) onProgress(done, AI_CHAPTERS.reduce((a, b) => a + b, 0), failed);
+        }
+    };
+    try {
+        await Promise.all(Array.from({ length: 6 }, worker));
+        if (failed > 40) throw new Error(`${failed} chapters could not be downloaded — check your internet and try again.`);
+        verses.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+        try { await aiDB.put({ version, verses, builtAt: Date.now() }); } catch (e) { console.warn('Could not save index (it will work this session only):', e); }
+        aiBuildStructures(version, verses);
+    } finally { aiIndex.building = false; }
+}
+
+// ---- the matching engine ----
+function aiMatch(contextText, maxResults = 3) {
+    if (!aiIndex.ready) return [];
+    const ctx = aiTokens(contextText);
+    if (ctx.length < 3) return [];
+    const ctxSet = new Set(ctx);
+    const acc = new Map();
+    ctxSet.forEach(s => { const p = aiIndex.post.get(s); if (!p) return; const w = aiIndex.idf.get(s); for (let k = 0; k < p.length; k++) acc.set(p[k], (acc.get(p[k]) || 0) + w); });
+    const cand = Array.from(acc.entries()).sort((a, b) => b[1] - a[1]).slice(0, 80);
+    const out = [];
+    for (const [vi] of cand) {
+        const set = aiIndex.sets[vi], seq = aiIndex.seqs[vi];
+        if (!set.size) continue;
+        let matchedIdf = 0, matched = 0;
+        set.forEach(s => { if (ctxSet.has(s)) { matched++; matchedIdf += aiIndex.idf.get(s); } });
+        if (matched < Math.min(3, set.size) || matchedIdf < 6) continue;
+        const cov = matchedIdf / aiIndex.vIdfTotal[vi];
+        // longest run of verse words that also appear back-to-back (in order) in what was said
+        let best = 0, prev = new Array(ctx.length + 1).fill(0);
+        for (let i = 1; i <= seq.length; i++) {
+            const cur = new Array(ctx.length + 1).fill(0);
+            for (let j = 1; j <= ctx.length; j++) if (seq[i - 1] === ctx[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) best = cur[j]; }
+            prev = cur;
+        }
+        const runFrac = Math.min(1, best / Math.max(3, Math.ceil(seq.length * 0.7)));
+        let conf = 100 * (0.55 * cov + 0.35 * runFrac + 0.10 * Math.min(1, matchedIdf / 20));
+        conf = Math.min(cov >= 0.999 && runFrac >= 0.999 ? 100 : 99, conf);
+        const v = aiIndex.verses[vi];
+        out.push({ book: v[0], chapter: v[1], verse: v[2], text: v[3], conf: Math.round(conf), version: aiIndex.version });
+    }
+    return out.sort((a, b) => b.conf - a.conf).slice(0, maxResults);
+}
+
+// ---- rolling transcript (last N seconds) ----
+function aiTouchResults(event) {
+    const now = Date.now();
+    for (let i = event.resultIndex; i < event.results.length; i++) aiState.results[i] = { t: now, text: event.results[i][0].transcript };
+}
+function aiContextText() {
+    const now = Date.now(), min = Math.max(now - aiConfig.windowSeconds * 1000, aiState.floor);
+    return Object.keys(aiState.results).map(Number).sort((a, b) => a - b).map(i => aiState.results[i]).filter(r => r.t >= min).map(r => r.text).join(' ');
+}
+
+// ---- display / approval ----
+async function openSuggestedScripture(item, live) {
+    if (live) forceTextVisibleOnDoubleClick();
+    currentBookCode = item.book; currentBookName = cleanBookNames[item.book]; currentChapter = item.chapter; currentVerse = item.verse;
+    await fetchCurrentChapterFromAPI();
+    selectSpecificVerseCoordinate(item.verse);
+    if (live) sendStagedToLiveView();
+}
+function aiIsCurrent(item) { return item.book === currentBookCode && item.chapter === currentChapter && item.verse === currentVerse; }
+
+function aiOnSpeech(event) {
+    if (!(aiConfig.enabled && aiIndex.ready)) { updateScriptureSuggestions(event); return; }
+    aiTouchResults(event);
+    if (aiState.timer) return;
+    const wait = Math.max(0, 250 - (Date.now() - aiState.lastRun));
+    aiState.timer = setTimeout(() => { aiState.timer = null; aiState.lastRun = Date.now(); aiDetectNow(); }, wait);
+}
+
+function aiDetectNow() {
+    const status = document.getElementById('suggestStatus');
+    const ctx = aiContextText();
+    const results = aiMatch(ctx, 3);
+    const good = results.filter(r => r.conf >= aiConfig.suggestThreshold);
+    if (status) status.innerText = good.length ? `AI detection — ${good[0].conf}% best match` : `AI listening… no match above ${aiConfig.suggestThreshold}% yet`;
+    if (!good.length) { aiState.lastKey = ''; aiState.stableCount = 0; return; }
+    const top = good[0], key = `${top.book}:${top.chapter}:${top.verse}`;
+    aiState.stableCount = (key === aiState.lastKey) ? aiState.stableCount + 1 : 1;
+    aiState.lastKey = key;
+    const eligible = top.conf >= AI_SURE_THRESHOLD || (aiConfig.auto && top.conf >= aiConfig.autoThreshold);
+    if (eligible && aiState.stableCount >= 2 && key !== aiState.lastAutoKey && Date.now() - aiState.lastAutoTime > 3000 && !aiIsCurrent(top)) {
+        aiState.lastAutoKey = key; aiState.lastAutoTime = Date.now(); aiState.floor = Date.now();
+        top.autoShown = true;
+        openSuggestedScripture(top, true);
+        if (typeof setVoiceNote === 'function') setVoiceNote(`AI matched ${cleanBookNames[top.book]} ${top.chapter}:${top.verse} (${top.conf}%)`);
+    }
+    suggestItems = good;
+    renderScriptureSuggestions(null);
+}
+
+// ---- Settings UI ----
+function aiSaveConfig() { try { localStorage.setItem(AI_STORE, JSON.stringify(aiConfig)); } catch (e) {} }
+function aiRefreshStatus(extra) {
+    const el = document.getElementById('aiIndexStatus');
+    if (!el) return;
+    el.innerText = extra || (aiIndex.building ? 'Building index…' : (aiIndex.ready ? `Offline index ready — ${aiIndex.version}, ${aiIndex.verses.length.toLocaleString()} verses` : 'No offline index yet — build it once (needs internet), then detection works offline.'));
+    ['aiEnableCheck', 'aiQuickToggle'].forEach(id => { const c = document.getElementById(id); if (c) c.checked = aiConfig.enabled; });
+}
+function initAiScriptureDetection() {
+    const $ = id => document.getElementById(id);
+    if (!$('aiEnableCheck')) return;
+    try { Object.assign(aiConfig, JSON.parse(localStorage.getItem(AI_STORE) || '{}')); } catch (e) {}
+    $('aiAutoCheck').checked = aiConfig.auto; $('aiAutoThreshold').value = aiConfig.autoThreshold;
+    $('aiSuggestThreshold').value = aiConfig.suggestThreshold; $('aiWindowSeconds').value = aiConfig.windowSeconds;
+    const setEnabled = on => { aiConfig.enabled = on; aiSaveConfig(); aiRefreshStatus(); if (on && !aiIndex.ready) { const st = $('suggestStatus'); if (st) st.innerText = 'AI detection needs the offline index — Settings → AI Scripture Detection → Build.'; } };
+    $('aiEnableCheck').addEventListener('change', e => setEnabled(e.target.checked));
+    $('aiQuickToggle').addEventListener('change', e => setEnabled(e.target.checked));
+    $('aiAutoCheck').addEventListener('change', e => { aiConfig.auto = e.target.checked; aiSaveConfig(); });
+    const num = (id, key, lo, hi) => $(id).addEventListener('change', e => { let v = parseInt(e.target.value, 10); if (isNaN(v)) v = aiConfig[key]; v = Math.max(lo, Math.min(hi, v)); aiConfig[key] = v; e.target.value = v; if (aiConfig.autoThreshold < aiConfig.suggestThreshold) { aiConfig.autoThreshold = aiConfig.suggestThreshold; $('aiAutoThreshold').value = aiConfig.autoThreshold; } aiSaveConfig(); });
+    num('aiAutoThreshold', 'autoThreshold', 50, 100); num('aiSuggestThreshold', 'suggestThreshold', 30, 100); num('aiWindowSeconds', 'windowSeconds', 5, 60);
+    $('aiBuildBtn').addEventListener('click', async () => {
+        const version = $('versionSelector').value;
+        $('aiBuildBtn').disabled = true;
+        try { await aiBuildIndex(version, (d, t, f) => aiRefreshStatus(`Downloading ${version}… ${Math.round(d / t * 100)}% (${d}/${t} chapters${f ? ', ' + f + ' failed' : ''})`)); }
+        catch (err) { aiRefreshStatus('Index failed: ' + (err.message || err)); $('aiBuildBtn').disabled = false; return; }
+        $('aiBuildBtn').disabled = false; aiRefreshStatus();
+    });
+    aiRefreshStatus();
+    aiLoadSavedIndex($('versionSelector').value).then(() => aiRefreshStatus());
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAiScriptureDetection); else initAiScriptureDetection();
