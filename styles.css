@@ -1257,7 +1257,7 @@
 /* Voice Diagnostics: scrolling live transcript instead of one cut-off line */
 .voice-diag-panel .transcript-track { flex: 1; min-height: 0; overflow-y: auto; white-space: normal; text-overflow: clip; font-style: normal; font-size: 0.82rem; line-height: 1.45; padding: 0.5rem 0.75rem; color: var(--text-muted); }
 .transcript-track .tline { margin-bottom: 0.35rem; }
-.transcript-track .tline.live { opacity: 0.75; font-style: italic; }
+.transcript-track .tline.live { opacity: 1; font-style: normal; color: var(--text-muted); }
 .voice-diag-panel .signal-indicator-container { display: flex; align-items: center; gap: 0.4rem; }
 .voice-diag-panel .signal-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
 .voice-diag-panel .signal-meter { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
