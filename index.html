@@ -342,14 +342,14 @@
                                     <option value="none">Flat (No Shadow)</option>
                                 </select>
                             </div>
+                            <div style="display:flex; flex-direction:column; gap:0.45rem; border-top:1px solid var(--bg-accent); padding-top:0.6rem;">
+                                <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted);"><input type="checkbox" id="textBackingPanelCheckbox"> Dark backing panel behind text</label>
+                                <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted);"><input type="checkbox" id="gradientGlowTextCheckbox"> Gradient + glow text style</label>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; gap: 1rem;">
-                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem;"><input type="checkbox" id="textBackingPanelCheckbox"> Dark backing panel behind text</label>
-                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem;"><input type="checkbox" id="gradientGlowTextCheckbox"> Gradient + glow text style</label>
-                </div>
             </div>
 
             <!-- RIBBON PANEL: BACKGROUND -->
@@ -529,7 +529,31 @@
             </div>
         </header>
 
-        <main class="studio-floor">
+        <main class="studio-floor workspace-grid">
+            <!-- LEFT: Voice Diagnostics (live transcript log + mic signal) -->
+            <div class="ws-slot ws-slot-left" id="wsSlotLeft">
+            <aside class="ws-panel voice-diag-panel" data-panel="voice">
+                <div class="ws-panel-head"><h3>Voice Diagnostics</h3>
+                    <div class="signal-indicator-container">
+                        <div class="signal-label">Mic Signal:</div>
+                        <div class="signal-meter" id="signalMeter">
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="transcriptTrack" class="transcript-track">Microphone tracking pipeline idle.</div>
+            </aside>
+            </div>
+
+            <!-- CENTRE: Scene on top, Scripture Matches / suggestions underneath -->
+            <div class="ws-center">
             <section class="screen-column live-column single-scene-column">
                 <div class="deck-label live-label">Scene (Single Click / Double Click / Enter)</div>
                 <div class="canvas-container">
@@ -539,26 +563,22 @@
                     </div>
                 </div>
             </section>
-        </main>
-        
-        <footer>
-            <h3>Voice Diagnostics:</h3>
-            <div id="transcriptTrack" class="transcript-track">Microphone tracking pipeline idle.</div>
-            
-            <div class="signal-indicator-container">
-                <div class="signal-label">Mic Signal:</div>
-                <div class="signal-meter" id="signalMeter">
-                    <div class="signal-bar"></div>
-                    <div class="signal-bar"></div>
-                    <div class="signal-bar"></div>
-                    <div class="signal-bar"></div>
-                    <div class="signal-bar"></div>
-                    <div class="signal-bar"></div>
-                    <div class="signal-bar"></div>
-                    <div class="signal-bar"></div>
+                <div class="ws-slot ws-slot-bottom" id="wsSlotBottom">
+                <section class="ws-panel suggest-panel" data-panel="matches">
+                    <div class="ws-panel-head"><h3>Scripture Matches</h3><span id="suggestStatus" class="ws-hint">Scripture suggestions appear here as the preacher speaks.</span></div>
+                    <div id="suggestList" class="ws-list"><div class="placeholder-text">Turn on Live Voice and start speaking — matching scriptures will be suggested here.</div></div>
+                </section>
                 </div>
             </div>
-        </footer>
+
+            <!-- RIGHT: Scripture History -->
+            <div class="ws-slot ws-slot-right" id="wsSlotRight">
+            <aside class="ws-panel history-panel" data-panel="history">
+                <div class="ws-panel-head"><h3>Scripture History</h3></div>
+                <div id="historyPanelList" class="ws-list"><div class="placeholder-text">Scriptures you display will be listed here. Click one to bring it back.</div></div>
+            </aside>
+            </div>
+        </main>
         </div>
     </div>
 
@@ -605,6 +625,27 @@
                         </div>
                     </div>
                     <p style="margin-top:0.4rem;">Display Transition, Font Style, and Text Shadow now live under the <strong>Text</strong> tab (Text Style dropdown) for quicker access.</p>
+                </div>
+
+                <!-- Workspace panel positions -->
+                <div class="integration-card">
+                    <h4>Workspace Panels</h4>
+                    <p>Choose which panel sits in each position beside the Scene. Picking a panel that is already used elsewhere swaps the two. Your choice is remembered on this device.</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;">
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Left of Scene</label>
+                            <select id="wsSelectLeft" class="ws-slot-select" data-slot="0" style="width:100%; padding:0.35rem; font-size:0.75rem;"></select>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Under the Scene</label>
+                            <select id="wsSelectBottom" class="ws-slot-select" data-slot="1" style="width:100%; padding:0.35rem; font-size:0.75rem;"></select>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Right of Scene</label>
+                            <select id="wsSelectRight" class="ws-slot-select" data-slot="2" style="width:100%; padding:0.35rem; font-size:0.75rem;"></select>
+                        </div>
+                    </div>
+                    <button id="wsResetLayoutBtn" type="button" class="btn" style="margin-top:0.6rem; padding:0.3rem 0.7rem; font-size:0.72rem;">Reset to default</button>
                 </div>
 
                 <!-- Microphone Node Mapping Diagnostics Card -->
