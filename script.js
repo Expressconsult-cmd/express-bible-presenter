@@ -2052,7 +2052,7 @@ async function initMediaEngine() {
 
                 renderTranscriptLog(finalTranscriptText, interimTranscriptText);
                 processContinuousSpeechForScriptures(event);
-                updateScriptureSuggestions(finalTranscriptText, interimTranscriptText);
+                updateScriptureSuggestions(event);
             };
         }
 
@@ -2078,59 +2078,102 @@ function renderTranscriptLog(finalText, interimText) {
     if (nearBottom) track.scrollTop = track.scrollHeight;
 }
 
-// ---- Scripture Matches: suggests verses as the preacher speaks (full-text search of the selected Bible version) ----
-let suggestTimer = null, suggestAbort = null, suggestLastQuery = '', suggestItems = [];
-function updateScriptureSuggestions(finalText, interimText) {
-    const spoken = String(finalText || interimText || '').toLowerCase().replace(/[^a-z'\s]/g, ' ').split(/\s+/).filter(Boolean);
-    if (spoken.length < 4) return;
-    const isFinal = !!String(finalText || '').trim();
-    clearTimeout(suggestTimer);
-    suggestTimer = setTimeout(() => runScriptureSuggestionSearch(spoken), isFinal ? 150 : 700);
+// ---- Scripture Matches: finds the verse the preacher is quoting, WHILE he is still speaking ----
+// How it works: every ~0.5s (throttled — it never waits for a pause) the last ~30 spoken words are turned into a few
+// keyword searches against the Bolls Bible database (same source as Word Search). The candidate verses that come back
+// are then ranked locally by how many of the spoken words — and spoken word-pairs — they actually contain.
+const SUGGEST_STOP = new Set(('a an the and or but if of to in on at by for with from as is are was were be been being am it its he she they them his her their we us our you your i me my this that these those there here not no so then than too very can will just do does did done have has had what which who whom whose when where why how all any each some more most other into out up down over about also would could should shall may might must said say says saith unto upon yet one now like because going gonna want get got let know see come came go goes make made even still only really thing things people amen church god lord jesus christ').split(' '));
+let suggestTimer = null, suggestLastRun = 0, suggestSeq = 0, suggestShownSeq = 0, suggestBuffer = [], suggestItems = [];
+const suggestCache = new Map();
+const suggestStem = w => (w.length > 5 ? w.replace(/(ing|eth|est|ed|es|s)$/, '') : w);
+const suggestWords = t => String(t || '').toLowerCase().replace(/[^a-z'\s]/g, ' ').split(/\s+/).filter(Boolean);
+
+function updateScriptureSuggestions(event) {
+    if (!event || !event.results) return;
+    let text = '';
+    for (let i = Math.max(0, event.results.length - 6); i < event.results.length; i++) text += ' ' + event.results[i][0].transcript;
+    const words = suggestWords(text).slice(-32);
+    if (words.length < 4) return;
+    suggestBuffer = words;
+    if (suggestTimer) return; // a search is already scheduled — it will use the newest words when it fires
+    const wait = Math.max(0, 500 - (Date.now() - suggestLastRun));
+    suggestTimer = setTimeout(() => { suggestTimer = null; suggestLastRun = Date.now(); runScriptureSuggestionSearch(suggestBuffer.slice()); }, wait);
 }
+
+async function suggestFetch(version, query) {
+    const key = version + '|' + query;
+    if (suggestCache.has(key)) return suggestCache.get(key);
+    const res = await fetch(`https://bolls.life/v2/find/${version}?search=${encodeURIComponent(query)}&match_case=false&match_whole=false&limit=40&page=1`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list = (data && data.results) ? data.results : [];
+    suggestCache.set(key, list);
+    if (suggestCache.size > 120) suggestCache.delete(suggestCache.keys().next().value);
+    return list;
+}
+
 async function runScriptureSuggestionSearch(words) {
-    const version = document.getElementById('versionSelector').value;
-    const windows = [words.slice(-5)];
-    if (words.length >= 9) windows.push(words.slice(0, 5));
-    if (words.length >= 7) windows.push(words.slice(-8, -3));
-    if (suggestAbort) suggestAbort.abort();
-    suggestAbort = new AbortController();
+    const seq = ++suggestSeq;
     const status = document.getElementById('suggestStatus');
+    const version = document.getElementById('versionSelector').value;
+    const content = w => !SUGGEST_STOP.has(w) && w.length >= 3;
+    const longest = (arr, n) => Array.from(new Set(arr.filter(content))).sort((x, y) => y.length - x.length).slice(0, n);
+    const recent = words.slice(-14), earlier = words.slice(-30, -14);
+    const queries = [longest(recent, 3), longest(earlier, 3), longest(words.slice(-8), 2)]
+        .filter(q => q.length >= 2).map(q => q.join(' '));
+    if (!queries.length) return;
+    if (status) status.innerText = 'Listening & matching…';
     try {
-        for (const w of windows) {
-            const q = w.join(' ');
-            if (q === suggestLastQuery) return;
-            if (status) status.innerText = 'Searching…';
-            const res = await fetch(`https://bolls.life/v2/find/${version}?search=${encodeURIComponent(q)}&match_case=false&match_whole=false&limit=6&page=1`, { signal: suggestAbort.signal });
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (data && data.results && data.results.length) {
-                suggestLastQuery = q;
-                suggestItems = data.results.slice(0, 6).map(r => ({
-                    book: r.book, chapter: r.chapter, verse: r.verse, version,
-                    text: String(r.text || '').replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<[^>]*>/g, '').trim(), query: q
-                }));
-                renderScriptureSuggestions();
-                if (status) status.innerText = `Matches for “${q}” — click to preview, double-click to display`;
-                return;
-            }
+        const batches = await Promise.all(Array.from(new Set(queries)).map(q => suggestFetch(version, q).catch(() => [])));
+        if (seq < suggestShownSeq) return; // a newer search already displayed
+        const spokenContent = words.filter(content);
+        const spokenStems = new Set(spokenContent.map(suggestStem));
+        const pairs = new Set();
+        for (let i = 0; i + 1 < words.length; i++) pairs.add(words[i] + ' ' + words[i + 1]);
+        const seen = new Map();
+        batches.flat().forEach(r => {
+            if (!r || r.book > 66) return; // Bible only (the database also holds Apocrypha)
+            const key = r.book + ':' + r.chapter + ':' + r.verse;
+            if (seen.has(key)) return;
+            const text = String(r.text || '').replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<[^>]*>/g, '').trim();
+            const vw = suggestWords(text);
+            const vStems = new Set(vw.filter(content).map(suggestStem));
+            let matched = 0, score = 0;
+            spokenStems.forEach(st => { if (vStems.has(st)) { matched++; score += st.length >= 6 ? 1.5 : 1; } });
+            let pairHits = 0;
+            for (let i = 0; i + 1 < vw.length; i++) if (pairs.has(vw[i] + ' ' + vw[i + 1])) pairHits++;
+            score += pairHits * 2;
+            const coverage = vStems.size ? matched / Math.min(vStems.size, spokenStems.size || 1) : 0;
+            score += coverage * 2;
+            if (matched >= 3 || (matched >= 2 && pairHits >= 1)) seen.set(key, { book: r.book, chapter: r.chapter, verse: r.verse, text, score });
+        });
+        const ranked = Array.from(seen.values()).sort((a, b) => b.score - a.score).slice(0, 8);
+        suggestShownSeq = seq;
+        if (ranked.length) {
+            suggestItems = ranked;
+            renderScriptureSuggestions(spokenStems);
+            if (status) status.innerText = 'Live matches — click to preview, double-click to display';
+        } else if (status) {
+            status.innerText = suggestItems.length ? 'Keeping last matches — listening…' : 'Listening… no matching scripture yet.';
         }
-        if (status) status.innerText = 'No matching scripture heard yet.';
-    } catch (e) { if (e.name !== 'AbortError' && status) status.innerText = 'Suggestions unavailable (offline?).'; }
+    } catch (e) { if (status) status.innerText = 'Suggestions unavailable (offline?).'; }
 }
-function renderScriptureSuggestions() {
+
+function renderScriptureSuggestions(spokenStems) {
     const box = document.getElementById('suggestList');
     if (!box) return;
     box.innerHTML = '';
-    suggestItems.forEach(item => {
+    suggestItems.forEach((item, idx) => {
         const ref = `${cleanBookNames[item.book] || 'Book ' + item.book} ${item.chapter}:${item.verse}`;
         const row = document.createElement('div');
         row.className = 'ws-item';
-        let snippet = escapeHtmlText(item.text);
-        try {
-            const pattern = item.query.split(' ').map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
-            snippet = snippet.replace(new RegExp('(' + pattern + ')', 'gi'), '<mark>$1</mark>');
-        } catch (e) {}
-        row.innerHTML = `<span class="ws-ref">${ref}</span><span class="ws-snippet">${snippet}</span>`;
+        const snippet = String(item.text).split(/([A-Za-z']+)/).map((part, i) => {
+            const safe = escapeHtmlText(part);
+            if (i % 2 === 0) return safe;
+            const lw = part.toLowerCase();
+            return (spokenStems && !SUGGEST_STOP.has(lw) && lw.length >= 3 && spokenStems.has(suggestStem(lw))) ? `<mark>${safe}</mark>` : safe;
+        }).join('');
+        row.innerHTML = `<span class="ws-ref">${ref}${idx === 0 ? ' · best match' : ''}</span><span class="ws-snippet">${snippet}</span>`;
         const open = async (live) => {
             if (live) forceTextVisibleOnDoubleClick();
             currentBookCode = item.book; currentBookName = cleanBookNames[item.book]; currentChapter = item.chapter; currentVerse = item.verse;
