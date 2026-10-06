@@ -465,8 +465,12 @@
             if (!audioAnalyser) return;
             const dataFrequencyArray = new Uint8Array(audioAnalyser.frequencyBinCount);
 
-            function loop() {
+            const meterBars = Array.from(document.querySelectorAll('.signal-bar'));
+            let lastMeterLevel = -1, lastFrameTime = 0;
+            function loop(now) {
                 spectrumAnimId = requestAnimationFrame(loop);
+                if (now - lastFrameTime < 33) return; // ~30 fps is plenty for a level meter
+                lastFrameTime = now;
                 audioAnalyser.getByteFrequencyData(dataFrequencyArray);
 
                 let accum = 0;
@@ -476,8 +480,8 @@
                 let realTimeAmplitudeAvg = accum / dataFrequencyArray.length;
                 let activeBarLevels = Math.min(8, Math.floor(realTimeAmplitudeAvg / 10)); 
 
-                const dynamicBars = document.querySelectorAll('.signal-bar');
-                dynamicBars.forEach((barElement, currentBarIdx) => {
+                const dynamicBars = meterBars;
+                if (activeBarLevels !== lastMeterLevel) dynamicBars.forEach((barElement, currentBarIdx) => {
                     if (currentBarIdx < activeBarLevels) {
                         if (currentBarIdx < 4) {
                             barElement.style.backgroundColor = "var(--accent-success)";
@@ -490,6 +494,7 @@
                         barElement.style.backgroundColor = "#1e293b";
                     }
                 });
+                lastMeterLevel = activeBarLevels;
 
                 // Floating VU meter widget — mirrors the same live level, connected while the stream is active
                 const vuMask = document.getElementById('vuBarMask');
@@ -503,7 +508,7 @@
                     updateVuMeterStatus('disconnected');
                 }
             }
-            loop();
+            loop(performance.now());
         }
 
         function resetSignalSpectrumLEDBars() {
@@ -2045,8 +2050,9 @@ async function initMediaEngine() {
                     }
                 }
 
-                document.getElementById('transcriptTrack').innerHTML = `<span class="active-words">${finalTranscriptText}</span> <span style="opacity:0.4">${interimTranscriptText}</span>${voiceActionNote ? ` <span class="voice-action-note" style="color: var(--accent-success); font-weight:800;">▶ ${voiceActionNote}</span>` : ''}`;
+                renderTranscriptLog(finalTranscriptText, interimTranscriptText);
                 processContinuousSpeechForScriptures(event);
+                updateScriptureSuggestions(finalTranscriptText, interimTranscriptText);
             };
         }
 
@@ -2056,6 +2062,108 @@ async function initMediaEngine() {
 // (3) the preacher reading the loaded chapter aloud — the display follows the verse being read.
 // Whatever it recognises is shown immediately as text (any media on screen steps aside).
 let voiceActionNote = '';
+let transcriptLines = [];
+const escapeHtmlText = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Voice Diagnostics: finished sentences stay listed (newest at the bottom), the line being spoken updates live.
+function renderTranscriptLog(finalText, interimText) {
+    const track = document.getElementById('transcriptTrack');
+    if (!track) return;
+    const f = String(finalText || '').trim();
+    if (f) { transcriptLines.push(f); if (transcriptLines.length > 40) transcriptLines.shift(); }
+    const nearBottom = track.scrollHeight - track.scrollTop - track.clientHeight < 40;
+    track.innerHTML = transcriptLines.map(l => `<div class="tline">${escapeHtmlText(l)}</div>`).join('')
+        + (interimText ? `<div class="tline live">${escapeHtmlText(interimText)}</div>` : '')
+        + (voiceActionNote ? `<div class="tline voice-action-note" style="color: var(--accent-success); font-weight:800;">▶ ${escapeHtmlText(voiceActionNote)}</div>` : '');
+    if (nearBottom) track.scrollTop = track.scrollHeight;
+}
+
+// ---- Scripture Matches: suggests verses as the preacher speaks (full-text search of the selected Bible version) ----
+let suggestTimer = null, suggestAbort = null, suggestLastQuery = '', suggestItems = [];
+function updateScriptureSuggestions(finalText, interimText) {
+    const spoken = String(finalText || interimText || '').toLowerCase().replace(/[^a-z'\s]/g, ' ').split(/\s+/).filter(Boolean);
+    if (spoken.length < 4) return;
+    const isFinal = !!String(finalText || '').trim();
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(() => runScriptureSuggestionSearch(spoken), isFinal ? 150 : 700);
+}
+async function runScriptureSuggestionSearch(words) {
+    const version = document.getElementById('versionSelector').value;
+    const windows = [words.slice(-5)];
+    if (words.length >= 9) windows.push(words.slice(0, 5));
+    if (words.length >= 7) windows.push(words.slice(-8, -3));
+    if (suggestAbort) suggestAbort.abort();
+    suggestAbort = new AbortController();
+    const status = document.getElementById('suggestStatus');
+    try {
+        for (const w of windows) {
+            const q = w.join(' ');
+            if (q === suggestLastQuery) return;
+            if (status) status.innerText = 'Searching…';
+            const res = await fetch(`https://bolls.life/v2/find/${version}?search=${encodeURIComponent(q)}&match_case=false&match_whole=false&limit=6&page=1`, { signal: suggestAbort.signal });
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (data && data.results && data.results.length) {
+                suggestLastQuery = q;
+                suggestItems = data.results.slice(0, 6).map(r => ({
+                    book: r.book, chapter: r.chapter, verse: r.verse, version,
+                    text: String(r.text || '').replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<[^>]*>/g, '').trim(), query: q
+                }));
+                renderScriptureSuggestions();
+                if (status) status.innerText = `Matches for “${q}” — click to preview, double-click to display`;
+                return;
+            }
+        }
+        if (status) status.innerText = 'No matching scripture heard yet.';
+    } catch (e) { if (e.name !== 'AbortError' && status) status.innerText = 'Suggestions unavailable (offline?).'; }
+}
+function renderScriptureSuggestions() {
+    const box = document.getElementById('suggestList');
+    if (!box) return;
+    box.innerHTML = '';
+    suggestItems.forEach(item => {
+        const ref = `${cleanBookNames[item.book] || 'Book ' + item.book} ${item.chapter}:${item.verse}`;
+        const row = document.createElement('div');
+        row.className = 'ws-item';
+        let snippet = escapeHtmlText(item.text);
+        try {
+            const pattern = item.query.split(' ').map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
+            snippet = snippet.replace(new RegExp('(' + pattern + ')', 'gi'), '<mark>$1</mark>');
+        } catch (e) {}
+        row.innerHTML = `<span class="ws-ref">${ref}</span><span class="ws-snippet">${snippet}</span>`;
+        const open = async (live) => {
+            if (live) forceTextVisibleOnDoubleClick();
+            currentBookCode = item.book; currentBookName = cleanBookNames[item.book]; currentChapter = item.chapter; currentVerse = item.verse;
+            await fetchCurrentChapterFromAPI();
+            selectSpecificVerseCoordinate(item.verse);
+            if (live) sendStagedToLiveView();
+        };
+        row.addEventListener('click', () => open(false));
+        row.addEventListener('dblclick', () => open(true));
+        box.appendChild(row);
+    });
+}
+
+// ---- Scripture History panel (mirrors the Logs dropdown; click to bring a past scripture back) ----
+function renderScriptureHistoryPanel() {
+    const box = document.getElementById('historyPanelList');
+    if (!box) return;
+    if (!executionDisplayHistory.length) { box.innerHTML = '<div class="placeholder-text">Scriptures you display will be listed here. Click one to bring it back.</div>'; return; }
+    box.innerHTML = '';
+    executionDisplayHistory.forEach((item, index) => {
+        if (!item || !item.text) return;
+        const row = document.createElement('div');
+        row.className = 'ws-item' + (index === 0 ? ' is-current' : '');
+        row.innerHTML = `<span class="ws-ref">${escapeHtmlText(item.ref || '')}</span><span class="ws-snippet">${escapeHtmlText(String(item.text).replace(/<[^>]*>/g, '').substring(0, 110))}</span>`;
+        row.addEventListener('click', () => {
+            const dd = document.getElementById('historyDropdown');
+            dd.value = String(index);
+            dd.dispatchEvent(new Event('change'));
+        });
+        box.appendChild(row);
+    });
+}
+
 let voiceCommitted = { utterance: -1, sig: '' };
 let voicePendingTimer = null;
 let voiceBusy = false;
@@ -2911,6 +3019,7 @@ function songTabIsActive() {
                 opt.value = index; opt.innerText = `[${item.ref}] ${item.text.substring(0, 18)}...`;
                 dropdown.appendChild(opt);
             });
+            renderScriptureHistoryPanel();
         }
 
         // Explains WHY voice can't work here, instead of failing silently.
@@ -3570,3 +3679,41 @@ function songTabIsActive() {
                 });
             }
         }
+
+
+// ===================== WORKSPACE PANEL POSITIONS (Settings -> Workspace Panels) =====================
+(function () {
+    const KEYS = ['voice', 'matches', 'history'];
+    const LABELS = { voice: 'Voice Diagnostics', matches: 'Scripture Matches', history: 'Scripture History' };
+    const SLOT_IDS = ['wsSlotLeft', 'wsSlotBottom', 'wsSlotRight'];
+    const STORE = 'ebpWorkspacePanelOrder';
+    const DEFAULT = ['voice', 'matches', 'history'];
+    let order = DEFAULT.slice();
+
+    const valid = o => Array.isArray(o) && o.length === 3 && KEYS.every(k => o.includes(k));
+    function apply() {
+        SLOT_IDS.forEach((slotId, i) => {
+            const slot = document.getElementById(slotId);
+            const panel = document.querySelector(`.ws-panel[data-panel="${order[i]}"]`);
+            if (slot && panel && panel.parentElement !== slot) slot.appendChild(panel);
+        });
+        document.querySelectorAll('.ws-slot-select').forEach(sel => { sel.value = order[Number(sel.dataset.slot)]; });
+    }
+    function save() { try { localStorage.setItem(STORE, JSON.stringify(order)); } catch (e) {} }
+    function init() {
+        try { const saved = JSON.parse(localStorage.getItem(STORE)); if (valid(saved)) order = saved; } catch (e) {}
+        document.querySelectorAll('.ws-slot-select').forEach(sel => {
+            sel.innerHTML = KEYS.map(k => `<option value="${k}">${LABELS[k]}</option>`).join('');
+            sel.addEventListener('change', () => {
+                const slot = Number(sel.dataset.slot), wanted = sel.value, other = order.indexOf(wanted);
+                if (other !== -1 && other !== slot) { order[other] = order[slot]; }
+                order[slot] = wanted;
+                apply(); save();
+            });
+        });
+        const reset = document.getElementById('wsResetLayoutBtn');
+        if (reset) reset.addEventListener('click', () => { order = DEFAULT.slice(); apply(); save(); });
+        apply();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
