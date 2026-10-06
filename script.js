@@ -2146,10 +2146,12 @@ const VOICE_VERSION_REGEX = new RegExp(
     `(?:^|\\s)${VOICE_VERSION_TRIGGER}\\s+(?:the\\s+)?(${VOICE_VERSION_ALIASES.map(a => a[1]).sort((a, b) => b.length - a.length).map(p => p.replace(/\s+/g, '\\s+')).join('|')})(?=\\s|$)`, 'g'
 );
 
-function voiceCollect(re, s, pri, build, cands) {
+function voiceCollect(re, s, pri, build, cands, skipIfNumberBefore) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(s)) !== null) {
+        // "4 verse 1" = the book name was missed/not yet recognised -> never treat it as "verse 1 of the current chapter"
+        if (skipIfNumberBefore && /\d\s*$/.test(s.slice(0, m.index))) { if (m[0].length === 0) re.lastIndex++; continue; }
         cands.push({ start: m.index, end: m.index + m[0].length, pri, intent: build(m) });
         if (m[0].length === 0) re.lastIndex++;
     }
@@ -2181,12 +2183,12 @@ function interpretSpeech(raw, allowQuote) {
 
     voiceCollect(VOICE_VERSION_REGEX, s, 6, m => ({ type: 'version', code: VOICE_VERSION_MAP.get(m[1].replace(/\s+/g, ' ')), delay: 0 }), cands);
     VOICE_BOOK_ALIASES.forEach(({ id, re }) => voiceCollect(re, s, 5, m => ({
-        type: 'ref', bookId: id, chapter: parseInt(m[1], 10), verse: parseInt(m[2] || m[3] || '1', 10), delay: 300
+        type: 'ref', bookId: id, chapter: parseInt(m[1], 10), verse: parseInt(m[2] || m[3] || '1', 10), hasVerse: !!(m[2] || m[3]), delay: (m[2] || m[3]) ? 120 : 650
     }), cands));
-    voiceCollect(VOICE_PATTERNS.chapter, s, 4, m => ({ type: 'chapter', chapter: parseInt(m[1], 10), verse: parseInt(m[2] || '1', 10), delay: 300 }), cands);
+    voiceCollect(VOICE_PATTERNS.chapter, s, 4, m => ({ type: 'chapter', chapter: parseInt(m[1], 10), verse: parseInt(m[2] || '1', 10), delay: m[2] ? 400 : 900 }), cands);
     voiceCollect(VOICE_PATTERNS.nextChapter, s, 4, () => ({ type: 'chapterStep', dir: 1, delay: 0 }), cands);
     voiceCollect(VOICE_PATTERNS.prevChapter, s, 4, () => ({ type: 'chapterStep', dir: -1, delay: 0 }), cands);
-    voiceCollect(VOICE_PATTERNS.verse, s, 3, m => ({ type: 'verse', verse: parseInt(m[1], 10), delay: 220 }), cands);
+    voiceCollect(VOICE_PATTERNS.verse, s, 3, m => ({ type: 'verse', verse: parseInt(m[1], 10), delay: 220 }), cands, true);
     VOICE_PATTERNS.nextStrong.forEach(re => voiceCollect(re, s, 2, () => ({ type: 'next', dir: 1, delay: 0 }), cands));
     VOICE_PATTERNS.prevStrong.forEach(re => voiceCollect(re, s, 2, () => ({ type: 'prev', dir: -1, delay: 0 }), cands));
     if (VOICE_PATTERNS.nextWeak.test(s)) cands.push({ start: 0, end: s.length, pri: 1, intent: { type: 'next', dir: 1, delay: 450 } });
@@ -2254,6 +2256,7 @@ async function executeVoiceIntent(intent) {
             }
             case 'verse': {
                 if (!activeChapterVerses.some(v => v.verse === intent.verse)) { setVoiceNote(`Verse ${intent.verse} isn't in ${currentBookName} ${currentChapter}`); break; }
+                if (intent.verse === currentVerse) { setVoiceNote(`Verse ${intent.verse}`); break; }
                 forceTextVisibleOnDoubleClick();
                 selectSpecificVerseCoordinate(intent.verse);
                 sendStagedToLiveView();
@@ -2277,6 +2280,7 @@ async function executeVoiceIntent(intent) {
             }
             case 'ref': {
                 const bookName = cleanBookNames[intent.bookId];
+                if (intent.bookId === currentBookCode && intent.chapter === currentChapter && intent.verse === currentVerse) { setVoiceNote(`${bookName} ${currentChapter}:${currentVerse}`); break; }
                 const ok = await voiceGoToChapterVerse(intent.bookId, bookName, intent.chapter, intent.verse);
                 setVoiceNote(ok ? `${bookName} ${currentChapter}:${currentVerse}` : `${bookName} ${intent.chapter} not found`);
                 break;
