@@ -448,6 +448,61 @@
                     <span id="mediaPdfPageIndicator" style="font-size:0.7rem; color: var(--text-muted); min-width: 70px; text-align:center; display:inline-block;">Page — / —</span>
                     <button id="mediaPdfNextBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Next PDF page">Next Page ▶</button>
                 </div>
+                <!-- SLIDES DISPLAY: several images shown one after another with transitions and timing -->
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; position: relative;" id="slidesGroup">
+                    <button id="slidesToggleBtn" type="button" class="btn" style="background:#0e7490; border-color:#0891b2; padding: 0.4rem 0.75rem; font-size: 0.75rem;">🖼 Slides Display ▾</button>
+                    <button id="slidesEyeBtn" type="button" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" title="Show / hide the slides on the output (eye open = slides are on screen)">👁</button>
+                    <span id="slidesStatus" style="font-size:0.7rem; color: var(--text-muted);">No slides yet</span>
+                    <div id="slidesDropdown" class="bg-text-effect-dropdown" style="width: 400px;">
+                        <div style="display:flex; flex-direction:column; gap:0.7rem;">
+                            <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                                <input type="file" id="slidesFilePicker" accept="image/*" multiple class="hidden-file-input">
+                                <button id="slidesAddBtn" type="button" class="btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;">＋ Add images</button>
+                                <select id="slidesLibrarySelect" style="flex:1; min-width:120px; padding:0.35rem; font-size:0.75rem;"><option value="">Add from saved media…</option></select>
+                                <button id="slidesClearBtn" type="button" class="btn" style="padding:0.35rem 0.6rem; font-size:0.72rem; background:#7f1d1d; border-color:#991b1b;">Clear all</button>
+                            </div>
+                            <div id="slidesList" style="display:flex; flex-direction:column; gap:0.35rem; max-height:220px; overflow-y:auto;"></div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem;">
+                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Transition</label>
+                                    <select id="slidesTransitionSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                                        <option value="cut">Instant Cut</option>
+                                        <option value="fade" selected>Fade</option>
+                                        <option value="left">Slide from Right</option>
+                                        <option value="right">Slide from Left</option>
+                                        <option value="up">Slide Up</option>
+                                        <option value="zoomin">Zoom In</option>
+                                        <option value="zoomout">Zoom Out</option>
+                                        <option value="blur">Blur In</option>
+                                        <option value="flip">Flip</option>
+                                        <option value="wipe">Wipe</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Time per slide (seconds)</label>
+                                    <input type="number" id="slidesIntervalInput" min="1" max="600" step="1" value="6" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Picture fit</label>
+                                    <select id="slidesFitSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                                        <option value="contain">Fit whole picture</option>
+                                        <option value="cover">Fill screen (may crop)</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:0.35rem; justify-content:flex-end;">
+                                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--text-muted);"><input type="checkbox" id="slidesAutoCheck" checked> Auto-advance</label>
+                                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--text-muted);"><input type="checkbox" id="slidesLoopCheck" checked> Loop</label>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:0.4rem; align-items:center; border-top:1px solid var(--bg-accent); padding-top:0.6rem;">
+                                <button id="slidesPrevBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">⏮ Prev</button>
+                                <button id="slidesPlayBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">⏸ Pause</button>
+                                <button id="slidesNextBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">Next ⏭</button>
+                                <span id="slidesCounter" style="font-size:0.72rem; color:var(--text-muted); margin-left:auto;">— / —</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">Everything you upload is kept in the dropdown for next time — PDFs and PowerPoint (.pptx) files display page/slide by page. PowerPoint slides show their text and images, not the exact PowerPoint design — for a pixel-perfect match, export to PDF from PowerPoint first. Double-click any verse, song slide or search result and the screen switches back to text automatically.</span>
             </div>
 
@@ -565,7 +620,7 @@
             </section>
                 <div class="ws-slot ws-slot-bottom" id="wsSlotBottom">
                 <section class="ws-panel suggest-panel" data-panel="matches">
-                    <div class="ws-panel-head"><h3>Scripture Matches</h3><span id="suggestStatus" class="ws-hint">Scripture suggestions appear here as the preacher speaks.</span></div>
+                    <div class="ws-panel-head"><h3>Scripture Matches</h3><label class="ws-hint" style="display:flex; align-items:center; gap:0.3rem; cursor:pointer;" title="AI Scripture Detection (same switch as in Settings)"><input type="checkbox" id="aiQuickToggle"> AI</label><span id="suggestStatus" class="ws-hint">Scripture suggestions appear here as the preacher speaks.</span></div>
                     <div id="suggestList" class="ws-list"><div class="placeholder-text">Turn on Live Voice and start speaking — matching scriptures will be suggested here.</div></div>
                 </section>
                 </div>
@@ -633,6 +688,33 @@
                         </div>
                     </div>
                     <button id="wsResetLayoutBtn" type="button" class="btn" style="margin-top:0.6rem; padding:0.3rem 0.7rem; font-size:0.72rem;">Reset to default</button>
+                </div>
+
+                <!-- AI Scripture Detection -->
+                <div class="integration-card">
+                    <h4>AI Scripture Detection</h4>
+                    <p>Listens to the preacher through Live Voice, keeps the last few seconds of speech, and matches it against an offline copy of the Bible. Each match gets a confidence %. Matches at or above 95% are shown automatically; between the auto-display and suggestion thresholds the operator approves them from <strong>Scripture Matches</strong>. Spoken references like “John 3:16” still jump straight to the verse.</p>
+                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;"><input type="checkbox" id="aiEnableCheck"> Enable AI Scripture Detection</label>
+                    <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.6rem;">
+                        <button id="aiBuildBtn" type="button" class="btn" style="padding:0.35rem 0.7rem; font-size:0.75rem;">Build / update offline Bible index</button>
+                        <span id="aiIndexStatus" style="font-size:0.72rem; color:var(--text-muted);"></span>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:0.75rem;">
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Auto-display threshold (%)</label>
+                            <input type="number" id="aiAutoThreshold" min="50" max="100" value="90" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Suggestion threshold (%)</label>
+                            <input type="number" id="aiSuggestThreshold" min="30" max="100" value="70" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Context window (seconds)</label>
+                            <input type="number" id="aiWindowSeconds" min="5" max="60" value="20" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        </div>
+                    </div>
+                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted); margin-top:0.6rem;"><input type="checkbox" id="aiAutoCheck"> Auto mode: also display matches between the auto-display threshold and 95%</label>
+                    <p style="margin-top:0.4rem;">Below the suggestion threshold nothing is shown. Wrong scripture on screen is worse than none, so a match must also stay on top for two checks in a row before it is auto-displayed.</p>
                 </div>
 
                 <!-- Microphone Node Mapping Diagnostics Card -->
