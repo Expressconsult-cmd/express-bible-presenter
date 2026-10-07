@@ -717,6 +717,23 @@
                     <p style="margin-top:0.4rem;">Below the suggestion threshold nothing is shown. Wrong scripture on screen is worse than none, so a match must also stay on top for two checks in a row before it is auto-displayed.</p>
                 </div>
 
+                <!-- Speech Engine -->
+                <div class="integration-card">
+                    <h4>Speech Engine</h4>
+                    <p>Chrome and Edge have a built-in speech service. Firefox, Safari, Brave and embedded browsers don't — for those (or for faster, more accurate listening everywhere) use <strong>Deepgram</strong>: create a free account at deepgram.com, make an API key, and paste it here. The key is stored only in this browser. Everything else (transcript, scripture detection, display) works exactly the same.</p>
+                    <div style="display:grid; grid-template-columns: 1fr 2fr; gap:0.75rem;">
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Engine</label>
+                            <select id="speechEngineSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;"><option value="browser">Browser (Chrome/Edge)</option><option value="deepgram">Deepgram (any browser)</option></select>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Deepgram API key</label>
+                            <input type="password" id="speechDgKey" autocomplete="off" placeholder="paste key here" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        </div>
+                    </div>
+                    <p id="speechEngineStatus" style="margin-top:0.4rem;"></p>
+                </div>
+
                 <!-- Microphone Node Mapping Diagnostics Card -->
                 <div class="integration-card">
                     <h4>Audio Source Configuration</h4>
