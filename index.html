@@ -720,16 +720,20 @@
                 <!-- Speech Engine -->
                 <div class="integration-card">
                     <h4>Speech Engine</h4>
-                    <p>Chrome and Edge have a built-in speech service. Firefox, Safari, Brave and embedded browsers don't — for those (or for faster, more accurate listening everywhere) use <strong>Deepgram</strong>: create a free account at deepgram.com, make an API key, and paste it here. The key is stored only in this browser. Everything else (transcript, scripture detection, display) works exactly the same.</p>
+                    <p>Chrome and Edge have a built-in speech service (<strong>Browser</strong>). For every other browser, for the installed web app, or for offline use, choose <strong>Local AI</strong>: a free speech model that runs on this computer. It needs a one-time download (about 40–120 MB, shown below), then works with no internet, no account and no cost. If your browser has no built-in speech, Local AI is used automatically.</p>
                     <div style="display:grid; grid-template-columns: 1fr 2fr; gap:0.75rem;">
                         <div style="display:flex; flex-direction:column; gap:0.25rem;">
                             <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Engine</label>
-                            <select id="speechEngineSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;"><option value="browser">Browser (Chrome/Edge)</option><option value="deepgram">Deepgram (any browser)</option></select>
+                            <select id="speechEngineSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;"><option value="browser">Browser (Chrome/Edge)</option><option value="local">Local AI (free, any browser)</option></select>
                         </div>
                         <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Deepgram API key</label>
-                            <input type="password" id="speechDgKey" autocomplete="off" placeholder="paste key here" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Local AI model</label>
+                            <select id="speechModelSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;"></select>
                         </div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-top:0.6rem;">
+                        <button id="speechLoadBtn" type="button" class="btn" style="padding:0.35rem 0.7rem; font-size:0.75rem;">Download / load Local AI model now</button>
+                        <div id="speechProgress" style="display:none; flex:1; min-width:120px; height:8px; background:rgba(128,128,128,0.25); border-radius:4px; overflow:hidden;"><div id="speechProgressBar" style="height:100%; width:0%; background:var(--accent-primary);"></div></div>
                     </div>
                     <p id="speechEngineStatus" style="margin-top:0.4rem;"></p>
                 </div>
@@ -840,6 +844,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=3"></script>
+    <script src="script.js?v=5"></script>
 </body>
 </html>
