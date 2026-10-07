@@ -690,6 +690,17 @@
                     <button id="wsResetLayoutBtn" type="button" class="btn" style="margin-top:0.6rem; padding:0.3rem 0.7rem; font-size:0.72rem;">Reset to default</button>
                 </div>
 
+                <!-- Spoken Bible numbers -->
+                <div class="integration-card">
+                    <h4>Spoken Bible Numbers</h4>
+                    <p>When a preacher says “Genesis one three” quickly, speech engines write it as “Genesis 13”. Choose how a two-digit number with no verse is read.</p>
+                    <select id="refNumberStyleSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        <option value="split">Chapter and verse — 13 = Genesis 1:3, 21 = Genesis 2:1 (recommended)</option>
+                        <option value="chapter">Chapter number — 13 = chapter thirteen, 21 = chapter twenty-one</option>
+                    </select>
+                    <p style="margin-top:0.4rem;">Saying the word “chapter” (“Genesis chapter thirteen”) always means a chapter, and Psalms are always read as chapters. If the engine itself offers a “1 3” reading, that one is used.</p>
+                </div>
+
                 <!-- AI Scripture Detection -->
                 <div class="integration-card">
                     <h4>AI Scripture Detection</h4>
@@ -823,6 +834,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=6"></script>
+    <script src="script.js?v=7"></script>
 </body>
 </html>
