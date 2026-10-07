@@ -1514,22 +1514,6 @@ async function initMediaEngine() {
             return labels[code] || code;
         }
 
-        // Chapter cache + prefetch: a chapter that was already fetched (or prefetched while a match was only a suggestion) opens instantly.
-        const bollsChapterCache = new Map();
-        function bollsChapterJson(ver, book, ch) {
-            const key = ver + '|' + book + '|' + ch;
-            if (bollsChapterCache.has(key)) return bollsChapterCache.get(key);
-            const p = fetch(`https://bolls.life/get-text/${ver}/${book}/${ch}/`)
-                .then(r => { if (!r.ok) throw new Error("Cloud database failure"); return r.json(); })
-                .catch(err => { bollsChapterCache.delete(key); throw err; });
-            bollsChapterCache.set(key, p);
-            if (bollsChapterCache.size > 60) bollsChapterCache.delete(bollsChapterCache.keys().next().value);
-            return p;
-        }
-        function bollsPrefetch(book, ch) {
-            try { const sel = document.getElementById('versionSelector'); if (sel) bollsChapterJson(sel.value, book, ch).catch(() => {}); } catch (e) {}
-        }
-
         async function fetchCurrentChapterFromAPI() {
             const targetVersion = document.getElementById('versionSelector').value;
             const dot = document.getElementById('statusDot');
@@ -1540,7 +1524,10 @@ async function initMediaEngine() {
             document.getElementById('panelNavHeader').innerText = `Verse Directory: Loading...`;
 
             try {
-                let data = await bollsChapterJson(targetVersion, currentBookCode, currentChapter);
+                const response = await fetch(`https://bolls.life/get-text/${targetVersion}/${currentBookCode}/${currentChapter}/`);
+                if (!response.ok) throw new Error("Cloud database failure");
+                
+                let data = await response.json();
                 if (data && data.length > 0) {
                     activeChapterVerses = data.map(v => {
                         let parsedText = v.text;
@@ -2006,7 +1993,7 @@ async function initMediaEngine() {
         function initSpeechEngine() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
-                document.getElementById('transcriptTrack').innerText = "This browser has no built-in speech recognition. Live Voice will use the free Local AI engine (Settings → Speech Engine) — press Enable Live Voice.";
+                document.getElementById('transcriptTrack').innerText = "Web Speech API is not natively supported in this browser instance.";
                 return;
             }
 
@@ -2032,13 +2019,11 @@ async function initMediaEngine() {
                 if (isListening) {
                     // Small delay before restarting avoids a tight restart loop that can
                     // repeatedly re-trigger the browser's microphone access indicator.
-                    let restartTries = 0;
-                    const restart = () => {
-                        if (!isListening) return;
-                        try { recognition.start(); }
-                        catch(e) { if (++restartTries < 8) setTimeout(restart, 300); }   // Chrome sometimes isn't ready yet — try again instead of giving up
-                    };
-                    setTimeout(restart, 350);
+                    setTimeout(() => {
+                        if (isListening) {
+                            try { recognition.start(); } catch(e) {}
+                        }
+                    }, 350);
                 } else {
                     disableAudioVolumeDetection();
                 }
@@ -3098,11 +3083,6 @@ function songTabIsActive() {
 
         // Explains WHY voice can't work here, instead of failing silently.
         function getVoiceEnvironmentProblem() {
-            if (voiceEngineKind() === 'local') {
-                if (!window.isSecureContext) return "The microphone is blocked on insecure pages. Open this app from https:// or http://localhost, then try again.";
-                if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || !(window.AudioContext || window.webkitAudioContext) || typeof Worker === 'undefined') return "This browser can't run the Local AI engine (needs microphone, audio and web-worker support). Try a current Chrome, Edge, Firefox or Safari.";
-                return '';
-            }
             if (!(window.SpeechRecognition || window.webkitSpeechRecognition) || !recognition) {
                 return "Live Voice needs the Web Speech API, which only Chrome and Edge provide. Embedded browsers (OBS docks / Browser Sources, vMix web pages) don't include it — run Live Voice in a normal Chrome/Edge tab and use OBS only for the output.";
             }
@@ -3122,11 +3102,10 @@ function songTabIsActive() {
             if (!isListening) {
                 const voiceProblem = getVoiceEnvironmentProblem();
                 if (voiceProblem) { track.innerText = voiceProblem; txt.innerText = "Live Voice unavailable"; return; }
-                if (voiceEngineKind() === 'local') { localStart(); return; }
                 try { recognition.start(); } catch(e) { track.innerText = 'Could not start voice recognition: ' + (e.message || e); }
             } else { 
                 isListening = false; 
-                if (loc.active) localStop(); else if (recognition) recognition.stop(); 
+                recognition.stop(); 
                 btn.innerText = "Enable Live Voice"; 
                 btn.classList.remove('listening'); 
                 dot.className = "status-dot active"; 
@@ -4118,19 +4097,14 @@ function aiMatch(contextText, maxResults = 3) {
         if (matched < Math.min(3, set.size) || matchedIdf < 6) continue;
         const cov = matchedIdf / aiIndex.vIdfTotal[vi];
         // longest run of verse words that also appear back-to-back (in order) in what was said
-        let best = 0, bestEnd = 0, prev = new Array(ctx.length + 1).fill(0);
+        let best = 0, prev = new Array(ctx.length + 1).fill(0);
         for (let i = 1; i <= seq.length; i++) {
             const cur = new Array(ctx.length + 1).fill(0);
-            for (let j = 1; j <= ctx.length; j++) if (seq[i - 1] === ctx[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) { best = cur[j]; bestEnd = i; } }
+            for (let j = 1; j <= ctx.length; j++) if (seq[i - 1] === ctx[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) best = cur[j]; }
             prev = cur;
         }
-        // Distinctive words of the verse that were said back-to-back (a partial quote of a long verse still scores high)
-        let runIdf = 0;
-        for (let k = bestEnd - best; k < bestEnd; k++) runIdf += aiIndex.idf.get(seq[k]) || 0;
         const runFrac = Math.min(1, best / Math.max(3, Math.ceil(seq.length * 0.7)));
         let conf = 100 * (0.55 * cov + 0.35 * runFrac + 0.10 * Math.min(1, matchedIdf / 20));
-        if (best >= 4 && runIdf >= 18) conf = Math.max(conf, Math.min(96, 38 + 2.2 * runIdf));   // partial quote
-        // every spoken-distinctive word that is NOT in this verse lowers trust slightly (stops loose matches ranking above exact ones)
         conf = Math.min(cov >= 0.999 && runFrac >= 0.999 ? 100 : 99, conf);
         const v = aiIndex.verses[vi];
         out.push({ book: v[0], chapter: v[1], verse: v[2], text: v[3], conf: Math.round(conf), version: aiIndex.version });
@@ -4161,11 +4135,8 @@ function aiIsCurrent(item) { return item.book === currentBookCode && item.chapte
 function aiOnSpeech(event) {
     if (!(aiConfig.enabled && aiIndex.ready)) { updateScriptureSuggestions(event); return; }
     aiTouchResults(event);
-    let anyFinal = false;
-    for (let i = event.resultIndex; i < event.results.length; i++) if (event.results[i].isFinal) anyFinal = true;
-    aiState.finalSeen = anyFinal;
     if (aiState.timer) return;
-    const wait = Math.max(0, 150 - (Date.now() - aiState.lastRun));
+    const wait = Math.max(0, 250 - (Date.now() - aiState.lastRun));
     aiState.timer = setTimeout(() => { aiState.timer = null; aiState.lastRun = Date.now(); aiDetectNow(); }, wait);
 }
 
@@ -4180,15 +4151,8 @@ function aiDetectNow() {
     aiState.stableCount = (key === aiState.lastKey) ? aiState.stableCount + 1 : 1;
     aiState.lastKey = key;
     const eligible = top.conf >= AI_SURE_THRESHOLD || (aiConfig.auto && top.conf >= aiConfig.autoThreshold);
-    bollsPrefetch(top.book, top.chapter);                                   // warm the chapter so display is instant
-    if (good[1]) bollsPrefetch(good[1].book, good[1].chapter);
-    // Needs to stay on top for 2 checks — but the second check must not wait for MORE speech (the old delay):
-    // if the preacher has paused, re-check the same context 220ms later instead.
-    if (eligible && aiState.stableCount < 2 && !aiState.finalSeen && key !== aiState.lastAutoKey && !aiState.timer) {
-        aiState.timer = setTimeout(() => { aiState.timer = null; aiState.lastRun = Date.now(); aiDetectNow(); }, 220);
-    }
-    if (eligible && (aiState.stableCount >= 2 || (aiState.finalSeen && top.conf >= AI_SURE_THRESHOLD)) && key !== aiState.lastAutoKey && Date.now() - aiState.lastAutoTime > 2000 && !aiIsCurrent(top)) {
-        aiState.lastAutoKey = key; aiState.lastAutoTime = Date.now(); aiState.floor = Date.now(); aiState.finalSeen = false;
+    if (eligible && aiState.stableCount >= 2 && key !== aiState.lastAutoKey && Date.now() - aiState.lastAutoTime > 3000 && !aiIsCurrent(top)) {
+        aiState.lastAutoKey = key; aiState.lastAutoTime = Date.now(); aiState.floor = Date.now();
         top.autoShown = true;
         openSuggestedScripture(top, true);
         if (typeof setVoiceNote === 'function') setVoiceNote(`AI matched ${cleanBookNames[top.book]} ${top.chapter}:${top.verse} (${top.conf}%)`);
@@ -4228,233 +4192,3 @@ function initAiScriptureDetection() {
     aiLoadSavedIndex($('versionSelector').value).then(() => aiRefreshStatus());
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAiScriptureDetection); else initAiScriptureDetection();
-
-
-// ===================== SPEECH ENGINE CHOICE: browser (Chrome/Edge) or Local AI (free, any browser, offline) =====================
-// "Local AI" runs a small open speech model (Whisper / Moonshine) INSIDE the browser on the church computer: no account, no key,
-// no cost, works in Firefox/Safari/Brave/installed web app, and after the first download it works offline.
-// It feeds the exact same transcript -> scripture detection -> display pipeline as the browser engine.
-const SPEECH_STORE = 'ebpSpeechConfig';
-const speechConfig = { engine: 'browser', model: 'whisper-base' };
-try { Object.assign(speechConfig, JSON.parse(localStorage.getItem(SPEECH_STORE) || '{}')); } catch (e) {}
-if (speechConfig.engine !== 'local') speechConfig.engine = 'browser';
-const LOCAL_MODELS = {
-    'whisper-tiny':   { id: 'Xenova/whisper-tiny.en',                    label: 'Whisper Tiny (English) — fastest, ~40 MB download' },
-    'whisper-base':   { id: 'Xenova/whisper-base.en',                    label: 'Whisper Base (English) — recommended, ~80 MB download' },
-    'moonshine-tiny': { id: 'onnx-community/moonshine-tiny-ONNX',        label: 'Moonshine Tiny — very fast, ~50 MB download' },
-    'moonshine-base': { id: 'onnx-community/moonshine-base-ONNX',        label: 'Moonshine Base — best live accuracy, ~120 MB download' }
-};
-const LOCAL_WORKER_SRC = `
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
-env.allowLocalModels = false;
-let asr = null;
-const files = {};
-function progress(p) {
-  if (!p || !p.file) return;
-  if (p.status === 'progress' || p.status === 'done') { files[p.file] = { loaded: p.status === 'done' ? (p.total || p.loaded || 0) : (p.loaded || 0), total: p.total || 0 }; }
-  let l = 0, t = 0; for (const k in files) { l += files[k].loaded; t += files[k].total; }
-  self.postMessage({ type: 'progress', loaded: l, total: t });
-}
-self.onmessage = async (e) => {
-  const m = e.data;
-  if (m.type === 'load') {
-    try {
-      try { asr = await pipeline('automatic-speech-recognition', m.model, { dtype: 'q8', device: 'wasm', progress_callback: progress }); }
-      catch (err1) { asr = await pipeline('automatic-speech-recognition', m.model, { device: 'wasm', progress_callback: progress }); }
-      self.postMessage({ type: 'ready' });
-    } catch (err) { self.postMessage({ type: 'error', fatal: true, message: String((err && err.message) || err) }); }
-  } else if (m.type === 'run') {
-    try {
-      const out = await asr(m.audio, { chunk_length_s: 30 });
-      self.postMessage({ type: 'text', id: m.id, seg: m.seg, final: m.final, text: String((out && out.text) || '') });
-    } catch (err) { self.postMessage({ type: 'text', id: m.id, seg: m.seg, final: m.final, text: '', error: String((err && err.message) || err) }); }
-  }
-};`;
-const loc = { worker: null, loadedModel: '', ready: false, loading: null, active: false, ctx: null, stream: null, proc: null, src: null,
-              pre: [], preLen: 0, seg: [], segLen: 0, inSpeech: false, silenceMs: 0, lastSend: 0, noise: 0.004,
-              busy: false, pending: null, jobId: 0, segId: 0, lastFinalSeg: -1, curSeg: -1, results: [], dlLoaded: 0, dlTotal: 0 };
-
-function voiceEngineKind() {
-    const hasNative = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    return (speechConfig.engine === 'local' || !hasNative) ? 'local' : 'browser';
-}
-function locStatus(msg, pct) {
-    const el = document.getElementById('speechEngineStatus'); if (el && msg != null) el.innerText = msg;
-    const bar = document.getElementById('speechProgressBar'), wrap = document.getElementById('speechProgress');
-    if (wrap) wrap.style.display = (pct == null) ? 'none' : 'block';
-    if (bar && pct != null) bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
-}
-function locSetUi(on, note) {
-    isListening = on;
-    const btn = document.getElementById('listeningBtn');
-    if (btn) { btn.innerText = on ? 'Disable Live Voice' : 'Enable Live Voice'; btn.classList.toggle('listening', on); }
-    const dot = document.getElementById('statusDot'), txt = document.getElementById('statusText');
-    if (dot) dot.className = on ? 'status-dot active' : 'status-dot';
-    if (txt) txt.innerText = note || (on ? 'Monitoring Audio Device (Local AI)...' : 'System Ready');
-}
-function localLoad() {
-    const def = LOCAL_MODELS[speechConfig.model] || LOCAL_MODELS['whisper-base'];
-    if (loc.ready && loc.loadedModel === def.id) return Promise.resolve();
-    if (loc.loading && loc.loadingModel === def.id) return loc.loading;
-    if (loc.worker) { try { loc.worker.terminate(); } catch (e) {} loc.worker = null; }
-    loc.ready = false; loc.loadingModel = def.id; loc.dlLoaded = loc.dlTotal = 0;
-    loc.loading = new Promise((resolve, reject) => {
-        let w;
-        try { w = new Worker(URL.createObjectURL(new Blob([LOCAL_WORKER_SRC], { type: 'text/javascript' })), { type: 'module' }); }
-        catch (e) { loc.loading = null; reject(new Error('This browser cannot start the Local AI worker: ' + (e.message || e))); return; }
-        loc.worker = w;
-        const timer = setTimeout(() => { /* very slow connection: keep waiting, just keep the status honest */ }, 60000);
-        w.onmessage = ev => {
-            const m = ev.data || {};
-            if (m.type === 'progress') { loc.dlLoaded = m.loaded; loc.dlTotal = m.total; const pct = m.total ? m.loaded / m.total * 100 : 0; locStatus(`Downloading speech model… ${Math.round(pct)}% (${(m.loaded / 1048576).toFixed(0)} of ${(m.total / 1048576).toFixed(0)} MB) — only needed once.`, pct); }
-            else if (m.type === 'ready') { clearTimeout(timer); loc.ready = true; loc.loadedModel = def.id; loc.loading = null; locStatus('Local AI model ready — works offline from now on.', null); resolve(); }
-            else if (m.type === 'error') { clearTimeout(timer); loc.loading = null; loc.ready = false; try { w.terminate(); } catch (e) {} loc.worker = null; reject(new Error(m.message)); }
-            else if (m.type === 'text') localOnText(m);
-        };
-        w.onerror = ev => { clearTimeout(timer); loc.loading = null; loc.ready = false; reject(new Error((ev && ev.message) || 'worker failed to load (the model library could not be downloaded — check the internet connection)')); };
-        locStatus('Loading speech model…', 0);
-        w.postMessage({ type: 'load', model: def.id });
-    });
-    return loc.loading;
-}
-function localCleanText(t) {
-    t = String(t || '').replace(/\s+/g, ' ').trim();
-    if (!t) return '';
-    if (/^[\[\(\*♪].*[\]\)\*♪]$/.test(t)) return '';              // "[BLANK_AUDIO]", "(music)", "*silence*"
-    if (/^(you|\.+|thank you\.?|thanks for watching\.?)$/i.test(t)) return '';   // classic silence hallucinations
-    return t;
-}
-function localEmit(segId, text, isFinal) {
-    if (loc.curSeg !== segId || !loc.results.length) { loc.results.push({ t: text, final: isFinal }); loc.curSeg = segId; }
-    else { const r = loc.results[loc.results.length - 1]; r.t = text; r.final = isFinal; }
-    const idx = loc.results.length - 1;
-    const ev = { resultIndex: idx, results: loc.results.map(r => { const a = [{ transcript: r.t, confidence: 0.9 }]; a.isFinal = r.final; return a; }) };
-    renderTranscriptLog(isFinal ? text : '', isFinal ? '' : text);
-    processContinuousSpeechForScriptures(ev);
-    aiOnSpeech(ev);
-}
-function localOnText(m) {
-    loc.busy = false;
-    if (m.error) console.warn('Local AI run error:', m.error);
-    if (loc.active && m.seg > loc.lastFinalSeg) {
-        const text = localCleanText(m.text);
-        if (m.final) loc.lastFinalSeg = m.seg;
-        if (text) localEmit(m.seg, text, !!m.final);
-        else if (m.final && loc.curSeg === m.seg && loc.results.length) { const r = loc.results[loc.results.length - 1]; r.final = true; }
-    }
-    if (loc.pending && loc.active) { const j = loc.pending; loc.pending = null; localPost(j); }
-}
-function localPost(job) {
-    if (!loc.worker || !loc.ready) return;
-    if (loc.busy) {
-        if (job.final) loc.pending = job;                       // a finished sentence is never dropped
-        else if (!loc.pending || !loc.pending.final) loc.pending = job;   // newest interim replaces older interim
-        return;
-    }
-    loc.busy = true;
-    loc.worker.postMessage({ type: 'run', id: ++loc.jobId, seg: job.seg, final: job.final, audio: job.audio }, [job.audio.buffer]);
-}
-function localSegAudio() {
-    const out = new Float32Array(loc.segLen); let o = 0;
-    for (const c of loc.seg) { out.set(c, o); o += c.length; }
-    return out;
-}
-function localSend(final) {
-    if (loc.segLen < 16000 * 0.35) return;                      // under 0.35 s: nothing worth transcribing
-    loc.lastSend = performance.now();
-    localPost({ seg: loc.segId, final, audio: localSegAudio() });
-}
-function localFinalize() {
-    localSend(true);
-    loc.seg = []; loc.segLen = 0; loc.inSpeech = false; loc.silenceMs = 0; loc.segId++;
-}
-function localFeed(input, sr) {
-    let chunk;
-    if (sr === 16000) chunk = new Float32Array(input);
-    else {                                                       // resample to 16 kHz (browsers that ignore the requested rate)
-        const ratio = sr / 16000, n = Math.floor(input.length / ratio); chunk = new Float32Array(n);
-        for (let i = 0; i < n; i++) { const p = i * ratio, i0 = Math.floor(p), i1 = Math.min(input.length - 1, i0 + 1), f = p - i0; chunk[i] = input[i0] * (1 - f) + input[i1] * f; }
-    }
-    let sum = 0; for (let i = 0; i < chunk.length; i++) sum += chunk[i] * chunk[i];
-    const rms = Math.sqrt(sum / Math.max(1, chunk.length)), ms = chunk.length / 16;
-    const thr = Math.max(0.012, loc.noise * 3);
-    if (!loc.inSpeech) {
-        loc.noise = Math.max(0.002, loc.noise * 0.97 + rms * 0.03);
-        loc.pre.push(chunk); loc.preLen += chunk.length;
-        while (loc.preLen > 16000 * 0.4 && loc.pre.length > 1) loc.preLen -= loc.pre.shift().length;
-        if (rms > thr) { loc.inSpeech = true; loc.seg = loc.pre.slice(); loc.segLen = loc.preLen; loc.pre = []; loc.preLen = 0; loc.silenceMs = 0; loc.lastSend = performance.now(); }
-        return;
-    }
-    loc.seg.push(chunk); loc.segLen += chunk.length;
-    if (rms > thr) loc.silenceMs = 0; else loc.silenceMs += ms;
-    if (loc.silenceMs >= 600) localFinalize();                   // preacher paused -> finish the sentence
-    else if (loc.segLen >= 16000 * 10) localFinalize();          // long run-on speech: cut every 10 s so results keep flowing
-    else if (performance.now() - loc.lastSend >= 800) localSend(false);   // live interim update while he is still speaking
-}
-async function localStart() {
-    const track = document.getElementById('transcriptTrack');
-    locSetUi(true, 'Loading Local AI…');
-    loc.active = true;
-    if (track) track.innerText = loc.ready ? 'Starting…' : 'Preparing the free Local AI speech model (first time only: a one-time download, then it works offline)…';
-    try { await localLoad(); }
-    catch (err) {
-        loc.active = false; locSetUi(false, 'Live Voice stopped');
-        if (track) track.innerText = 'Local AI could not load: ' + (err.message || err) + ' — check the internet connection (needed once to download the model), or switch the engine back to "Browser" in Settings → Speech Engine.';
-        locStatus('Local AI failed to load: ' + (err.message || err), null);
-        return;
-    }
-    if (!loc.active) return;                                    // user pressed Disable while it was loading
-    try {
-        const id = document.getElementById('audioSourceSelector') && document.getElementById('audioSourceSelector').value;
-        loc.stream = await navigator.mediaDevices.getUserMedia({ audio: id ? { deviceId: { exact: id }, echoCancellation: true, noiseSuppression: true } : { echoCancellation: true, noiseSuppression: true } });
-    } catch (e) {
-        loc.active = false; locSetUi(false, 'Microphone access denied.');
-        if (track) track.innerText = "Microphone access was denied or no microphone was found. Allow it in the browser's address-bar prompt, then click Enable Live Voice again.";
-        return;
-    }
-    const AC = window.AudioContext || window.webkitAudioContext;
-    try { loc.ctx = new AC({ sampleRate: 16000 }); } catch (e) { loc.ctx = new AC(); }
-    if (loc.ctx.state === 'suspended') { try { await loc.ctx.resume(); } catch (e) {} }
-    loc.src = loc.ctx.createMediaStreamSource(loc.stream);
-    loc.proc = loc.ctx.createScriptProcessor(2048, 1, 1);
-    const sr = loc.ctx.sampleRate;
-    loc.proc.onaudioprocess = e => { if (loc.active) localFeed(e.inputBuffer.getChannelData(0), sr); };
-    loc.src.connect(loc.proc); loc.proc.connect(loc.ctx.destination);
-    loc.pre = []; loc.preLen = 0; loc.seg = []; loc.segLen = 0; loc.inSpeech = false; loc.busy = false; loc.pending = null;
-    loc.segId = loc.lastFinalSeg + 1; loc.curSeg = -1; loc.results = [];
-    voiceCommitted = { utterance: -1, sig: '' };
-    if (typeof aiState !== 'undefined') aiState.results = {};
-    locSetUi(true);
-    if (track) track.innerText = 'Listening (Local AI)…';
-    runAudioContextVolumeDetection();                           // same mic-level meter as the browser engine
-}
-function localStop() {
-    loc.active = false;
-    try { if (loc.proc) { loc.proc.onaudioprocess = null; loc.proc.disconnect(); } } catch (e) {}
-    try { if (loc.src) loc.src.disconnect(); } catch (e) {}
-    try { if (loc.ctx) loc.ctx.close(); } catch (e) {}
-    try { if (loc.stream) loc.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-    loc.proc = loc.src = loc.ctx = loc.stream = null; loc.pending = null;
-}
-function initSpeechEngineSettings() {
-    const $ = id => document.getElementById(id);
-    if (!$('speechEngineSelect')) return;
-    $('speechModelSelect').innerHTML = Object.keys(LOCAL_MODELS).map(k => `<option value="${k}">${LOCAL_MODELS[k].label}</option>`).join('');
-    $('speechEngineSelect').value = speechConfig.engine;
-    $('speechModelSelect').value = LOCAL_MODELS[speechConfig.model] ? speechConfig.model : 'whisper-base';
-    const native = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    const describe = () => {
-        locStatus((native ? 'This browser has built-in speech recognition. ' : 'This browser has NO built-in speech recognition (only Chrome/Edge do) — Local AI is used automatically. ')
-            + 'Active engine: ' + (voiceEngineKind() === 'local' ? 'Local AI (free, offline after first download).' : 'Browser (Chrome/Edge speech service).'), null);
-    };
-    const save = () => { try { localStorage.setItem(SPEECH_STORE, JSON.stringify(speechConfig)); } catch (e) {} describe(); };
-    $('speechEngineSelect').addEventListener('change', e => { speechConfig.engine = e.target.value; save(); });
-    $('speechModelSelect').addEventListener('change', e => { speechConfig.model = e.target.value; save(); });
-    $('speechLoadBtn').addEventListener('click', async () => {
-        $('speechLoadBtn').disabled = true;
-        try { await localLoad(); } catch (err) { locStatus('Local AI failed to load: ' + (err.message || err), null); }
-        $('speechLoadBtn').disabled = false;
-    });
-    describe();
-}
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSpeechEngineSettings); else initSpeechEngineSettings();
