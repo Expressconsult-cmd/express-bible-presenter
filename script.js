@@ -4249,3 +4249,191 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
     sel.value = refNumberStyle;
     sel.addEventListener('change', () => { refNumberStyle = sel.value === 'chapter' ? 'chapter' : 'split'; try { localStorage.setItem(REF_STYLE_STORE, refNumberStyle); } catch (e) {} });
 })();
+
+// ===================== SPLIT LONG VERSES =====================
+// A verse that is too long for the scene at the chosen size would normally be shrunk by autoFitVerseText. For exactly those verses
+// the verse list shows a small "✂ Split" button. It cuts the verse at natural phrase breaks into the fewest parts that each show at
+// FULL size; next/previous (buttons, arrow keys, voice "next") step through the parts, then carry on to the next verse.
+// Verses that fit are never touched and get no button.
+const splitState = { active: false, verse: 0, parts: [], index: 0 };
+const splitProbe = { el: null, textOut: null, baseStyle: '', baseFs: 0, sig: '', timer: null, run: 0, shrinks: new Map() };
+let splitApplying = false;
+
+function splitSceneSignature() {
+    const c = document.getElementById('liveCanvas');
+    if (!c || !c.clientWidth) return '';
+    return [c.className, c.clientWidth, c.clientHeight, previewState.fontFamilyOverride, previewState.fontBold, previewState.fontItalic,
+        previewState.textBackingPanel, previewState.refVisible, previewState.gradientGlowText, currentBookCode, currentChapter,
+        (document.getElementById('versionSelector') || {}).value, activeChapterVerses.length].join('|');
+}
+function splitRefFor(verse) {
+    const ver = document.getElementById('versionSelector');
+    return `${currentBookName} ${currentChapter}:${verse} (${getVersionDisplayLabel(ver ? ver.value : '')})`;
+}
+// Hidden twin of the scene (same size, same styles) used only to measure whether a text would be shrunk.
+function splitEnsureProbe() {
+    const live = document.getElementById('liveCanvas');
+    if (!live || !live.clientWidth || !live.clientHeight) return false;
+    if (!splitProbe.el) {
+        const el = document.createElement('div');
+        el.setAttribute('aria-hidden', 'true');
+        el.style.cssText = 'position:absolute; left:-20000px; top:0; visibility:hidden; pointer-events:none; aspect-ratio:auto; border:2px solid transparent;';
+        (live.parentElement || document.body).appendChild(el);
+        splitProbe.el = el;
+    }
+    const el = splitProbe.el;
+    el.style.width = live.offsetWidth + 'px'; el.style.height = live.offsetHeight + 'px';
+    const st = Object.assign({}, previewState, { text: 'x', ref: splitRefFor(currentVerse), displayMode: 'text', mediaUrl: '', flierId: '', isScrolling: false,
+        timerVisible: false, announcementVisible: false, lowerThirdVisible: false, textNudgeX: 0, textNudgeY: 0, slidePrevUrl: '' });
+    buildCanvasDOM(el, st, importedAssetsLibrary, cachedLogoDataUrl, false);
+    const t = el.querySelector('.text-out');
+    if (!t) return false;
+    t.style.fontSize = '';                      // buildCanvasDOM may have shrunk it; restore the selected size
+    splitProbe.textOut = t;
+    splitProbe.baseStyle = 'calc(var(--canvas-font-size) * 1)';
+    t.style.fontSize = splitProbe.baseStyle;
+    splitProbe.baseFs = parseFloat(getComputedStyle(t).fontSize) || 0;
+    return splitProbe.baseFs > 0;
+}
+function splitTextShrinks(text) {
+    const t = splitProbe.textOut;
+    if (!t || !splitProbe.baseFs) return false;
+    t.style.fontSize = splitProbe.baseStyle;
+    t.textContent = text;
+    autoFitVerseText(splitProbe.el);
+    const fs = parseFloat(getComputedStyle(t).fontSize) || splitProbe.baseFs;
+    t.style.fontSize = splitProbe.baseStyle;
+    return fs < splitProbe.baseFs * 0.98;
+}
+
+function splitIntoParts(text, n) {
+    const total = text.length;
+    const punct = [], words = [];
+    const reP = /[,;:.!?]["”’')\]]*\s+/g; let m;
+    while ((m = reP.exec(text)) !== null) punct.push(m.index + m[0].length);
+    const reW = /\s+/g;
+    while ((m = reW.exec(text)) !== null) words.push(m.index + m[0].length);
+    const cuts = []; let prev = 0;
+    for (let k = 1; k < n; k++) {
+        const target = total * k / n, tol = total / n * 0.3;
+        const pick = (arr) => arr.filter(p => p > prev + 8 && p < total - 8).sort((a, b) => Math.abs(a - target) - Math.abs(b - target))[0];
+        let c = pick(punct);
+        if (c == null || Math.abs(c - target) > tol) { const w = pick(words); if (w != null) c = w; }
+        if (c == null || c <= prev) continue;
+        cuts.push(c); prev = c;
+    }
+    const parts = []; let from = 0;
+    cuts.forEach(c => { parts.push(text.slice(from, c).trim()); from = c; });
+    parts.push(text.slice(from).trim());
+    return parts.filter(Boolean);
+}
+function splitComputeParts(text) {
+    if (!splitEnsureProbe()) return [text];
+    const wordCount = text.split(/\s+/).length;
+    let best = [text];
+    for (let n = 2; n <= Math.min(8, wordCount); n++) {
+        const parts = splitIntoParts(text, n);
+        best = parts;
+        if (parts.length >= 2 && parts.every(p => !splitTextShrinks(p))) return parts;
+    }
+    return best;
+}
+
+function splitRenderRowControls(verse) {
+    const row = document.getElementById('vRow-' + verse);
+    if (!row) return;
+    let ctl = row.querySelector('.verse-split-ctl');
+    const isActive = splitState.active && splitState.verse === verse;
+    if (!isActive && !splitProbe.shrinks.get(verse)) { if (ctl) ctl.remove(); return; }
+    if (!ctl) { ctl = document.createElement('div'); ctl.className = 'verse-split-ctl'; row.appendChild(ctl); }
+    ['click', 'dblclick', 'mousedown'].forEach(ev => ctl.addEventListener(ev, e => e.stopPropagation()));
+    if (!isActive) {
+        ctl.innerHTML = '<button type="button" class="verse-split-btn" title="This verse is long, so the scene shrinks it. Split it into parts that show at full size.">✂ Split</button>';
+        ctl.querySelector('button').addEventListener('click', e => { e.stopPropagation(); splitStart(verse); });
+    } else {
+        ctl.innerHTML = `<button type="button" class="verse-split-btn" data-d="-1" title="Previous part">‹</button><span class="verse-split-count">${splitState.index + 1}/${splitState.parts.length}</span><button type="button" class="verse-split-btn" data-d="1" title="Next part">›</button><button type="button" class="verse-split-btn" data-d="x" title="Show the whole verse again">✕</button>`;
+        ctl.querySelectorAll('button').forEach(b => b.addEventListener('click', e => {
+            e.stopPropagation();
+            if (b.dataset.d === 'x') splitCancel(true);
+            else splitStep(parseInt(b.dataset.d, 10), true);
+        }));
+    }
+}
+function splitApply() {
+    const part = splitState.parts[splitState.index];
+    splitApplying = true;
+    previewState.text = part;
+    previewState.ref = `${splitRefFor(splitState.verse)} · ${splitState.index + 1}/${splitState.parts.length}`;
+    previewState.isScrolling = false;
+    renderPreview();
+    transmitStatePacketToRemoteClients();
+    splitApplying = false;
+    splitRenderRowControls(splitState.verse);
+}
+function splitStart(verse) {
+    const vObj = activeChapterVerses.find(v => v.verse === verse);
+    if (!vObj) return;
+    if (currentVerse !== verse || !(splitState.active && splitState.verse === verse)) selectSpecificVerseCoordinate(verse);
+    const parts = splitComputeParts(vObj.text);
+    if (parts.length < 2) return;
+    splitState.active = true; splitState.verse = verse; splitState.parts = parts; splitState.index = 0;
+    splitApply();
+}
+// Moves between parts. Returns true when it handled the move (so the caller must not also change verse).
+function splitStep(dir, fromButton) {
+    if (!splitState.active || splitState.verse !== currentVerse) return false;
+    const ni = splitState.index + dir;
+    if (ni < 0 || ni >= splitState.parts.length) { if (fromButton) return true; splitCancel(false); return false; }
+    splitState.index = ni;
+    splitApply();
+    return true;
+}
+function splitCancel(rerender) {
+    if (!splitState.active) return;
+    const v = splitState.verse;
+    splitState.active = false; splitState.parts = [];
+    splitRenderRowControls(v);
+    if (rerender && v === currentVerse) { selectSpecificVerseCoordinate(v); }
+}
+
+// Probe all verses of the open chapter in small slices (never blocks the screen) and show a Split button on the long ones.
+function splitScanChapter() {
+    const run = ++splitProbe.run;
+    splitProbe.shrinks = new Map();
+    document.querySelectorAll('#verseGridDeck .verse-split-ctl').forEach(n => { if (!(splitState.active && n.parentElement && n.parentElement.id === 'vRow-' + splitState.verse)) n.remove(); });
+    if (!splitEnsureProbe()) return;
+    const verses = activeChapterVerses.slice();
+    let i = 0;
+    const slice = () => {
+        if (run !== splitProbe.run) return;
+        const end = Math.min(verses.length, i + 8);
+        for (; i < end; i++) {
+            const v = verses[i];
+            const s = splitTextShrinks(v.text);
+            splitProbe.shrinks.set(v.verse, s);
+            splitRenderRowControls(v.verse);
+        }
+        if (i < verses.length) setTimeout(slice, 0);
+    };
+    slice();
+}
+function splitScheduleCheck(force) {
+    const sig = splitSceneSignature();
+    if (!sig || (!force && sig === splitProbe.sig)) return;
+    splitProbe.sig = sig;
+    clearTimeout(splitProbe.timer);
+    splitProbe.timer = setTimeout(splitScanChapter, 250);
+}
+
+// ---- hooks (wrap the existing functions; their own code is untouched) ----
+(function hookSplitLongVerses() {
+    const origRender = renderVerseNavigationPanel;
+    renderVerseNavigationPanel = function () { const r = origRender.apply(this, arguments); splitProbe.sig = ''; splitScheduleCheck(true); return r; };
+    const origSelect = selectSpecificVerseCoordinate;
+    selectSpecificVerseCoordinate = function () { if (!splitApplying && splitState.active) splitCancel(false); return origSelect.apply(this, arguments); };
+    const origNav = navigateSequentialOffsetVerses;
+    navigateSequentialOffsetVerses = function (direction) { if (splitState.active && splitStep(direction, false)) { switchToTextDisplay(); return; } return origNav.apply(this, arguments); };
+    const origPreview = renderPreview;
+    renderPreview = function () { const r = origPreview.apply(this, arguments); if (!splitApplying) splitScheduleCheck(false); return r; };
+    window.addEventListener('resize', () => splitScheduleCheck(false));
+})();
