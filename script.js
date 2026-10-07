@@ -1514,6 +1514,22 @@ async function initMediaEngine() {
             return labels[code] || code;
         }
 
+        // Chapter cache + prefetch: a chapter that was already fetched (or prefetched while a match was only a suggestion) opens instantly.
+        const bollsChapterCache = new Map();
+        function bollsChapterJson(ver, book, ch) {
+            const key = ver + '|' + book + '|' + ch;
+            if (bollsChapterCache.has(key)) return bollsChapterCache.get(key);
+            const p = fetch(`https://bolls.life/get-text/${ver}/${book}/${ch}/`)
+                .then(r => { if (!r.ok) throw new Error("Cloud database failure"); return r.json(); })
+                .catch(err => { bollsChapterCache.delete(key); throw err; });
+            bollsChapterCache.set(key, p);
+            if (bollsChapterCache.size > 60) bollsChapterCache.delete(bollsChapterCache.keys().next().value);
+            return p;
+        }
+        function bollsPrefetch(book, ch) {
+            try { const sel = document.getElementById('versionSelector'); if (sel) bollsChapterJson(sel.value, book, ch).catch(() => {}); } catch (e) {}
+        }
+
         async function fetchCurrentChapterFromAPI() {
             const targetVersion = document.getElementById('versionSelector').value;
             const dot = document.getElementById('statusDot');
@@ -1524,10 +1540,7 @@ async function initMediaEngine() {
             document.getElementById('panelNavHeader').innerText = `Verse Directory: Loading...`;
 
             try {
-                const response = await fetch(`https://bolls.life/get-text/${targetVersion}/${currentBookCode}/${currentChapter}/`);
-                if (!response.ok) throw new Error("Cloud database failure");
-                
-                let data = await response.json();
+                let data = await bollsChapterJson(targetVersion, currentBookCode, currentChapter);
                 if (data && data.length > 0) {
                     activeChapterVerses = data.map(v => {
                         let parsedText = v.text;
@@ -1993,7 +2006,9 @@ async function initMediaEngine() {
         function initSpeechEngine() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
-                document.getElementById('transcriptTrack').innerText = "Web Speech API is not natively supported in this browser instance.";
+                document.getElementById('transcriptTrack').innerText = voiceEngineKind() === 'deepgram'
+                    ? "Live Voice will use the Deepgram engine (this browser has no built-in speech recognition)."
+                    : "This browser has no built-in speech recognition. Open Settings → Speech Engine to add a free Deepgram key, or use Chrome/Edge.";
                 return;
             }
 
@@ -2023,7 +2038,7 @@ async function initMediaEngine() {
                         if (isListening) {
                             try { recognition.start(); } catch(e) {}
                         }
-                    }, 350);
+                    }, 120);
                 } else {
                     disableAudioVolumeDetection();
                 }
@@ -3083,8 +3098,14 @@ function songTabIsActive() {
 
         // Explains WHY voice can't work here, instead of failing silently.
         function getVoiceEnvironmentProblem() {
+            if (voiceEngineKind() === 'deepgram') {
+                if (!window.isSecureContext) return "The microphone is blocked on insecure pages. Open this app from https:// or http://localhost, then try again.";
+                if (!navigator.onLine) return "Live Voice (Deepgram) needs internet — you appear to be offline.";
+                if (typeof MediaRecorder === 'undefined' || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return "This browser can't record the microphone.";
+                return '';
+            }
             if (!(window.SpeechRecognition || window.webkitSpeechRecognition) || !recognition) {
-                return "Live Voice needs the Web Speech API, which only Chrome and Edge provide. Embedded browsers (OBS docks / Browser Sources, vMix web pages) don't include it — run Live Voice in a normal Chrome/Edge tab and use OBS only for the output.";
+                return "This browser has no built-in speech recognition (only Chrome and Edge do). Fix: open Settings → Speech Engine, paste a free Deepgram key and tick “Use Deepgram” — Live Voice then works in Firefox, Safari, Brave and any other browser. Or open this page in Chrome/Edge.";
             }
             if (!window.isSecureContext) {
                 return "The microphone is blocked on insecure pages. Open this app from https:// or http://localhost (an http://192.168.x.x address does not count), then try again.";
@@ -3102,10 +3123,11 @@ function songTabIsActive() {
             if (!isListening) {
                 const voiceProblem = getVoiceEnvironmentProblem();
                 if (voiceProblem) { track.innerText = voiceProblem; txt.innerText = "Live Voice unavailable"; return; }
+                if (voiceEngineKind() === 'deepgram') { dgStart(); return; }
                 try { recognition.start(); } catch(e) { track.innerText = 'Could not start voice recognition: ' + (e.message || e); }
             } else { 
                 isListening = false; 
-                recognition.stop(); 
+                if (dg.active) dgStop(); else if (recognition) recognition.stop(); 
                 btn.innerText = "Enable Live Voice"; 
                 btn.classList.remove('listening'); 
                 dot.className = "status-dot active"; 
@@ -4097,14 +4119,18 @@ function aiMatch(contextText, maxResults = 3) {
         if (matched < Math.min(3, set.size) || matchedIdf < 6) continue;
         const cov = matchedIdf / aiIndex.vIdfTotal[vi];
         // longest run of verse words that also appear back-to-back (in order) in what was said
-        let best = 0, prev = new Array(ctx.length + 1).fill(0);
+        let best = 0, bestEnd = 0, prev = new Array(ctx.length + 1).fill(0);
         for (let i = 1; i <= seq.length; i++) {
             const cur = new Array(ctx.length + 1).fill(0);
-            for (let j = 1; j <= ctx.length; j++) if (seq[i - 1] === ctx[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) best = cur[j]; }
+            for (let j = 1; j <= ctx.length; j++) if (seq[i - 1] === ctx[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) { best = cur[j]; bestEnd = i; } }
             prev = cur;
         }
+        // Distinctive words of the verse that were said back-to-back (a partial quote of a long verse still scores high)
+        let runIdf = 0;
+        for (let k = bestEnd - best; k < bestEnd; k++) runIdf += aiIndex.idf.get(seq[k]) || 0;
         const runFrac = Math.min(1, best / Math.max(3, Math.ceil(seq.length * 0.7)));
         let conf = 100 * (0.55 * cov + 0.35 * runFrac + 0.10 * Math.min(1, matchedIdf / 20));
+        if (best >= 4 && runIdf >= 18) conf = Math.max(conf, Math.min(94, 38 + 2.2 * runIdf));   // partial quote
         conf = Math.min(cov >= 0.999 && runFrac >= 0.999 ? 100 : 99, conf);
         const v = aiIndex.verses[vi];
         out.push({ book: v[0], chapter: v[1], verse: v[2], text: v[3], conf: Math.round(conf), version: aiIndex.version });
@@ -4135,8 +4161,11 @@ function aiIsCurrent(item) { return item.book === currentBookCode && item.chapte
 function aiOnSpeech(event) {
     if (!(aiConfig.enabled && aiIndex.ready)) { updateScriptureSuggestions(event); return; }
     aiTouchResults(event);
+    let anyFinal = false;
+    for (let i = event.resultIndex; i < event.results.length; i++) if (event.results[i].isFinal) anyFinal = true;
+    aiState.finalSeen = anyFinal;
     if (aiState.timer) return;
-    const wait = Math.max(0, 250 - (Date.now() - aiState.lastRun));
+    const wait = Math.max(0, 150 - (Date.now() - aiState.lastRun));
     aiState.timer = setTimeout(() => { aiState.timer = null; aiState.lastRun = Date.now(); aiDetectNow(); }, wait);
 }
 
@@ -4151,8 +4180,15 @@ function aiDetectNow() {
     aiState.stableCount = (key === aiState.lastKey) ? aiState.stableCount + 1 : 1;
     aiState.lastKey = key;
     const eligible = top.conf >= AI_SURE_THRESHOLD || (aiConfig.auto && top.conf >= aiConfig.autoThreshold);
-    if (eligible && aiState.stableCount >= 2 && key !== aiState.lastAutoKey && Date.now() - aiState.lastAutoTime > 3000 && !aiIsCurrent(top)) {
-        aiState.lastAutoKey = key; aiState.lastAutoTime = Date.now(); aiState.floor = Date.now();
+    bollsPrefetch(top.book, top.chapter);                                   // warm the chapter so display is instant
+    if (good[1]) bollsPrefetch(good[1].book, good[1].chapter);
+    // Needs to stay on top for 2 checks — but the second check must not wait for MORE speech (the old delay):
+    // if the preacher has paused, re-check the same context 220ms later instead.
+    if (eligible && aiState.stableCount < 2 && !aiState.finalSeen && key !== aiState.lastAutoKey && !aiState.timer) {
+        aiState.timer = setTimeout(() => { aiState.timer = null; aiState.lastRun = Date.now(); aiDetectNow(); }, 220);
+    }
+    if (eligible && (aiState.stableCount >= 2 || (aiState.finalSeen && top.conf >= AI_SURE_THRESHOLD)) && key !== aiState.lastAutoKey && Date.now() - aiState.lastAutoTime > 2000 && !aiIsCurrent(top)) {
+        aiState.lastAutoKey = key; aiState.lastAutoTime = Date.now(); aiState.floor = Date.now(); aiState.finalSeen = false;
         top.autoShown = true;
         openSuggestedScripture(top, true);
         if (typeof setVoiceNote === 'function') setVoiceNote(`AI matched ${cleanBookNames[top.book]} ${top.chapter}:${top.verse} (${top.conf}%)`);
@@ -4192,3 +4228,109 @@ function initAiScriptureDetection() {
     aiLoadSavedIndex($('versionSelector').value).then(() => aiRefreshStatus());
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAiScriptureDetection); else initAiScriptureDetection();
+
+
+// ===================== SPEECH ENGINE CHOICE: browser (Chrome/Edge) or Deepgram (works in ANY browser) =====================
+// Deepgram streams the microphone to a speech-to-text service and returns words in ~300ms. It feeds the exact same
+// transcript → scripture detection pipeline as the browser engine, so nothing else changes.
+const SPEECH_STORE = 'ebpSpeechConfig';
+const speechConfig = { engine: 'browser', dgKey: '' };
+try { Object.assign(speechConfig, JSON.parse(localStorage.getItem(SPEECH_STORE) || '{}')); } catch (e) {}
+const dg = { active: false, ws: null, rec: null, stream: null, results: [], keep: null, retry: null, tries: 0 };
+function voiceEngineKind() {
+    const hasNative = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (speechConfig.dgKey && (speechConfig.engine === 'deepgram' || !hasNative)) return 'deepgram';
+    return 'browser';
+}
+function dgSetUi(on, note) {
+    isListening = on;
+    const btn = document.getElementById('listeningBtn');
+    if (btn) { btn.innerText = on ? 'Disable Live Voice' : 'Enable Live Voice'; btn.classList.toggle('listening', on); }
+    const dot = document.getElementById('statusDot'), txt = document.getElementById('statusText');
+    if (dot) dot.className = on ? 'status-dot active' : 'status-dot';
+    if (txt) txt.innerText = note || (on ? 'Monitoring Audio Device (Deepgram)...' : 'System Ready');
+}
+function dgEmit(text, isFinal) {
+    // Build a Web-Speech-shaped event so every existing handler works unchanged.
+    let idx = dg.results.length - 1;
+    if (idx < 0 || dg.results[idx].final) { dg.results.push({ t: text, final: isFinal }); idx = dg.results.length - 1; }
+    else { dg.results[idx].t = text; dg.results[idx].final = isFinal; }
+    const ev = { resultIndex: idx, results: dg.results.map(r => { const a = [{ transcript: r.t, confidence: 0.9 }]; a.isFinal = r.final; return a; }) };
+    renderTranscriptLog(isFinal ? text : '', isFinal ? '' : text);
+    processContinuousSpeechForScriptures(ev);
+    aiOnSpeech(ev);
+}
+function dgOpenSocket() {
+    const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&punctuate=true&interim_results=true&endpointing=250&smart_format=true';
+    const ws = new WebSocket(url, ['token', speechConfig.dgKey]);
+    dg.ws = ws;
+    ws.onopen = () => {
+        dg.tries = 0;
+        dgSetUi(true);
+        clearInterval(dg.keep);
+        dg.keep = setInterval(() => { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'KeepAlive' })); } catch (e) {} }, 8000);
+    };
+    ws.onmessage = ev => {
+        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        const alt = m && m.channel && m.channel.alternatives && m.channel.alternatives[0];
+        if (!alt || !alt.transcript) return;
+        dgEmit(alt.transcript, !!m.is_final);
+    };
+    ws.onerror = () => {};
+    ws.onclose = ev => {
+        clearInterval(dg.keep);
+        if (!dg.active) return;
+        const fail = msg => { dgStop(); const t = document.getElementById('transcriptTrack'); if (t) t.innerText = msg; dgSetUi(false, 'Live Voice stopped'); };
+        if (!dg.everOpened && ++dg.tries >= 2) return fail('Could not connect to Deepgram — check the API key in Settings → Speech Engine (and that you are online), then click Enable Live Voice again.');
+        if (dg.everOpened && ++dg.tries > 6) return fail('Lost connection to Deepgram. Check the internet, then click Enable Live Voice again.');
+        dg.retry = setTimeout(() => { if (dg.active) dgOpenSocket(); }, 400);   // reconnect; the mic recorder keeps running
+    };
+    ws.addEventListener('open', () => { dg.everOpened = true; });
+}
+async function dgStart() {
+    const track = document.getElementById('transcriptTrack');
+    try {
+        const id = document.getElementById('audioSourceSelector') && document.getElementById('audioSourceSelector').value;
+        dg.stream = await navigator.mediaDevices.getUserMedia({ audio: id ? { deviceId: { exact: id }, echoCancellation: true, noiseSuppression: true } : { echoCancellation: true, noiseSuppression: true } });
+    } catch (e) {
+        if (track) track.innerText = "Microphone access was denied or no microphone was found. Allow it in the browser's address-bar prompt, then click Enable Live Voice again.";
+        dgSetUi(false, 'Microphone access denied.');
+        return;
+    }
+    dg.active = true; dg.results = []; dg.tries = 0; dg.everOpened = false;
+    voiceCommitted = { utterance: -1, sig: '' };
+    if (typeof aiState !== 'undefined') aiState.results = {};
+    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+    try { dg.rec = new MediaRecorder(dg.stream, mime ? { mimeType: mime } : undefined); }
+    catch (e) { if (track) track.innerText = 'This browser cannot record audio: ' + (e.message || e); dgStop(); dgSetUi(false, 'Live Voice unavailable'); return; }
+    dg.rec.ondataavailable = e => { if (e.data && e.data.size && dg.ws && dg.ws.readyState === 1) dg.ws.send(e.data); };
+    dgOpenSocket();
+    dg.rec.start(100);                     // 100ms chunks = lowest latency
+    dgSetUi(true, 'Connecting to Deepgram...');
+    runAudioContextVolumeDetection();      // same mic-level meter as the browser engine
+}
+function dgStop() {
+    dg.active = false;
+    clearInterval(dg.keep); clearTimeout(dg.retry);
+    try { if (dg.rec && dg.rec.state !== 'inactive') dg.rec.stop(); } catch (e) {}
+    try { if (dg.ws) { if (dg.ws.readyState === 1) dg.ws.send(JSON.stringify({ type: 'CloseStream' })); dg.ws.close(); } } catch (e) {}
+    try { if (dg.stream) dg.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    dg.rec = dg.ws = dg.stream = null;
+}
+function initSpeechEngineSettings() {
+    const $ = id => document.getElementById(id);
+    if (!$('speechEngineSelect')) return;
+    $('speechEngineSelect').value = speechConfig.engine;
+    $('speechDgKey').value = speechConfig.dgKey;
+    const save = () => { try { localStorage.setItem(SPEECH_STORE, JSON.stringify(speechConfig)); } catch (e) {} refresh(); };
+    const refresh = () => {
+        const native = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+        const kind = voiceEngineKind();
+        $('speechEngineStatus').innerText = (native ? 'This browser has built-in speech recognition. ' : 'This browser has NO built-in speech recognition (only Chrome/Edge do). ')
+            + 'Active engine: ' + (kind === 'deepgram' ? 'Deepgram (works in any browser).' : (native ? 'Browser (Chrome/Edge speech service).' : 'none — add a Deepgram key below.'));
+    };
+    $('speechEngineSelect').addEventListener('change', e => { speechConfig.engine = e.target.value; save(); });
+    $('speechDgKey').addEventListener('change', e => { speechConfig.dgKey = e.target.value.trim(); save(); });
+    refresh();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSpeechEngineSettings); else initSpeechEngineSettings();
