@@ -1514,6 +1514,22 @@ async function initMediaEngine() {
             return labels[code] || code;
         }
 
+        // Chapter cache + prefetch: a chapter that was already fetched (or prefetched while a match was only a suggestion) opens instantly.
+        const bollsChapterCache = new Map();
+        function bollsChapterJson(ver, book, ch) {
+            const key = ver + '|' + book + '|' + ch;
+            if (bollsChapterCache.has(key)) return bollsChapterCache.get(key);
+            const p = fetch(`https://bolls.life/get-text/${ver}/${book}/${ch}/`)
+                .then(r => { if (!r.ok) throw new Error("Cloud database failure"); return r.json(); })
+                .catch(err => { bollsChapterCache.delete(key); throw err; });
+            bollsChapterCache.set(key, p);
+            if (bollsChapterCache.size > 60) bollsChapterCache.delete(bollsChapterCache.keys().next().value);
+            return p;
+        }
+        function bollsPrefetch(book, ch) {
+            try { const sel = document.getElementById('versionSelector'); if (sel) bollsChapterJson(sel.value, book, ch).catch(() => {}); } catch (e) {}
+        }
+
         async function fetchCurrentChapterFromAPI() {
             const targetVersion = document.getElementById('versionSelector').value;
             const dot = document.getElementById('statusDot');
@@ -1524,10 +1540,7 @@ async function initMediaEngine() {
             document.getElementById('panelNavHeader').innerText = `Verse Directory: Loading...`;
 
             try {
-                const response = await fetch(`https://bolls.life/get-text/${targetVersion}/${currentBookCode}/${currentChapter}/`);
-                if (!response.ok) throw new Error("Cloud database failure");
-                
-                let data = await response.json();
+                let data = await bollsChapterJson(targetVersion, currentBookCode, currentChapter);
                 if (data && data.length > 0) {
                     activeChapterVerses = data.map(v => {
                         let parsedText = v.text;
@@ -2472,6 +2485,17 @@ async function executeVoiceIntent(intent) {
     }
 }
 
+// "Genesis two one" is often delivered as "Genesis 21" (the engine merges spoken digits). The speech engine usually also
+// offers its other guesses: if one of them reads it as chapter 2 + verse 1 ("2 1", "two one", "2:1"), use that. A number the
+// preacher really said as "twenty one" arrives as 21 in every guess, so it stays chapter 21.
+function voiceFixAmbiguousChapter(intent, altIntents) {
+    if (!intent || intent.type !== 'ref' || intent.hasVerse || intent.chapter < 20 || intent.chapter > 99) return intent;
+    const tens = Math.floor(intent.chapter / 10), units = intent.chapter % 10;
+    if (!units) return intent;                                   // 20, 30, 40… cannot be two separate digits
+    const split = altIntents.find(it => it && it.type === 'ref' && it.bookId === intent.bookId && it.hasVerse && it.chapter === tens && it.verse === units);
+    return split || intent;
+}
+
 // Called for every speech-recognition update. Clear commands run instantly; anything that could still be
 // changing mid-sentence (verse numbers, bare "next") waits a beat until the words settle — then fires once.
 function processContinuousSpeechForScriptures(event) {
@@ -2481,13 +2505,16 @@ function processContinuousSpeechForScriptures(event) {
         for (let a = 0; a < result.length; a++) alternatives.push(result[a].transcript);
 
         let intent = null;
-        for (const alt of alternatives) { intent = interpretSpeech(alt, false); if (intent) break; }   // commands & references: try every guess
+        const altIntents = alternatives.map(alt => interpretSpeech(alt, false));
+        for (const it of altIntents) { if (it) { intent = it; break; } }   // commands & references: try every guess
+        intent = voiceFixAmbiguousChapter(intent, altIntents);
         if (!intent && alternatives.length && !songTabIsActive()) intent = interpretSpeech(alternatives[0], true); // then: is the preacher reading the chapter?
 
         clearTimeout(voicePendingTimer);
         if (!intent) continue;
         if (voiceCommitted.utterance === i && voiceCommitted.sig === intent.sig) continue; // this sentence already acted on
 
+        if (intent.type === 'ref' || intent.type === 'chapter') bollsPrefetch(intent.type === 'ref' ? intent.bookId : currentBookCode, intent.chapter);   // start loading the chapter while the verse number is still being said
         const run = () => { voiceCommitted = { utterance: i, sig: intent.sig }; executeVoiceIntent(intent); };
         if (result.isFinal || intent.delay <= 0) run();
         else voicePendingTimer = setTimeout(run, intent.delay);
@@ -4135,8 +4162,11 @@ function aiIsCurrent(item) { return item.book === currentBookCode && item.chapte
 function aiOnSpeech(event) {
     if (!(aiConfig.enabled && aiIndex.ready)) { updateScriptureSuggestions(event); return; }
     aiTouchResults(event);
+    let anyFinal = false;
+    for (let i = event.resultIndex; i < event.results.length; i++) if (event.results[i].isFinal) anyFinal = true;
+    aiState.finalSeen = anyFinal;
     if (aiState.timer) return;
-    const wait = Math.max(0, 250 - (Date.now() - aiState.lastRun));
+    const wait = Math.max(0, 150 - (Date.now() - aiState.lastRun));
     aiState.timer = setTimeout(() => { aiState.timer = null; aiState.lastRun = Date.now(); aiDetectNow(); }, wait);
 }
 
@@ -4151,8 +4181,15 @@ function aiDetectNow() {
     aiState.stableCount = (key === aiState.lastKey) ? aiState.stableCount + 1 : 1;
     aiState.lastKey = key;
     const eligible = top.conf >= AI_SURE_THRESHOLD || (aiConfig.auto && top.conf >= aiConfig.autoThreshold);
-    if (eligible && aiState.stableCount >= 2 && key !== aiState.lastAutoKey && Date.now() - aiState.lastAutoTime > 3000 && !aiIsCurrent(top)) {
-        aiState.lastAutoKey = key; aiState.lastAutoTime = Date.now(); aiState.floor = Date.now();
+    bollsPrefetch(top.book, top.chapter);                                   // warm the chapter so display is instant
+    if (good[1]) bollsPrefetch(good[1].book, good[1].chapter);
+    // Needs to stay on top for 2 checks — but the second check must not wait for MORE speech (the old delay):
+    // if the preacher has paused, re-check the same context 220ms later instead.
+    if (eligible && aiState.stableCount < 2 && !aiState.finalSeen && key !== aiState.lastAutoKey && !aiState.timer) {
+        aiState.timer = setTimeout(() => { aiState.timer = null; aiState.lastRun = Date.now(); aiDetectNow(); }, 220);
+    }
+    if (eligible && (aiState.stableCount >= 2 || (aiState.finalSeen && top.conf >= AI_SURE_THRESHOLD)) && key !== aiState.lastAutoKey && Date.now() - aiState.lastAutoTime > 2000 && !aiIsCurrent(top)) {
+        aiState.lastAutoKey = key; aiState.lastAutoTime = Date.now(); aiState.floor = Date.now(); aiState.finalSeen = false;
         top.autoShown = true;
         openSuggestedScripture(top, true);
         if (typeof setVoiceNote === 'function') setVoiceNote(`AI matched ${cleanBookNames[top.book]} ${top.chapter}:${top.verse} (${top.conf}%)`);
