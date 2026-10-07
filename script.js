@@ -2006,9 +2006,7 @@ async function initMediaEngine() {
         function initSpeechEngine() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
-                document.getElementById('transcriptTrack').innerText = voiceEngineKind() === 'deepgram'
-                    ? "Live Voice will use the Deepgram engine (this browser has no built-in speech recognition)."
-                    : "This browser has no built-in speech recognition. Open Settings → Speech Engine to add a free Deepgram key, or use Chrome/Edge.";
+                document.getElementById('transcriptTrack').innerText = "This browser has no built-in speech recognition. Live Voice will use the free Local AI engine (Settings → Speech Engine) — press Enable Live Voice.";
                 return;
             }
 
@@ -2034,11 +2032,13 @@ async function initMediaEngine() {
                 if (isListening) {
                     // Small delay before restarting avoids a tight restart loop that can
                     // repeatedly re-trigger the browser's microphone access indicator.
-                    setTimeout(() => {
-                        if (isListening) {
-                            try { recognition.start(); } catch(e) {}
-                        }
-                    }, 120);
+                    let restartTries = 0;
+                    const restart = () => {
+                        if (!isListening) return;
+                        try { recognition.start(); }
+                        catch(e) { if (++restartTries < 8) setTimeout(restart, 300); }   // Chrome sometimes isn't ready yet — try again instead of giving up
+                    };
+                    setTimeout(restart, 350);
                 } else {
                     disableAudioVolumeDetection();
                 }
@@ -3098,14 +3098,13 @@ function songTabIsActive() {
 
         // Explains WHY voice can't work here, instead of failing silently.
         function getVoiceEnvironmentProblem() {
-            if (voiceEngineKind() === 'deepgram') {
+            if (voiceEngineKind() === 'local') {
                 if (!window.isSecureContext) return "The microphone is blocked on insecure pages. Open this app from https:// or http://localhost, then try again.";
-                if (!navigator.onLine) return "Live Voice (Deepgram) needs internet — you appear to be offline.";
-                if (typeof MediaRecorder === 'undefined' || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return "This browser can't record the microphone.";
+                if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || !(window.AudioContext || window.webkitAudioContext) || typeof Worker === 'undefined') return "This browser can't run the Local AI engine (needs microphone, audio and web-worker support). Try a current Chrome, Edge, Firefox or Safari.";
                 return '';
             }
             if (!(window.SpeechRecognition || window.webkitSpeechRecognition) || !recognition) {
-                return "This browser has no built-in speech recognition (only Chrome and Edge do). Fix: open Settings → Speech Engine, paste a free Deepgram key and tick “Use Deepgram” — Live Voice then works in Firefox, Safari, Brave and any other browser. Or open this page in Chrome/Edge.";
+                return "Live Voice needs the Web Speech API, which only Chrome and Edge provide. Embedded browsers (OBS docks / Browser Sources, vMix web pages) don't include it — run Live Voice in a normal Chrome/Edge tab and use OBS only for the output.";
             }
             if (!window.isSecureContext) {
                 return "The microphone is blocked on insecure pages. Open this app from https:// or http://localhost (an http://192.168.x.x address does not count), then try again.";
@@ -3123,11 +3122,11 @@ function songTabIsActive() {
             if (!isListening) {
                 const voiceProblem = getVoiceEnvironmentProblem();
                 if (voiceProblem) { track.innerText = voiceProblem; txt.innerText = "Live Voice unavailable"; return; }
-                if (voiceEngineKind() === 'deepgram') { dgStart(); return; }
+                if (voiceEngineKind() === 'local') { localStart(); return; }
                 try { recognition.start(); } catch(e) { track.innerText = 'Could not start voice recognition: ' + (e.message || e); }
             } else { 
                 isListening = false; 
-                if (dg.active) dgStop(); else if (recognition) recognition.stop(); 
+                if (loc.active) localStop(); else if (recognition) recognition.stop(); 
                 btn.innerText = "Enable Live Voice"; 
                 btn.classList.remove('listening'); 
                 dot.className = "status-dot active"; 
@@ -4130,7 +4129,8 @@ function aiMatch(contextText, maxResults = 3) {
         for (let k = bestEnd - best; k < bestEnd; k++) runIdf += aiIndex.idf.get(seq[k]) || 0;
         const runFrac = Math.min(1, best / Math.max(3, Math.ceil(seq.length * 0.7)));
         let conf = 100 * (0.55 * cov + 0.35 * runFrac + 0.10 * Math.min(1, matchedIdf / 20));
-        if (best >= 4 && runIdf >= 18) conf = Math.max(conf, Math.min(94, 38 + 2.2 * runIdf));   // partial quote
+        if (best >= 4 && runIdf >= 18) conf = Math.max(conf, Math.min(96, 38 + 2.2 * runIdf));   // partial quote
+        // every spoken-distinctive word that is NOT in this verse lowers trust slightly (stops loose matches ranking above exact ones)
         conf = Math.min(cov >= 0.999 && runFrac >= 0.999 ? 100 : 99, conf);
         const v = aiIndex.verses[vi];
         out.push({ book: v[0], chapter: v[1], verse: v[2], text: v[3], conf: Math.round(conf), version: aiIndex.version });
@@ -4230,107 +4230,231 @@ function initAiScriptureDetection() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAiScriptureDetection); else initAiScriptureDetection();
 
 
-// ===================== SPEECH ENGINE CHOICE: browser (Chrome/Edge) or Deepgram (works in ANY browser) =====================
-// Deepgram streams the microphone to a speech-to-text service and returns words in ~300ms. It feeds the exact same
-// transcript → scripture detection pipeline as the browser engine, so nothing else changes.
+// ===================== SPEECH ENGINE CHOICE: browser (Chrome/Edge) or Local AI (free, any browser, offline) =====================
+// "Local AI" runs a small open speech model (Whisper / Moonshine) INSIDE the browser on the church computer: no account, no key,
+// no cost, works in Firefox/Safari/Brave/installed web app, and after the first download it works offline.
+// It feeds the exact same transcript -> scripture detection -> display pipeline as the browser engine.
 const SPEECH_STORE = 'ebpSpeechConfig';
-const speechConfig = { engine: 'browser', dgKey: '' };
+const speechConfig = { engine: 'browser', model: 'whisper-base' };
 try { Object.assign(speechConfig, JSON.parse(localStorage.getItem(SPEECH_STORE) || '{}')); } catch (e) {}
-const dg = { active: false, ws: null, rec: null, stream: null, results: [], keep: null, retry: null, tries: 0 };
+if (speechConfig.engine !== 'local') speechConfig.engine = 'browser';
+const LOCAL_MODELS = {
+    'whisper-tiny':   { id: 'Xenova/whisper-tiny.en',                    label: 'Whisper Tiny (English) — fastest, ~40 MB download' },
+    'whisper-base':   { id: 'Xenova/whisper-base.en',                    label: 'Whisper Base (English) — recommended, ~80 MB download' },
+    'moonshine-tiny': { id: 'onnx-community/moonshine-tiny-ONNX',        label: 'Moonshine Tiny — very fast, ~50 MB download' },
+    'moonshine-base': { id: 'onnx-community/moonshine-base-ONNX',        label: 'Moonshine Base — best live accuracy, ~120 MB download' }
+};
+const LOCAL_WORKER_SRC = `
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+env.allowLocalModels = false;
+let asr = null;
+const files = {};
+function progress(p) {
+  if (!p || !p.file) return;
+  if (p.status === 'progress' || p.status === 'done') { files[p.file] = { loaded: p.status === 'done' ? (p.total || p.loaded || 0) : (p.loaded || 0), total: p.total || 0 }; }
+  let l = 0, t = 0; for (const k in files) { l += files[k].loaded; t += files[k].total; }
+  self.postMessage({ type: 'progress', loaded: l, total: t });
+}
+self.onmessage = async (e) => {
+  const m = e.data;
+  if (m.type === 'load') {
+    try {
+      try { asr = await pipeline('automatic-speech-recognition', m.model, { dtype: 'q8', device: 'wasm', progress_callback: progress }); }
+      catch (err1) { asr = await pipeline('automatic-speech-recognition', m.model, { device: 'wasm', progress_callback: progress }); }
+      self.postMessage({ type: 'ready' });
+    } catch (err) { self.postMessage({ type: 'error', fatal: true, message: String((err && err.message) || err) }); }
+  } else if (m.type === 'run') {
+    try {
+      const out = await asr(m.audio, { chunk_length_s: 30 });
+      self.postMessage({ type: 'text', id: m.id, seg: m.seg, final: m.final, text: String((out && out.text) || '') });
+    } catch (err) { self.postMessage({ type: 'text', id: m.id, seg: m.seg, final: m.final, text: '', error: String((err && err.message) || err) }); }
+  }
+};`;
+const loc = { worker: null, loadedModel: '', ready: false, loading: null, active: false, ctx: null, stream: null, proc: null, src: null,
+              pre: [], preLen: 0, seg: [], segLen: 0, inSpeech: false, silenceMs: 0, lastSend: 0, noise: 0.004,
+              busy: false, pending: null, jobId: 0, segId: 0, lastFinalSeg: -1, curSeg: -1, results: [], dlLoaded: 0, dlTotal: 0 };
+
 function voiceEngineKind() {
     const hasNative = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    if (speechConfig.dgKey && (speechConfig.engine === 'deepgram' || !hasNative)) return 'deepgram';
-    return 'browser';
+    return (speechConfig.engine === 'local' || !hasNative) ? 'local' : 'browser';
 }
-function dgSetUi(on, note) {
+function locStatus(msg, pct) {
+    const el = document.getElementById('speechEngineStatus'); if (el && msg != null) el.innerText = msg;
+    const bar = document.getElementById('speechProgressBar'), wrap = document.getElementById('speechProgress');
+    if (wrap) wrap.style.display = (pct == null) ? 'none' : 'block';
+    if (bar && pct != null) bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+}
+function locSetUi(on, note) {
     isListening = on;
     const btn = document.getElementById('listeningBtn');
     if (btn) { btn.innerText = on ? 'Disable Live Voice' : 'Enable Live Voice'; btn.classList.toggle('listening', on); }
     const dot = document.getElementById('statusDot'), txt = document.getElementById('statusText');
     if (dot) dot.className = on ? 'status-dot active' : 'status-dot';
-    if (txt) txt.innerText = note || (on ? 'Monitoring Audio Device (Deepgram)...' : 'System Ready');
+    if (txt) txt.innerText = note || (on ? 'Monitoring Audio Device (Local AI)...' : 'System Ready');
 }
-function dgEmit(text, isFinal) {
-    // Build a Web-Speech-shaped event so every existing handler works unchanged.
-    let idx = dg.results.length - 1;
-    if (idx < 0 || dg.results[idx].final) { dg.results.push({ t: text, final: isFinal }); idx = dg.results.length - 1; }
-    else { dg.results[idx].t = text; dg.results[idx].final = isFinal; }
-    const ev = { resultIndex: idx, results: dg.results.map(r => { const a = [{ transcript: r.t, confidence: 0.9 }]; a.isFinal = r.final; return a; }) };
+function localLoad() {
+    const def = LOCAL_MODELS[speechConfig.model] || LOCAL_MODELS['whisper-base'];
+    if (loc.ready && loc.loadedModel === def.id) return Promise.resolve();
+    if (loc.loading && loc.loadingModel === def.id) return loc.loading;
+    if (loc.worker) { try { loc.worker.terminate(); } catch (e) {} loc.worker = null; }
+    loc.ready = false; loc.loadingModel = def.id; loc.dlLoaded = loc.dlTotal = 0;
+    loc.loading = new Promise((resolve, reject) => {
+        let w;
+        try { w = new Worker(URL.createObjectURL(new Blob([LOCAL_WORKER_SRC], { type: 'text/javascript' })), { type: 'module' }); }
+        catch (e) { loc.loading = null; reject(new Error('This browser cannot start the Local AI worker: ' + (e.message || e))); return; }
+        loc.worker = w;
+        const timer = setTimeout(() => { /* very slow connection: keep waiting, just keep the status honest */ }, 60000);
+        w.onmessage = ev => {
+            const m = ev.data || {};
+            if (m.type === 'progress') { loc.dlLoaded = m.loaded; loc.dlTotal = m.total; const pct = m.total ? m.loaded / m.total * 100 : 0; locStatus(`Downloading speech model… ${Math.round(pct)}% (${(m.loaded / 1048576).toFixed(0)} of ${(m.total / 1048576).toFixed(0)} MB) — only needed once.`, pct); }
+            else if (m.type === 'ready') { clearTimeout(timer); loc.ready = true; loc.loadedModel = def.id; loc.loading = null; locStatus('Local AI model ready — works offline from now on.', null); resolve(); }
+            else if (m.type === 'error') { clearTimeout(timer); loc.loading = null; loc.ready = false; try { w.terminate(); } catch (e) {} loc.worker = null; reject(new Error(m.message)); }
+            else if (m.type === 'text') localOnText(m);
+        };
+        w.onerror = ev => { clearTimeout(timer); loc.loading = null; loc.ready = false; reject(new Error((ev && ev.message) || 'worker failed to load (the model library could not be downloaded — check the internet connection)')); };
+        locStatus('Loading speech model…', 0);
+        w.postMessage({ type: 'load', model: def.id });
+    });
+    return loc.loading;
+}
+function localCleanText(t) {
+    t = String(t || '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    if (/^[\[\(\*♪].*[\]\)\*♪]$/.test(t)) return '';              // "[BLANK_AUDIO]", "(music)", "*silence*"
+    if (/^(you|\.+|thank you\.?|thanks for watching\.?)$/i.test(t)) return '';   // classic silence hallucinations
+    return t;
+}
+function localEmit(segId, text, isFinal) {
+    if (loc.curSeg !== segId || !loc.results.length) { loc.results.push({ t: text, final: isFinal }); loc.curSeg = segId; }
+    else { const r = loc.results[loc.results.length - 1]; r.t = text; r.final = isFinal; }
+    const idx = loc.results.length - 1;
+    const ev = { resultIndex: idx, results: loc.results.map(r => { const a = [{ transcript: r.t, confidence: 0.9 }]; a.isFinal = r.final; return a; }) };
     renderTranscriptLog(isFinal ? text : '', isFinal ? '' : text);
     processContinuousSpeechForScriptures(ev);
     aiOnSpeech(ev);
 }
-function dgOpenSocket() {
-    const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&punctuate=true&interim_results=true&endpointing=250&smart_format=true';
-    const ws = new WebSocket(url, ['token', speechConfig.dgKey]);
-    dg.ws = ws;
-    ws.onopen = () => {
-        dg.tries = 0;
-        dgSetUi(true);
-        clearInterval(dg.keep);
-        dg.keep = setInterval(() => { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'KeepAlive' })); } catch (e) {} }, 8000);
-    };
-    ws.onmessage = ev => {
-        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-        const alt = m && m.channel && m.channel.alternatives && m.channel.alternatives[0];
-        if (!alt || !alt.transcript) return;
-        dgEmit(alt.transcript, !!m.is_final);
-    };
-    ws.onerror = () => {};
-    ws.onclose = ev => {
-        clearInterval(dg.keep);
-        if (!dg.active) return;
-        const fail = msg => { dgStop(); const t = document.getElementById('transcriptTrack'); if (t) t.innerText = msg; dgSetUi(false, 'Live Voice stopped'); };
-        if (!dg.everOpened && ++dg.tries >= 2) return fail('Could not connect to Deepgram — check the API key in Settings → Speech Engine (and that you are online), then click Enable Live Voice again.');
-        if (dg.everOpened && ++dg.tries > 6) return fail('Lost connection to Deepgram. Check the internet, then click Enable Live Voice again.');
-        dg.retry = setTimeout(() => { if (dg.active) dgOpenSocket(); }, 400);   // reconnect; the mic recorder keeps running
-    };
-    ws.addEventListener('open', () => { dg.everOpened = true; });
+function localOnText(m) {
+    loc.busy = false;
+    if (m.error) console.warn('Local AI run error:', m.error);
+    if (loc.active && m.seg > loc.lastFinalSeg) {
+        const text = localCleanText(m.text);
+        if (m.final) loc.lastFinalSeg = m.seg;
+        if (text) localEmit(m.seg, text, !!m.final);
+        else if (m.final && loc.curSeg === m.seg && loc.results.length) { const r = loc.results[loc.results.length - 1]; r.final = true; }
+    }
+    if (loc.pending && loc.active) { const j = loc.pending; loc.pending = null; localPost(j); }
 }
-async function dgStart() {
-    const track = document.getElementById('transcriptTrack');
-    try {
-        const id = document.getElementById('audioSourceSelector') && document.getElementById('audioSourceSelector').value;
-        dg.stream = await navigator.mediaDevices.getUserMedia({ audio: id ? { deviceId: { exact: id }, echoCancellation: true, noiseSuppression: true } : { echoCancellation: true, noiseSuppression: true } });
-    } catch (e) {
-        if (track) track.innerText = "Microphone access was denied or no microphone was found. Allow it in the browser's address-bar prompt, then click Enable Live Voice again.";
-        dgSetUi(false, 'Microphone access denied.');
+function localPost(job) {
+    if (!loc.worker || !loc.ready) return;
+    if (loc.busy) {
+        if (job.final) loc.pending = job;                       // a finished sentence is never dropped
+        else if (!loc.pending || !loc.pending.final) loc.pending = job;   // newest interim replaces older interim
         return;
     }
-    dg.active = true; dg.results = []; dg.tries = 0; dg.everOpened = false;
+    loc.busy = true;
+    loc.worker.postMessage({ type: 'run', id: ++loc.jobId, seg: job.seg, final: job.final, audio: job.audio }, [job.audio.buffer]);
+}
+function localSegAudio() {
+    const out = new Float32Array(loc.segLen); let o = 0;
+    for (const c of loc.seg) { out.set(c, o); o += c.length; }
+    return out;
+}
+function localSend(final) {
+    if (loc.segLen < 16000 * 0.35) return;                      // under 0.35 s: nothing worth transcribing
+    loc.lastSend = performance.now();
+    localPost({ seg: loc.segId, final, audio: localSegAudio() });
+}
+function localFinalize() {
+    localSend(true);
+    loc.seg = []; loc.segLen = 0; loc.inSpeech = false; loc.silenceMs = 0; loc.segId++;
+}
+function localFeed(input, sr) {
+    let chunk;
+    if (sr === 16000) chunk = new Float32Array(input);
+    else {                                                       // resample to 16 kHz (browsers that ignore the requested rate)
+        const ratio = sr / 16000, n = Math.floor(input.length / ratio); chunk = new Float32Array(n);
+        for (let i = 0; i < n; i++) { const p = i * ratio, i0 = Math.floor(p), i1 = Math.min(input.length - 1, i0 + 1), f = p - i0; chunk[i] = input[i0] * (1 - f) + input[i1] * f; }
+    }
+    let sum = 0; for (let i = 0; i < chunk.length; i++) sum += chunk[i] * chunk[i];
+    const rms = Math.sqrt(sum / Math.max(1, chunk.length)), ms = chunk.length / 16;
+    const thr = Math.max(0.012, loc.noise * 3);
+    if (!loc.inSpeech) {
+        loc.noise = Math.max(0.002, loc.noise * 0.97 + rms * 0.03);
+        loc.pre.push(chunk); loc.preLen += chunk.length;
+        while (loc.preLen > 16000 * 0.4 && loc.pre.length > 1) loc.preLen -= loc.pre.shift().length;
+        if (rms > thr) { loc.inSpeech = true; loc.seg = loc.pre.slice(); loc.segLen = loc.preLen; loc.pre = []; loc.preLen = 0; loc.silenceMs = 0; loc.lastSend = performance.now(); }
+        return;
+    }
+    loc.seg.push(chunk); loc.segLen += chunk.length;
+    if (rms > thr) loc.silenceMs = 0; else loc.silenceMs += ms;
+    if (loc.silenceMs >= 600) localFinalize();                   // preacher paused -> finish the sentence
+    else if (loc.segLen >= 16000 * 10) localFinalize();          // long run-on speech: cut every 10 s so results keep flowing
+    else if (performance.now() - loc.lastSend >= 800) localSend(false);   // live interim update while he is still speaking
+}
+async function localStart() {
+    const track = document.getElementById('transcriptTrack');
+    locSetUi(true, 'Loading Local AI…');
+    loc.active = true;
+    if (track) track.innerText = loc.ready ? 'Starting…' : 'Preparing the free Local AI speech model (first time only: a one-time download, then it works offline)…';
+    try { await localLoad(); }
+    catch (err) {
+        loc.active = false; locSetUi(false, 'Live Voice stopped');
+        if (track) track.innerText = 'Local AI could not load: ' + (err.message || err) + ' — check the internet connection (needed once to download the model), or switch the engine back to "Browser" in Settings → Speech Engine.';
+        locStatus('Local AI failed to load: ' + (err.message || err), null);
+        return;
+    }
+    if (!loc.active) return;                                    // user pressed Disable while it was loading
+    try {
+        const id = document.getElementById('audioSourceSelector') && document.getElementById('audioSourceSelector').value;
+        loc.stream = await navigator.mediaDevices.getUserMedia({ audio: id ? { deviceId: { exact: id }, echoCancellation: true, noiseSuppression: true } : { echoCancellation: true, noiseSuppression: true } });
+    } catch (e) {
+        loc.active = false; locSetUi(false, 'Microphone access denied.');
+        if (track) track.innerText = "Microphone access was denied or no microphone was found. Allow it in the browser's address-bar prompt, then click Enable Live Voice again.";
+        return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    try { loc.ctx = new AC({ sampleRate: 16000 }); } catch (e) { loc.ctx = new AC(); }
+    if (loc.ctx.state === 'suspended') { try { await loc.ctx.resume(); } catch (e) {} }
+    loc.src = loc.ctx.createMediaStreamSource(loc.stream);
+    loc.proc = loc.ctx.createScriptProcessor(2048, 1, 1);
+    const sr = loc.ctx.sampleRate;
+    loc.proc.onaudioprocess = e => { if (loc.active) localFeed(e.inputBuffer.getChannelData(0), sr); };
+    loc.src.connect(loc.proc); loc.proc.connect(loc.ctx.destination);
+    loc.pre = []; loc.preLen = 0; loc.seg = []; loc.segLen = 0; loc.inSpeech = false; loc.busy = false; loc.pending = null;
+    loc.segId = loc.lastFinalSeg + 1; loc.curSeg = -1; loc.results = [];
     voiceCommitted = { utterance: -1, sig: '' };
     if (typeof aiState !== 'undefined') aiState.results = {};
-    const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
-    try { dg.rec = new MediaRecorder(dg.stream, mime ? { mimeType: mime } : undefined); }
-    catch (e) { if (track) track.innerText = 'This browser cannot record audio: ' + (e.message || e); dgStop(); dgSetUi(false, 'Live Voice unavailable'); return; }
-    dg.rec.ondataavailable = e => { if (e.data && e.data.size && dg.ws && dg.ws.readyState === 1) dg.ws.send(e.data); };
-    dgOpenSocket();
-    dg.rec.start(100);                     // 100ms chunks = lowest latency
-    dgSetUi(true, 'Connecting to Deepgram...');
-    runAudioContextVolumeDetection();      // same mic-level meter as the browser engine
+    locSetUi(true);
+    if (track) track.innerText = 'Listening (Local AI)…';
+    runAudioContextVolumeDetection();                           // same mic-level meter as the browser engine
 }
-function dgStop() {
-    dg.active = false;
-    clearInterval(dg.keep); clearTimeout(dg.retry);
-    try { if (dg.rec && dg.rec.state !== 'inactive') dg.rec.stop(); } catch (e) {}
-    try { if (dg.ws) { if (dg.ws.readyState === 1) dg.ws.send(JSON.stringify({ type: 'CloseStream' })); dg.ws.close(); } } catch (e) {}
-    try { if (dg.stream) dg.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-    dg.rec = dg.ws = dg.stream = null;
+function localStop() {
+    loc.active = false;
+    try { if (loc.proc) { loc.proc.onaudioprocess = null; loc.proc.disconnect(); } } catch (e) {}
+    try { if (loc.src) loc.src.disconnect(); } catch (e) {}
+    try { if (loc.ctx) loc.ctx.close(); } catch (e) {}
+    try { if (loc.stream) loc.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    loc.proc = loc.src = loc.ctx = loc.stream = null; loc.pending = null;
 }
 function initSpeechEngineSettings() {
     const $ = id => document.getElementById(id);
     if (!$('speechEngineSelect')) return;
+    $('speechModelSelect').innerHTML = Object.keys(LOCAL_MODELS).map(k => `<option value="${k}">${LOCAL_MODELS[k].label}</option>`).join('');
     $('speechEngineSelect').value = speechConfig.engine;
-    $('speechDgKey').value = speechConfig.dgKey;
-    const save = () => { try { localStorage.setItem(SPEECH_STORE, JSON.stringify(speechConfig)); } catch (e) {} refresh(); };
-    const refresh = () => {
-        const native = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-        const kind = voiceEngineKind();
-        $('speechEngineStatus').innerText = (native ? 'This browser has built-in speech recognition. ' : 'This browser has NO built-in speech recognition (only Chrome/Edge do). ')
-            + 'Active engine: ' + (kind === 'deepgram' ? 'Deepgram (works in any browser).' : (native ? 'Browser (Chrome/Edge speech service).' : 'none — add a Deepgram key below.'));
+    $('speechModelSelect').value = LOCAL_MODELS[speechConfig.model] ? speechConfig.model : 'whisper-base';
+    const native = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    const describe = () => {
+        locStatus((native ? 'This browser has built-in speech recognition. ' : 'This browser has NO built-in speech recognition (only Chrome/Edge do) — Local AI is used automatically. ')
+            + 'Active engine: ' + (voiceEngineKind() === 'local' ? 'Local AI (free, offline after first download).' : 'Browser (Chrome/Edge speech service).'), null);
     };
+    const save = () => { try { localStorage.setItem(SPEECH_STORE, JSON.stringify(speechConfig)); } catch (e) {} describe(); };
     $('speechEngineSelect').addEventListener('change', e => { speechConfig.engine = e.target.value; save(); });
-    $('speechDgKey').addEventListener('change', e => { speechConfig.dgKey = e.target.value.trim(); save(); });
-    refresh();
+    $('speechModelSelect').addEventListener('change', e => { speechConfig.model = e.target.value; save(); });
+    $('speechLoadBtn').addEventListener('click', async () => {
+        $('speechLoadBtn').disabled = true;
+        try { await localLoad(); } catch (err) { locStatus('Local AI failed to load: ' + (err.message || err), null); }
+        $('speechLoadBtn').disabled = false;
+    });
+    describe();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSpeechEngineSettings); else initSpeechEngineSettings();
