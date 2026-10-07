@@ -2485,15 +2485,28 @@ async function executeVoiceIntent(intent) {
     }
 }
 
-// "Genesis two one" is often delivered as "Genesis 21" (the engine merges spoken digits). The speech engine usually also
-// offers its other guesses: if one of them reads it as chapter 2 + verse 1 ("2 1", "two one", "2:1"), use that. A number the
-// preacher really said as "twenty one" arrives as 21 in every guess, so it stays chapter 21.
-function voiceFixAmbiguousChapter(intent, altIntents) {
-    if (!intent || intent.type !== 'ref' || intent.hasVerse || intent.chapter < 20 || intent.chapter > 99) return intent;
+// "Genesis one three" said quickly sounds exactly like "Genesis thirteen", and the speech engine delivers it as "Genesis 13"
+// ("two one" -> 21, "three one" -> 31 …). Sound alone cannot separate them, so:
+//  1. if any of the engine's other guesses reads it as chapter + verse ("1 3", "one three", "1:3") that guess wins;
+//  2. otherwise, with "Spoken Bible numbers = chapter and verse" (Settings, on by default), a two-digit number with no verse is read as
+//     chapter + verse (13 -> 1:3, 21 -> 2:1) — unless the preacher said the word "chapter" ("Genesis chapter thirteen"), or the book is
+//     Psalms (Psalm 23, 91 … are chapter numbers), or the first digit is not a real chapter of that book.
+const REF_STYLE_STORE = 'ebpRefNumberStyle';
+let refNumberStyle = 'split';
+try { const v = localStorage.getItem(REF_STYLE_STORE); if (v === 'split' || v === 'chapter') refNumberStyle = v; } catch (e) {}
+function voiceFixAmbiguousChapter(intent, altIntents, rawTop) {
+    if (!intent || intent.type !== 'ref' || intent.hasVerse || intent.chapter < 11 || intent.chapter > 99) return intent;
     const tens = Math.floor(intent.chapter / 10), units = intent.chapter % 10;
     if (!units) return intent;                                   // 20, 30, 40… cannot be two separate digits
     const split = altIntents.find(it => it && it.type === 'ref' && it.bookId === intent.bookId && it.hasVerse && it.chapter === tens && it.verse === units);
-    return split || intent;
+    if (split) return split;
+    if (refNumberStyle !== 'split') return intent;
+    if (intent.bookId === 19) return intent;                     // Psalms: "Psalm 23" is a chapter
+    if (/\bchapter\b/i.test(String(rawTop || ''))) return intent;   // "chapter thirteen" is a chapter
+    if (typeof AI_CHAPTERS !== 'undefined' && AI_CHAPTERS[intent.bookId - 1] && (tens > AI_CHAPTERS[intent.bookId - 1] || AI_CHAPTERS[intent.bookId - 1] === 1)) return intent;   // one-chapter books (Jude 13 = verse 13) are left alone
+    const out = Object.assign({}, intent, { chapter: tens, verse: units, hasVerse: true, delay: 120 });
+    out.sig = [out.type, out.bookId || '', out.chapter || '', out.verse || '', out.dir || '', out.code || ''].join(':');
+    return out;
 }
 
 // Called for every speech-recognition update. Clear commands run instantly; anything that could still be
@@ -2507,7 +2520,7 @@ function processContinuousSpeechForScriptures(event) {
         let intent = null;
         const altIntents = alternatives.map(alt => interpretSpeech(alt, false));
         for (const it of altIntents) { if (it) { intent = it; break; } }   // commands & references: try every guess
-        intent = voiceFixAmbiguousChapter(intent, altIntents);
+        intent = voiceFixAmbiguousChapter(intent, altIntents, alternatives[0]);
         if (!intent && alternatives.length && !songTabIsActive()) intent = interpretSpeech(alternatives[0], true); // then: is the preacher reading the chapter?
 
         clearTimeout(voicePendingTimer);
@@ -4229,3 +4242,10 @@ function initAiScriptureDetection() {
     aiLoadSavedIndex($('versionSelector').value).then(() => aiRefreshStatus());
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAiScriptureDetection); else initAiScriptureDetection();
+
+(function initRefNumberStyle() {
+    const sel = document.getElementById('refNumberStyleSelect');
+    if (!sel) return;
+    sel.value = refNumberStyle;
+    sel.addEventListener('change', () => { refNumberStyle = sel.value === 'chapter' ? 'chapter' : 'split'; try { localStorage.setItem(REF_STYLE_STORE, refNumberStyle); } catch (e) {} });
+})();
