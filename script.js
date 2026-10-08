@@ -4793,7 +4793,7 @@ function blibBookIdx(x) {
     return 0;
 }
 const blibHint = t => String(t).replace(/^\uFEFF/, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 3).map(l => l.slice(0, 60)).join(' ⏎ ');
-const blibClean = t => String(t == null ? '' : t).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+const blibClean = t => String(t == null ? '' : t).replace(/¶/g, '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
 function blibParseVerseLines(text) {
     const verses = [], re = /^\s*\[?(.+?)\s+(\d+)[:.](\d+)\]?[\s|:-]+(.+?)\s*$/;
@@ -4803,6 +4803,28 @@ function blibParseVerseLines(text) {
         if (bi && t) verses.push([bi, +m[2], +m[3], t]);
     }
     return verses;
+}
+function blibParseChapterText(text) {
+    // Layout:  Genesis / Chapter 1 (or Psalm 1) / "1 In the beginning…" with long verses wrapped over several lines.
+    const lines = text.replace(/^﻿/, '').split(/\r?\n/).map(l => l.trim());
+    const out = []; let book = 0, chap = 0, last = 0, buf = null;
+    const isHead = l => /^(?:chapter|psalm)\s+\d+$/i.test(l);
+    const flush = () => { if (buf) { const t = blibClean(buf.t); if (t) out.push([buf.b, buf.c, buf.v, t]); buf = null; } };
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]; if (!line) continue;
+        let m = /^(?:chapter|psalm)\s+(\d+)$/i.exec(line);
+        if (m && book) { flush(); chap = +m[1]; last = 0; continue; }
+        if (line.length < 30 && !/\d/.test(line.replace(/^[1-3]\s/, ''))) {
+            const bi = blibBookIdx(line);
+            if (bi) { let j = i + 1; while (j < lines.length && !lines[j]) j++; if (j < lines.length && isHead(lines[j])) { flush(); book = bi; chap = 0; last = 0; continue; } }
+        }
+        if (!book || !chap) continue;
+        m = /^(\d+)\s+(.*)$/.exec(line);
+        if (m && +m[1] === last + 1) { flush(); last = +m[1]; buf = { b: book, c: chap, v: last, t: m[2] }; continue; }
+        if (buf) buf.t += ' ' + line;
+    }
+    flush();
+    return out;
 }
 function blibParseCsv(text) {
     const probe = text.split(/\r?\n/).filter(l => l.trim()).slice(0, 12);
@@ -4825,8 +4847,8 @@ function blibParseCsv(text) {
     const head = data[0].map(h => blibKey(h));
     if (head.some(h => h === 'chapter' || h === 'verse' || h === 'text' || h === 'book' || h === 'bookname')) {
         start = 1;
-        const f = (...n) => head.findIndex(h => n.includes(h));
-        bi = f('book', 'bookname', 'bookid', 'booknumber', 'b'); ci = f('chapter', 'chapterid', 'c'); vi = f('verse', 'verseid', 'v'); ti = f('text', 'versetext', 'content', 't', 'scripture');
+        const f = (...n) => { for (const name of n) { const k = head.indexOf(name); if (k >= 0) return k; } return -1; };   // first name in priority order wins (so "Verse ID" is never taken as the verse number)
+        bi = f('bookname', 'book', 'bookid', 'booknumber', 'b'); ci = f('chapter', 'chapterid', 'c'); vi = f('verse', 'versenumber', 'verseid', 'v'); ti = f('text', 'versetext', 'content', 't', 'scripture');
         if (bi < 0 || ci < 0 || vi < 0 || ti < 0) return [];
     }
     const out = [];
@@ -4921,7 +4943,7 @@ function blibSniffAndParse(text, nameHint) {
     if (/^<\?xml|^<(XMLBIBLE|osis|usx|bible)/i.test(head) || /^xml$/i.test(ext)) v = blibParseXml(t);
     else if (/^[\[{]/.test(head) || /^json$/i.test(ext)) v = blibParseJson(t);
     else if (/\\id\s+[A-Z0-9]{3}/.test(t.slice(0, 2000)) || /^(usfm|sfm|ptx)$/i.test(ext)) v = blibParseUsfm(t, names);
-    if (!v.length) { v = blibParseVerseLines(t); if (v.length < 100) { const c = blibParseCsv(t); if (c.length > v.length) v = c; } }
+    if (!v.length) { v = blibParseVerseLines(t); if (v.length < 1000) { const ct = blibParseChapterText(t); if (ct.length > v.length) v = ct; } if (v.length < 1000) { const c = blibParseCsv(t); if (c.length > v.length) v = c; } }
     return { verses: v, names: Object.keys(names).length ? names : null, hint: blibHint(t) };
 }
 async function blibParseZip(buf) {
