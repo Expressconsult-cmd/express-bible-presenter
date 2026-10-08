@@ -689,7 +689,22 @@
                     <button id="wsResetLayoutBtn" type="button" class="btn" style="margin-top:0.6rem; padding:0.3rem 0.7rem; font-size:0.72rem;">Reset to default</button>
                 </div>
 
-                <!-- Spoken Bible numbers -->
+<!-- Bible Library -->
+                <div class="integration-card">
+                    <h4>Bible Library</h4>
+                    <p>Choose the Bibles you use. Only the Bibles you add here appear in the Version list on the main screen. Bibles from eBible.org are downloaded once, saved on this device and then work offline.</p>
+                    <label for="blibFilter" style="font-size:.75rem;color:var(--text-muted);">Show</label>
+                    <select id="blibFilter" style="width:100%;padding:.35rem;font-size:.75rem;margin:.2rem 0 .4rem;">
+                        <option value="all">All Bibles</option>
+                        <option value="English">English</option>
+                        <option value="Nigeria">Nigeria</option>
+                    </select>
+                    <div id="blibList"></div>
+                    <p id="blibNote" style="margin-top:.5rem;font-size:.72rem;min-height:1em;"></p>
+                    <p style="margin-top:.2rem;font-size:.7rem;">Each Bible keeps its own copyright. Word search and AI matching for downloaded Bibles may be limited.</p>
+                </div>
+
+                                <!-- Spoken Bible numbers -->
                 <div class="integration-card">
                     <h4>Spoken Bible Numbers</h4>
                     <p>When a preacher says “Genesis one three” quickly, speech engines write it as “Genesis 13”. Choose how a two-digit number with no verse is read.</p>
@@ -833,6 +848,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=10"></script>
+    <script src="script.js?v=11"></script>
 </body>
 </html>
