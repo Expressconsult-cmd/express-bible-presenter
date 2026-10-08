@@ -4494,6 +4494,7 @@ const BLIB_BOOKS = 'GEN EXO LEV NUM DEU JOS JDG RUT 1SA 2SA 1KI 2KI 1CH 2CH EZR 
 const BLIB_ALIASES = { SOS: 'SNG', SON: 'SNG', EZE: 'EZK', JOE: 'JOL', NAH: 'NAM', PHI: 'PHP', PHL: 'PHP', MRC: 'MRK', MAR: 'MRK', JHN: 'JHN', JOH: 'JHN', JAM: 'JAS', JUDE: 'JUD', REVE: 'REV', PSM: 'PSA', PS: 'PSA' };
 const blibMem = new Map();
 const blibBusy = new Set();
+const blibNeedFile = new Set();
 let blibFilter = 'all';
 
 function blibEntry(code) { return BLIB.find(b => b.code === code); }
@@ -4598,10 +4599,22 @@ function blibParseVpl(text) {
     }
     return verses;
 }
+async function blibIngestZip(ent, buf, onProgress) {
+    const zip = await blibUnzip(buf);
+    const files = zip.list.filter(f => /\.(txt|vpl)$/i.test(f.name)).sort((a, b) => b.usize - a.usize);
+    if (!files.length) throw new Error('That file has no readable Bible text. Please choose the file named ' + ent.id + '_vpl.zip.');
+    const text = new TextDecoder('utf-8').decode(await zip.read(files[0]));
+    const verses = blibParseVpl(text);
+    if (verses.length < 1000) throw new Error('That file did not look like a full Bible, so it was not saved. (First line read: "' + text.trim().split(/\r?\n/)[0].slice(0, 80) + '")');
+    await blibDbPut({ code: ent.code, verses, savedAt: Date.now() });
+    blibMem.delete(ent.code);
+    if (onProgress) onProgress(100);
+    return verses.length;
+}
 async function blibDownloadEbible(ent, onProgress) {
     const url = `https://ebible.org/Scriptures/${ent.id}_vpl.zip`;
     let resp;
-    try { resp = await fetch(url); } catch (e) { throw new Error("Couldn't reach eBible.org from this browser. Check your internet connection and try again."); }
+    try { resp = await fetch(url); } catch (e) { const er = new Error("eBible.org does not allow this app to download directly from the browser."); er.needFile = true; throw er; }
     if (!resp.ok) throw new Error(`eBible.org did not return the file (error ${resp.status}).`);
     const total = +resp.headers.get('content-length') || 0;
     let buf;
@@ -4611,16 +4624,7 @@ async function blibDownloadEbible(ent, onProgress) {
         const all = new Uint8Array(got); let o = 0; chunks.forEach(c => { all.set(c, o); o += c.length; }); buf = all.buffer;
     } else buf = await resp.arrayBuffer();
     if (onProgress) onProgress(96);
-    const zip = await blibUnzip(buf);
-    const files = zip.list.filter(f => /\.(txt|vpl)$/i.test(f.name)).sort((a, b) => b.usize - a.usize);
-    if (!files.length) throw new Error('The download had no readable Bible text.');
-    const text = new TextDecoder('utf-8').decode(await zip.read(files[0]));
-    const verses = blibParseVpl(text);
-    if (verses.length < 1000) throw new Error('The download did not look like a full Bible, so it was not saved.');
-    await blibDbPut({ code: ent.code, verses, savedAt: Date.now() });
-    blibMem.delete(ent.code);
-    if (onProgress) onProgress(100);
-    return verses.length;
+    return blibIngestZip(ent, buf, onProgress);
 }
 
 // ---- version dropdown shows only added Bibles ----
@@ -4661,6 +4665,9 @@ function blibRenderList() {
         else if (enabled.includes(b.code)) {
             const n = document.createElement('span'); n.style.cssText = 'font-size:.72rem;color:#4ade80;'; n.textContent = b.src === 'ebible' ? '✓ Saved on this device' : '✓ Added';
             act.append(n, mkBtn('Remove', () => blibRemove(b)));
+        } else if (b.src === 'ebible' && blibNeedFile.has(b.code)) {
+            const lk = document.createElement('a'); lk.href = `https://ebible.org/Scriptures/${b.id}_vpl.zip`; lk.target = '_blank'; lk.rel = 'noopener'; lk.style.cssText = 'font-size:.72rem;color:#38bdf8;'; lk.textContent = '1. Download file';
+            act.append(lk, mkBtn('2. Choose file…', () => blibPickFile(b)));
         } else act.append(mkBtn(b.src === 'ebible' ? '⬇ Add' : '＋ Add', () => blibAdd(b)));
         row.append(info, act); box.appendChild(row);
     });
@@ -4680,8 +4687,25 @@ async function blibAdd(b) {
         const count = await blibDownloadEbible(b, p => { const e = document.getElementById('blibProg-' + b.code); if (e) e.textContent = `Downloading… ${p}%`; });
         const list = blibEnabled(); if (!list.includes(b.code)) list.push(b.code);
         blibSaveEnabled(list); blibRebuildDropdown(); blibNote(`${b.label} saved (${count.toLocaleString()} verses). It is now in the version list.`);
-    } catch (err) { blibNote(err.message || String(err), true); }
+    } catch (err) {
+        if (err.needFile) { blibNeedFile.add(b.code); blibNote(err.message + ' Use the two steps shown: download the file from eBible.org, then choose it here.', true); }
+        else blibNote(err.message || String(err), true);
+    }
     blibBusy.delete(b.code); blibRenderList();
+}
+function blibPickFile(b) {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.zip,application/zip';
+    inp.addEventListener('change', async () => {
+        const f = inp.files && inp.files[0]; if (!f) return;
+        blibBusy.add(b.code); blibNote(''); blibRenderList();
+        try {
+            const count = await blibIngestZip(b, await f.arrayBuffer(), p => { const e = document.getElementById('blibProg-' + b.code); if (e) e.textContent = `Saving… ${p}%`; });
+            const list = blibEnabled(); if (!list.includes(b.code)) list.push(b.code);
+            blibSaveEnabled(list); blibNeedFile.delete(b.code); blibRebuildDropdown(); blibNote(`${b.label} saved (${count.toLocaleString()} verses). It is now in the version list.`);
+        } catch (err) { blibNote(err.message || String(err), true); }
+        blibBusy.delete(b.code); blibRenderList();
+    });
+    inp.click();
 }
 async function blibRemove(b) {
     const list = blibEnabled();
