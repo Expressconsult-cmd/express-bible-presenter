@@ -4868,6 +4868,15 @@ function blibParseXml(text) {
         bk.querySelectorAll('CHAPTER, chapter').forEach(ch => { const c = +ch.getAttribute('cnumber'); ch.querySelectorAll('VERS, vers').forEach(v => { const t = blibClean(v.textContent); if (c > 0 && +v.getAttribute('vnumber') > 0 && t) out.push([bi, c, +v.getAttribute('vnumber'), t]); }); });
     });
     if (out.length) return out;
+    // generic: any element carrying book / chapter / verse attributes (e.g. <verse book="GEN" chapter="1" verse="1">…</verse>)
+    const attr = (el, ...n) => { for (const k of n) { const x = el.getAttribute(k); if (x != null && x !== '') return x; } return null; };
+    doc.querySelectorAll('*').forEach(el => {
+        const b = attr(el, 'book', 'bk', 'b', 'bookid', 'bookId'), c = attr(el, 'chapter', 'ch', 'c', 'chapterid'), v = attr(el, 'verse', 'vs', 'v', 'number', 'verseid');
+        if (b == null || c == null || v == null || el.children.length) return;
+        const bi = blibBookIdx(/^\d+$/.test(b) ? +b : (BLIB_BOOKS.indexOf(BLIB_ALIASES[b] || b.toUpperCase()) + 1 || b)); const t = blibClean(el.textContent);
+        if (bi && +c > 0 && +v > 0 && t) out.push([bi, +c, +v, t]);
+    });
+    if (out.length) return out;
     doc.querySelectorAll('verse').forEach(v => {
         const id = (v.getAttribute('osisID') || '').split(/\s+/)[0]; const m = /^([^.]+)\.(\d+)\.(\d+)/.exec(id); if (!m) return;
         const bi = blibBookIdx(m[1]); const clone = v.cloneNode(true); clone.querySelectorAll('note').forEach(n => n.remove());
@@ -4913,12 +4922,19 @@ async function blibParseZip(buf) {
         for (const f of usfm) verses.push(...blibParseUsfm(dec.decode(await zip.read(f)), names));
         if (verses.length) return { verses, names: Object.keys(names).length ? names : null };
     }
-    const files = zip.list.filter(f => /\.(txt|vpl|json|xml|csv|tsv)$/i.test(f.name) && !/copr|licen|readme/i.test(f.name)).sort((a, b) => b.usize - a.usize);
-    if (!files.length) throw new Error('That file has no readable Bible text.');
-    const text = dec.decode(await zip.read(files[0]));
-    let verses = blibParseVpl(text), res = null;
-    if (verses.length < 1000) res = blibSniffAndParse(text, files[0].name);
-    return res || { verses, hint: text.trim().split(/\r?\n/)[0].slice(0, 80) };
+    // Try the plain-text (verse-per-line) files first, then everything else, until one reads as a full Bible.
+    const cands = zip.list.filter(f => /\.(txt|vpl|json|xml|csv|tsv)$/i.test(f.name) && !/copr|licen|readme/i.test(f.name))
+        .sort((a, b) => ((/\.(txt|vpl)$/i.test(b.name) ? 1 : 0) - (/\.(txt|vpl)$/i.test(a.name) ? 1 : 0)) || (b.usize - a.usize));
+    if (!cands.length) throw new Error('That file has no readable Bible text.');
+    let best = { verses: [], hint: '' };
+    for (const f of cands) {
+        const text = dec.decode(await zip.read(f));
+        let verses = blibParseVpl(text), res = { verses, hint: text.trim().split(/\r?\n/)[0].slice(0, 80) };
+        if (verses.length < 1000) res = blibSniffAndParse(text, f.name);
+        if (res.verses.length >= 1000) return res;
+        if (res.verses.length > best.verses.length || !best.hint) best = res;
+    }
+    return best;
 }
 async function blibParseFiles(files) {
     if (files.length === 1 && /\.zip$/i.test(files[0].name)) return blibParseZip(await files[0].arrayBuffer());
