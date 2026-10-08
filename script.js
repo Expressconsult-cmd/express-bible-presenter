@@ -608,7 +608,7 @@
                         row.className = "verse-row";
                         row.style.borderLeft = "3px solid var(--accent-primary)";
 
-                        let cleanText = res.text.replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<[^>]*>/g, '').trim();
+                        let cleanText = cleanBibleText(res.text);
                         let highlightedHTML = cleanText;
                         try {
                             const escapedQuery = query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -1508,6 +1508,14 @@ async function initMediaEngine() {
             });
         }
 
+        // Clean a verse from the Bible source: drop Strong's numbers, translator footnotes (<sup>…</sup>), bold section headings and all tags.
+        function cleanBibleText(t) {
+            return String(t || '')
+                .replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, '')
+                .replace(/<b>[\s\S]*?<\/b>\s*<br\s*\/?>/gi, '')
+                .replace(/<S>\s*\d+(?:\s*,\s*\d+)*\s*<\/S>/gi, '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+        }
+
         // Maps an exact API translation code to the short label shown on the display (e.g. NIV2011 -> "NIV")
         function getVersionDisplayLabel(code) {
             const labels = { NIV2011: 'NIV' };
@@ -1521,6 +1529,13 @@ async function initMediaEngine() {
             if (bollsChapterCache.has(key)) return bollsChapterCache.get(key);
             const p = fetch(`https://bolls.life/get-text/${ver}/${book}/${ch}/`)
                 .then(r => { if (!r.ok) throw new Error("Cloud database failure"); return r.json(); })
+                .then(data => {
+                    // Some publishers (e.g. Biblica / NIV) forced the free source to replace the text with a protest message — never show that as scripture.
+                    if (Array.isArray(data) && data.some(v => /Biblica,?\s*Inc\.?\s+has prohibited|prohibited me from using the/i.test(String(v && v.text || '')))) {
+                        const e = new Error('Translation blocked by publisher'); e.ebpBlocked = true; throw e;
+                    }
+                    return data;
+                })
                 .catch(err => { bollsChapterCache.delete(key); throw err; });
             bollsChapterCache.set(key, p);
             if (bollsChapterCache.size > 60) bollsChapterCache.delete(bollsChapterCache.keys().next().value);
@@ -1530,7 +1545,9 @@ async function initMediaEngine() {
             try { const sel = document.getElementById('versionSelector'); if (sel) bollsChapterJson(sel.value, book, ch).catch(() => {}); } catch (e) {}
         }
 
+        let chapterRequestSeq = 0; // only the newest chapter request may update the screen (a slow older reply must never overwrite a newer one)
         async function fetchCurrentChapterFromAPI() {
+            const requestId = ++chapterRequestSeq;
             const targetVersion = document.getElementById('versionSelector').value;
             const dot = document.getElementById('statusDot');
             const statusText = document.getElementById('statusText');
@@ -1541,11 +1558,11 @@ async function initMediaEngine() {
 
             try {
                 let data = await bollsChapterJson(targetVersion, currentBookCode, currentChapter);
+                if (requestId !== chapterRequestSeq) return; // superseded by a newer request
                 if (data && data.length > 0) {
                     activeChapterVerses = data.map(v => {
-                        let parsedText = v.text;
-                        // Strip markup only (Strong's <S>1234</S> tags, <i>, <br>) — NEVER digits, which are real text (666, 144,000, ages, measurements)
-                        parsedText = parsedText.replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+                        // Strip markup only (Strong's numbers, footnotes, headings, <i>, <br>) — NEVER digits, which are real text (666, 144,000, ages, measurements)
+                        let parsedText = cleanBibleText(v.text);
                         return { ...v, text: parsedText };
                     });
 
@@ -1558,16 +1575,23 @@ async function initMediaEngine() {
                     throw new Error("No data returned");
                 }
             } catch (error) {
+                if (requestId !== chapterRequestSeq) return;
+                if (error && error.ebpBlocked) {
+                    displayPanelFallbackNotice(`${targetVersion} is not available from the free Bible source (the publisher blocked it). Please choose another version, e.g. NKJV, KJV or WEB.`);
+                    return;
+                }
                 console.warn("Primary API timeout, engaging backup translation...", error);
                 try {
                     const fallbackData = await fetchFallbackBibleApi(currentBookName, currentChapter);
+                    if (requestId !== chapterRequestSeq) return;
                     activeChapterVerses = fallbackData;
                     renderVerseNavigationPanel();
                     transmitStatePacketToRemoteClients();
                     selectSpecificVerseCoordinate(currentVerse);
                     dot.className = "status-dot active";
-                    statusText.innerText = "Connected (Backup)";
+                    statusText.innerText = "Backup source (WEB text) — not " + targetVersion;
                 } catch (fallbackError) {
+                    if (requestId !== chapterRequestSeq) return;
                     console.error("Critical API Failure:", fallbackError);
                     displayPanelFallbackNotice("Offline database. Verify active networks.");
                 }
@@ -2168,7 +2192,7 @@ async function runScriptureSuggestionSearch(words) {
             if (!r || r.book > 66) return; // Bible only (the database also holds Apocrypha)
             const key = r.book + ':' + r.chapter + ':' + r.verse;
             if (seen.has(key)) return;
-            const text = String(r.text || '').replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<[^>]*>/g, '').trim();
+            const text = cleanBibleText(r.text);
             const vw = suggestWords(text);
             const vStems = new Set(vw.filter(content).map(suggestStem));
             let matched = 0, score = 0;
@@ -2305,8 +2329,7 @@ const VOICE_PATTERNS = {
 // mistaken for a version change. Codes must match the <option value="..."> list in the Version selector.
 const VOICE_VERSION_ALIASES = [
     ['NKJV', 'new king james version'], ['NKJV', 'new king james'], ['NKJV', 'n k j v'], ['NKJV', 'nkjv'],
-    ['NIV2011', 'new international version twenty eleven'], ['NIV2011', 'niv twenty eleven'],
-    ['NIV', 'new international version'], ['NIV', 'n i v'], ['NIV', 'niv'],
+    ['BSB', 'berean standard bible'], ['BSB', 'berean standard'], ['BSB', 'b s b'], ['BSB', 'bsb'],
     ['AMP', 'amplified bible'], ['AMP', 'amplified'], ['AMP', 'amp'],
     ['NLT', 'new living translation'], ['NLT', 'n l t'], ['NLT', 'nlt'],
     ['MSG', 'the message bible'], ['MSG', 'the message'], ['MSG', 'message bible'], ['MSG', 'msg'],
@@ -3721,6 +3744,7 @@ function songTabIsActive() {
                     if (importedData.assetsLibraryCache) { importedAssetsLibrary = importedData.assetsLibraryCache; repopulateAssetDropdownUI(); }
                     if (importedData.cachedLogoBlobData) { cachedLogoDataUrl = importedData.cachedLogoBlobData; }
                     document.getElementById('versionSelector').value = importedData.version || "KJV";
+                    if (!document.getElementById('versionSelector').value) document.getElementById('versionSelector').value = 'KJV'; // saved profile used a version that is no longer offered (e.g. NIV)
                     currentBookCode = importedData.bookCode; currentBookName = importedData.bookName; currentChapter = importedData.chapter; currentVerse = importedData.verse;
                     // Single scene now: load whichever saved state has content (older exported
                     // profiles may still have separate preview/live states) into the one shared object.
@@ -4103,8 +4127,9 @@ async function aiBuildIndex(version, onProgress) {
             let data = null;
             for (let attempt = 0; attempt < 3 && !data; attempt++) {
                 try { const r = await fetch(`https://bolls.life/get-text/${version}/${book}/${chap}/`); if (r.ok) data = await r.json(); } catch (e) {}
+                if (Array.isArray(data) && data.some(v => /prohibited me from using the/i.test(String(v && v.text || '')))) { data = null; attempt = 9; }
             }
-            if (Array.isArray(data)) data.forEach(v => verses.push([book, chap, v.verse, String(v.text || '').replace(/<S>\s*\d+\s*<\/S>/gi, '').replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim()]));
+            if (Array.isArray(data)) data.forEach(v => verses.push([book, chap, v.verse, cleanBibleText(v.text)]));
             else failed++;
             done++;
             if (onProgress) onProgress(done, AI_CHAPTERS.reduce((a, b) => a + b, 0), failed);
