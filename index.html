@@ -698,10 +698,35 @@
                         <option value="all">All Bibles</option>
                         <option value="English">English</option>
                         <option value="Nigeria">Nigeria</option>
+                        <option value="Imported">Imported</option>
                     </select>
                     <div id="blibList"></div>
+                    <div style="margin-top:.7rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.6rem;">
+                        <div style="font-weight:700;font-size:.8rem;color:var(--text-main,#fff);">Import a Bible from a file</div>
+                        <div style="display:flex;gap:.5rem;align-items:center;margin-top:.35rem;flex-wrap:wrap;">
+                            <input type="text" id="blibImportName" placeholder="Name, e.g. My Yoruba Bible" style="flex:1;min-width:10rem;padding:.35rem;font-size:.75rem;">
+                            <button type="button" id="blibImportBtn" class="btn" style="padding:.3rem .7rem;font-size:.72rem;">📁 Import file…</button>
+                        </div>
+                        <div style="font-size:.7rem;color:var(--text-muted);margin-top:.3rem;">Accepts .zip, .json, .txt, .csv, .xml (Zefania or OSIS) and USFM. You can pick several USFM files at once. Imported Bibles appear under “Imported”. If the file includes book names (USFM does), they are shown on screen.</div>
+                    </div>
                     <p id="blibNote" style="margin-top:.5rem;font-size:.72rem;min-height:1em;"></p>
                     <p style="margin-top:.2rem;font-size:.7rem;">Each Bible keeps its own copyright. Word search and AI matching for downloaded Bibles may be limited.</p>
+                </div>
+
+                <!-- Voice accent -->
+                <div class="integration-card">
+                    <h4>Voice Accent</h4>
+                    <p>Live Voice listens for English. If it mishears your preacher, try the closest English accent. The default is unchanged.</p>
+                    <select id="voiceAccentSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        <option value="en-US">English (United States) — default</option>
+                        <option value="en-NG">English (Nigeria)</option>
+                        <option value="en-GH">English (Ghana)</option>
+                        <option value="en-KE">English (Kenya)</option>
+                        <option value="en-ZA">English (South Africa)</option>
+                        <option value="en-GB">English (United Kingdom)</option>
+                        <option value="en-AU">English (Australia)</option>
+                    </select>
+                    <p id="voiceAccentNote" style="margin-top:.4rem;font-size:.72rem;">Preaching in Yoruba, Hausa or Igbo is not recognised yet; only English references are detected.</p>
                 </div>
 
                                 <!-- Spoken Bible numbers -->
@@ -848,6 +873,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=12"></script>
+    <script src="script.js?v=14"></script>
 </body>
 </html>
