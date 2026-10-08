@@ -591,18 +591,22 @@
 
             try {
                 const currentTranslation = document.getElementById('versionSelector').value;
-                const searchUrl = `https://bolls.life/v2/find/${currentTranslation}?search=${encodeURIComponent(query)}&match_case=false&match_whole=false&limit=40&page=1`;
-                const response = await fetch(searchUrl);
-                if (!response.ok) throw new Error("Database network failure");
-
-                const data = await response.json();
+                let data;
+                if (blibIsLocal(currentTranslation)) {
+                    data = await blibSearch(currentTranslation, query); // downloaded Bibles are searched on this device
+                } else {
+                    const searchUrl = `https://bolls.life/v2/find/${currentTranslation}?search=${encodeURIComponent(query)}&match_case=false&match_whole=false&limit=40&page=1`;
+                    const response = await fetch(searchUrl);
+                    if (!response.ok) throw new Error("Database network failure");
+                    data = await response.json();
+                }
                 if (data && data.results && data.results.length > 0) {
                     counterText.innerText = `Found ${data.total} matches`;
                     resultContainer.innerHTML = "";
 
                     data.results.forEach(res => {
                         const bookName = cleanBookNames[res.book] || `Book ${res.book}`;
-                        const locationRef = `${bookName} ${res.chapter}:${res.verse}`;
+                        const locationRef = `${blibBookName(res.book, bookName)} ${res.chapter}:${res.verse}`;
 
                         const row = document.createElement('div');
                         row.className = "verse-row";
@@ -1611,7 +1615,7 @@ async function initMediaEngine() {
         }
 
         function renderVerseNavigationPanel() {
-            document.getElementById('panelNavHeader').innerText = `Verse Directory: ${currentBookName} ${currentChapter}`;
+            document.getElementById('panelNavHeader').innerText = `Verse Directory: ${blibBookName(currentBookCode, currentBookName)} ${currentChapter}`;
             const deck = document.getElementById('verseGridDeck');
             deck.innerHTML = "";
 
@@ -1646,7 +1650,7 @@ async function initMediaEngine() {
             if (activeRow) { activeRow.classList.add('active'); activeRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
 
             previewState.text = foundVerse.text;
-            previewState.ref = `${currentBookName} ${currentChapter}:${foundVerse.verse} (${getVersionDisplayLabel(document.getElementById('versionSelector').value)})`;
+            previewState.ref = `${blibBookName(currentBookCode, currentBookName)} ${currentChapter}:${foundVerse.verse} (${getVersionDisplayLabel(document.getElementById('versionSelector').value)})`;
             previewState.isScrolling = false; 
 
             renderPreview();
@@ -2038,7 +2042,7 @@ async function initMediaEngine() {
             recognition.continuous = true; 
             recognition.interimResults = true; 
             recognition.maxAlternatives = 5; // more guesses per phrase = far better accuracy for version names and spoken numbers
-            recognition.lang = 'en-US';
+            recognition.lang = (function () { try { return localStorage.getItem('ebpVoiceLang') || 'en-US'; } catch (e) { return 'en-US'; } })();
 
             recognition.onstart = () => {
                 voiceCommitted = { utterance: -1, sig: '' }; // fresh recognition session -> fresh utterance numbering
@@ -2172,6 +2176,7 @@ async function runScriptureSuggestionSearch(words) {
     const seq = ++suggestSeq;
     const status = document.getElementById('suggestStatus');
     const version = document.getElementById('versionSelector').value;
+    if (blibIsLocal(version)) { suggestSearching = false; if (status) status.innerText = 'Scripture suggestions work with English Bibles only.'; return; }
     const content = w => !SUGGEST_STOP.has(w) && w.length >= 3;
     const longest = (arr, n) => Array.from(new Set(arr.filter(content))).sort((x, y) => y.length - x.length).slice(0, n);
     const queries = [longest(words.slice(-20), 4), longest(words.slice(-10), 3), longest(words.slice(-48, -20), 3), longest(words.slice(-6), 2), longest(words.slice(-30, -10), 3)]
@@ -4117,6 +4122,7 @@ async function aiLoadSavedIndex(preferVersion) {
 }
 
 async function aiBuildIndex(version, onProgress) {
+    if (blibIsLocal(version)) throw new Error('AI Scripture Detection works with English Bibles only. Switch to an English version to use it.');
     if (aiIndex.building) return;
     aiIndex.building = true;
     const jobs = [];
@@ -4127,7 +4133,7 @@ async function aiBuildIndex(version, onProgress) {
             const [book, chap] = jobs.shift();
             let data = null;
             for (let attempt = 0; attempt < 3 && !data; attempt++) {
-                try { if (String(version).startsWith('EB:')) data = await blibChapter(version, book, chap); else { const r = await fetch(`https://bolls.life/get-text/${version}/${book}/${chap}/`); if (r.ok) data = await r.json(); } } catch (e) {}
+                try { if (blibIsLocal(version)) data = await blibChapter(version, book, chap); else { const r = await fetch(`https://bolls.life/get-text/${version}/${book}/${chap}/`); if (r.ok) data = await r.json(); } } catch (e) {}
                 if (Array.isArray(data) && data.some(v => /prohibited me from using the/i.test(String(v && v.text || '')))) { data = null; attempt = 9; }
             }
             if (Array.isArray(data)) data.forEach(v => verses.push([book, chap, v.verse, cleanBibleText(v.text)]));
@@ -4294,7 +4300,7 @@ function splitSceneSignature() {
 }
 function splitRefFor(verse) {
     const ver = document.getElementById('versionSelector');
-    return `${currentBookName} ${currentChapter}:${verse} (${getVersionDisplayLabel(ver ? ver.value : '')})`;
+    return `${blibBookName(currentBookCode, currentBookName)} ${currentChapter}:${verse} (${getVersionDisplayLabel(ver ? ver.value : '')})`;
 }
 // Hidden twin of the scene (same size, same styles) used only to measure whether a text would be shrunk.
 function splitEnsureProbe() {
@@ -4486,10 +4492,22 @@ const BLIB = [
     { code: 'DRB',  label: 'DRB (Douay-Rheims Bible)', group: 'English', src: 'live' },
     { code: 'EB:yor',   label: 'Yorùbá — Yoruba Contemporary Version', short: 'YOR', group: 'Nigeria', src: 'ebible', id: 'yor', credit: 'Biblica' },
     { code: 'EB:hausa', label: 'Hausa — Hausa Open Bible', short: 'HAU', group: 'Nigeria', src: 'ebible', id: 'hausa', credit: 'Biblica' },
-    { code: '', label: 'Igbo', group: 'Nigeria', soon: true },
-    { code: '', label: 'Nigerian Pidgin', group: 'Nigeria', soon: true }
+    { code: 'EB:ibo', label: 'Igbo — Igbo Contemporary Bible', short: 'IBO', group: 'Nigeria', src: 'ebible', id: 'ibo', credit: 'Biblica' },
+    { code: 'EB:pcm', label: 'Nigerian Pidgin', short: 'PCM', group: 'Nigeria', src: 'ebible', id: 'pcm', credit: 'eBible.org' }
 ];
 const BLIB_DEFAULTS = ['KJV', 'NKJV'];
+function blibIsLocal(code) { return /^(EB|IM):/.test(String(code || '')); }
+(function blibLoadCustom() {
+    try { (JSON.parse(localStorage.getItem('ebpCustomBibles') || '[]') || []).forEach(c => { if (c && c.code && !BLIB.some(b => b.code === c.code)) BLIB.push({ code: c.code, label: c.label, short: c.short, group: 'Imported', src: 'import' }); }); } catch (e) {}
+})();
+function blibSaveCustom() {
+    try { localStorage.setItem('ebpCustomBibles', JSON.stringify(BLIB.filter(b => b.src === 'import').map(b => ({ code: b.code, label: b.label, short: b.short })))); } catch (e) {}
+}
+const blibNames = new Map();
+function blibBookName(bookCode, fallback) {
+    try { const sel = document.getElementById('versionSelector'); const n = sel && blibNames.get(sel.value); if (n && n[bookCode]) return n[bookCode]; } catch (e) {}
+    return fallback;
+}
 const BLIB_BOOKS = 'GEN EXO LEV NUM DEU JOS JDG RUT 1SA 2SA 1KI 2KI 1CH 2CH EZR NEH EST JOB PSA PRO ECC SNG ISA JER LAM EZK DAN HOS JOL AMO OBA JON MIC NAM HAB ZEP HAG ZEC MAL MAT MRK LUK JHN ACT ROM 1CO 2CO GAL EPH PHP COL 1TH 2TH 1TI 2TI TIT PHM HEB JAS 1PE 2PE 1JN 2JN 3JN JUD REV'.split(' ');
 const BLIB_ALIASES = { SOS: 'SNG', SON: 'SNG', EZE: 'EZK', JOE: 'JOL', NAH: 'NAM', PHI: 'PHP', PHL: 'PHP', MRC: 'MRK', MAR: 'MRK', JHN: 'JHN', JOH: 'JHN', JAM: 'JAS', JUDE: 'JUD', REVE: 'REV', PSM: 'PSA', PS: 'PSA' };
 const blibMem = new Map();
@@ -4539,6 +4557,7 @@ async function blibLoad(code) {
     if (blibMem.has(code)) return blibMem.get(code);
     const rec = await blibDbGet(code);
     if (!rec || !rec.verses) return null;
+    if (rec.names) blibNames.set(code, rec.names);
     const m = new Map();
     for (const [b, c, v, t] of rec.verses) { const k = b + ':' + c; if (!m.has(k)) m.set(k, []); m.get(k).push({ verse: v, text: t }); }
     m.forEach(arr => arr.sort((a, b) => a.verse - b.verse));
@@ -4600,14 +4619,13 @@ function blibParseVpl(text) {
     return verses;
 }
 async function blibIngestZip(ent, buf, onProgress) {
-    const zip = await blibUnzip(buf);
-    const files = zip.list.filter(f => /\.(txt|vpl)$/i.test(f.name)).sort((a, b) => b.usize - a.usize);
-    if (!files.length) throw new Error('That file has no readable Bible text. Please choose the file named ' + ent.id + '_vpl.zip.');
-    const text = new TextDecoder('utf-8').decode(await zip.read(files[0]));
-    const verses = blibParseVpl(text);
-    if (verses.length < 1000) throw new Error('That file did not look like a full Bible, so it was not saved. (First line read: "' + text.trim().split(/\r?\n/)[0].slice(0, 80) + '")');
-    await blibDbPut({ code: ent.code, verses, savedAt: Date.now() });
-    blibMem.delete(ent.code);
+    return blibSaveParsed(ent, await blibParseZip(buf), onProgress);
+}
+async function blibSaveParsed(ent, parsed, onProgress) {
+    const verses = parsed.verses || [];
+    if (verses.length < 1000) throw new Error('That file did not look like a full Bible, so it was not saved.' + (parsed.hint ? ' (First line read: "' + parsed.hint + '")' : ''));
+    await blibDbPut({ code: ent.code, verses, names: parsed.names || null, savedAt: Date.now() });
+    blibMem.delete(ent.code); blibNames.delete(ent.code);
     if (onProgress) onProgress(100);
     return verses.length;
 }
@@ -4633,7 +4651,7 @@ function blibRebuildDropdown() {
     if (!sel) return;
     const keep = sel.value, enabled = blibEnabled();
     sel.innerHTML = '';
-    ['English', 'Nigeria'].forEach(g => {
+    [...new Set(BLIB.filter(x => !x.soon).map(x => x.group))].forEach(g => {
         const items = BLIB.filter(b => b.group === g && !b.soon && enabled.includes(b.code));
         if (!items.length) return;
         const og = document.createElement('optgroup'); og.label = g;
@@ -4656,14 +4674,14 @@ function blibRenderList() {
         const info = document.createElement('div'); info.style.cssText = 'flex:1;min-width:0;';
         const t = document.createElement('div'); t.style.cssText = 'font-weight:700;color:var(--text-main,#fff);font-size:.8rem;'; t.textContent = b.label;
         const s = document.createElement('div'); s.style.cssText = 'font-size:.7rem;color:var(--text-muted);';
-        s.textContent = b.soon ? 'To be confirmed' : (b.src === 'ebible' ? `${b.group} · from eBible.org · ${b.credit}` : b.group + ' · online source');
+        s.textContent = b.soon ? 'To be confirmed' : (b.src === 'ebible' ? `${b.group} · from eBible.org · ${b.credit}` : (b.src === 'import' ? 'Imported from a file on this device' : b.group + ' · online source'));
         info.append(t, s);
         const act = document.createElement('div'); act.style.cssText = 'display:flex;align-items:center;gap:.5rem;';
         const mkBtn = (txt, fn) => { const x = document.createElement('button'); x.type = 'button'; x.className = 'btn'; x.style.cssText = 'padding:.25rem .7rem;font-size:.72rem;'; x.textContent = txt; x.addEventListener('click', fn); return x; };
         if (b.soon) { const n = document.createElement('span'); n.style.cssText = 'font-size:.72rem;color:var(--text-muted);font-style:italic;'; n.textContent = 'Not available yet'; act.append(n); }
         else if (blibBusy.has(b.code)) { const n = document.createElement('span'); n.id = 'blibProg-' + b.code; n.style.cssText = 'font-size:.72rem;color:#38bdf8;'; n.textContent = 'Downloading… 0%'; act.append(n); }
         else if (enabled.includes(b.code)) {
-            const n = document.createElement('span'); n.style.cssText = 'font-size:.72rem;color:#4ade80;'; n.textContent = b.src === 'ebible' ? '✓ Saved on this device' : '✓ Added';
+            const n = document.createElement('span'); n.style.cssText = 'font-size:.72rem;color:#4ade80;'; n.textContent = (b.src === 'ebible' || b.src === 'import') ? '✓ Saved on this device' : '✓ Added';
             act.append(n, mkBtn('Remove', () => blibRemove(b)));
         } else if (b.src === 'ebible' && blibNeedFile.has(b.code)) {
             const lk = document.createElement('a'); lk.href = `https://ebible.org/Scriptures/${b.id}_vpl.zip`; lk.target = '_blank'; lk.rel = 'noopener'; lk.style.cssText = 'font-size:.72rem;color:#38bdf8;'; lk.textContent = '1. Download file';
@@ -4693,6 +4711,17 @@ async function blibAdd(b) {
     }
     blibBusy.delete(b.code); blibRenderList();
 }
+async function blibSearch(code, query) {
+    const norm = t => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const q = norm(query).trim();
+    const rec = await blibDbGet(code);
+    if (!rec || !rec.verses) return { total: 0, results: [] };
+    const results = []; let total = 0;
+    for (const [book, chapter, verse, text] of rec.verses) {
+        if (norm(text).includes(q)) { total++; if (results.length < 40) results.push({ book, chapter, verse, text }); }
+    }
+    return { total, results };
+}
 function blibPickFile(b) {
     const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.zip,application/zip';
     inp.addEventListener('change', async () => {
@@ -4712,15 +4741,16 @@ async function blibRemove(b) {
     if (list.length <= 1) { blibNote('Keep at least one Bible in the list.', true); return; }
     const sel = document.getElementById('versionSelector'), wasCurrent = sel && sel.value === b.code;
     blibSaveEnabled(list.filter(c => c !== b.code));
-    if (b.src === 'ebible') { try { await blibDbDel(b.code); } catch (e) {} blibMem.delete(b.code); }
-    blibRebuildDropdown(); blibRenderList(); blibNote(`${b.code.replace('EB:', '').toUpperCase()} removed.`);
+    if (b.src === 'ebible' || b.src === 'import') { try { await blibDbDel(b.code); } catch (e) {} blibMem.delete(b.code); blibNames.delete(b.code); }
+    if (b.src === 'import') { const ix = BLIB.indexOf(b); if (ix >= 0) BLIB.splice(ix, 1); blibSaveCustom(); }
+    blibRebuildDropdown(); blibRenderList(); blibNote(`${b.src === 'live' ? b.code : (b.short || b.label)} removed.`);
     if (wasCurrent && typeof fetchCurrentChapterFromAPI === 'function') fetchCurrentChapterFromAPI();
 }
 
 // ---- hooks: local Bibles read from storage; label for the on-screen reference ----
 (function hookBibleLibrary() {
     const origJson = bollsChapterJson;
-    bollsChapterJson = function (ver, book, ch) { if (String(ver).startsWith('EB:')) return blibChapter(ver, book, ch); return origJson.apply(this, arguments); };
+    bollsChapterJson = function (ver, book, ch) { if (blibIsLocal(ver)) return blibChapter(ver, book, ch); return origJson.apply(this, arguments); };
     const origLabel = getVersionDisplayLabel;
     getVersionDisplayLabel = function (code) { const e = blibEntry(code); return (e && e.short) || origLabel.apply(this, arguments); };
 })();
@@ -4731,8 +4761,212 @@ function initBibleLibrary() {
     blibRenderList();
     // a downloaded Bible removed from browser storage (e.g. site data cleared) must not stay in the list
     blibDbKeys().then(keys => {
-        const list = blibEnabled(), fixed = list.filter(c => { const e = blibEntry(c); return !(e && e.src === 'ebible') || keys.includes(c); });
-        if (fixed.length !== list.length && fixed.length) { blibSaveEnabled(fixed); blibRebuildDropdown(); blibRenderList(); }
+        BLIB.filter(x => x.src === 'import' && !keys.includes(x.code)).forEach(x => BLIB.splice(BLIB.indexOf(x), 1)); blibSaveCustom();
+        const list = blibEnabled(), fixed = list.filter(c => { const e = blibEntry(c); return !(e && (e.src === 'ebible' || e.src === 'import')) || keys.includes(c); });
+        if (fixed.length !== list.length && fixed.length) blibSaveEnabled(fixed);
+        blibRebuildDropdown(); blibRenderList();
     }).catch(() => {});
 }
 initBibleLibrary();
+
+
+// ===================== BIBLE LIBRARY: IMPORT FROM FILES =====================
+const BLIB_OSIS = 'Gen Exod Lev Num Deut Josh Judg Ruth 1Sam 2Sam 1Kgs 2Kgs 1Chr 2Chr Ezra Neh Esth Job Ps Prov Eccl Song Isa Jer Lam Ezek Dan Hos Joel Amos Obad Jonah Mic Nah Hab Zeph Hag Zech Mal Matt Mark Luke John Acts Rom 1Cor 2Cor Gal Eph Phil Col 1Thess 2Thess 1Tim 2Tim Titus Phlm Heb Jas 1Pet 2Pet 1John 2John 3John Jude Rev'.split(' ');
+let blibNameMap = null;
+function blibKey(s) {
+    return String(s == null ? '' : s).toLowerCase().trim().replace(/^(first|1st|i)\b\s*/, '1').replace(/^(second|2nd|ii)\b\s*/, '2').replace(/^(third|3rd|iii)\b\s*/, '3').replace(/[^a-z0-9]/g, '');
+}
+function blibBookIdx(x) {
+    if (typeof x === 'number') return x >= 1 && x <= 66 ? x : 0;
+    if (!blibNameMap) {
+        blibNameMap = new Map();
+        const add = (k, i) => { k = blibKey(k); if (k && !blibNameMap.has(k)) blibNameMap.set(k, i); };
+        for (let i = 1; i <= 66; i++) { add(cleanBookNames[i], i); add(BLIB_BOOKS[i - 1], i); add(BLIB_OSIS[i - 1], i); add(String(i), i); }
+        Object.entries(BLIB_ALIASES).forEach(([k, v]) => add(k, BLIB_BOOKS.indexOf(v) + 1));
+        add('psalm', 19); add('songofsongs', 22); add('canticles', 22); add('revelations', 66); add('apocalypse', 66);
+    }
+    const k = blibKey(x);
+    if (blibNameMap.has(k)) return blibNameMap.get(k);
+    if (k.length >= 3) { let hit = 0, n = 0; blibNameMap.forEach((i, key) => { if (key.length > 2 && key.startsWith(k) && !/^\d+$/.test(key) && hit !== i) { hit = i; n++; } }); if (n === 1) return hit; }
+    return 0;
+}
+const blibClean = t => String(t == null ? '' : t).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+
+function blibParseVerseLines(text) {
+    const verses = [], re = /^\s*(.+?)\s+(\d+):(\d+)[\s|]+(.+?)\s*$/;
+    for (const line of text.split(/\r?\n/)) {
+        const m = re.exec(line); if (!m) continue;
+        const bi = blibBookIdx(m[1]); const t = blibClean(m[4]);
+        if (bi && t) verses.push([bi, +m[2], +m[3], t]);
+    }
+    return verses;
+}
+function blibParseCsv(text) {
+    const first = text.split(/\r?\n/, 1)[0] || '';
+    const delim = first.includes('\t') ? '\t' : (first.split(';').length > first.split(',').length ? ';' : ',');
+    const rows = []; let row = [], cur = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+        else if (ch === '"') q = true;
+        else if (ch === delim) { row.push(cur); cur = ''; }
+        else if (ch === '\n') { row.push(cur.replace(/\r$/, '')); rows.push(row); row = []; cur = ''; }
+        else cur += ch;
+    }
+    if (cur || row.length) { row.push(cur.replace(/\r$/, '')); rows.push(row); }
+    if (!rows.length) return [];
+    let bi = 0, ci = 1, vi = 2, ti = 3, start = 0;
+    const head = rows[0].map(h => blibKey(h));
+    if (head.some(h => h === 'chapter' || h === 'verse' || h === 'text' || h === 'book')) {
+        start = 1;
+        const f = (...names) => head.findIndex(h => names.includes(h));
+        bi = f('book', 'bookname', 'bookid', 'b'); ci = f('chapter', 'chapterid', 'c'); vi = f('verse', 'verseid', 'v'); ti = f('text', 'verse text', 'versetext', 'content', 't');
+        if (bi < 0 || ci < 0 || vi < 0 || ti < 0) return [];
+    }
+    const out = [];
+    for (let r = start; r < rows.length; r++) {
+        const x = rows[r]; const b = blibBookIdx(/^\d+$/.test(x[bi] || '') ? +x[bi] : x[bi]); const t = blibClean(x[ti]);
+        if (b && +x[ci] > 0 && +x[vi] > 0 && t) out.push([b, +x[ci], +x[vi], t]);
+    }
+    return out;
+}
+function blibParseJson(text) {
+    let j; try { j = JSON.parse(text); } catch (e) { return []; }
+    const out = [];
+    const push = (b, c, v, t) => { const bi = blibBookIdx(typeof b === 'string' && /^\d+$/.test(b) ? +b : b); const tt = blibClean(t); if (bi && +c > 0 && +v > 0 && tt) out.push([bi, +c, +v, tt]); };
+    const eachChap = (bi, c, node) => {
+        if (Array.isArray(node)) node.forEach((vt, vi) => { if (typeof vt === 'string') push(bi, c, vi + 1, vt); else if (vt && typeof vt === 'object') push(bi, c, vt.verse != null ? vt.verse : (vt.number != null ? vt.number : vi + 1), vt.text != null ? vt.text : vt.t); });
+        else if (node && typeof node === 'object') { if (Array.isArray(node.verses)) return eachChap(bi, c, node.verses); Object.entries(node).forEach(([vk, vt]) => { if (typeof vt === 'string' && +vk > 0) push(bi, c, +vk, vt); }); }
+    };
+    const walkBook = (node, hint) => {
+        let name = hint, chapters = node;
+        if (node && !Array.isArray(node) && typeof node === 'object') { name = node.name || node.book || node.abbrev || node.title || hint; chapters = node.chapters || node.Chapters || node.chapter || node; }
+        const bi = blibBookIdx(name) || blibBookIdx(hint); if (!bi) return;
+        if (Array.isArray(chapters)) chapters.forEach((cn, ci) => { if (cn && !Array.isArray(cn) && typeof cn === 'object' && cn.verses) eachChap(bi, cn.chapter || cn.number || ci + 1, cn.verses); else eachChap(bi, ci + 1, cn); });
+        else if (chapters && typeof chapters === 'object') Object.entries(chapters).forEach(([ck, cn]) => { if (+ck > 0) eachChap(bi, +ck, cn); });
+    };
+    let list = Array.isArray(j) ? j : (Array.isArray(j.verses) ? j.verses : null);
+    if (list) {
+        list.forEach(o => { if (o && typeof o === 'object' && !Array.isArray(o)) { const g = (...k) => { for (const x of k) if (o[x] != null) return o[x]; }; push(g('book', 'book_id', 'bookId', 'book_name', 'bookName', 'b'), g('chapter', 'chapter_id', 'chapterId', 'c'), g('verse', 'verse_id', 'verseId', 'v'), g('text', 't', 'content', 'verse_text')); } });
+        if (out.length) return out;
+        list.forEach((bk, i) => walkBook(bk, i + 1));
+        return out;
+    }
+    const books = j.books || j.Books || j.bible || null;
+    if (Array.isArray(books)) { books.forEach((bk, i) => walkBook(bk, i + 1)); return out; }
+    Object.entries(books && typeof books === 'object' ? books : j).forEach(([k, val]) => {
+        const m = /^(.+?)\s+(\d+):(\d+)$/.exec(k);
+        if (m && typeof val === 'string') push(m[1], m[2], m[3], val); else walkBook(val, k);
+    });
+    return out;
+}
+function blibParseXml(text) {
+    const doc = new DOMParser().parseFromString(text, 'text/xml'); const out = [];
+    if (doc.querySelector('parsererror')) return out;
+    doc.querySelectorAll('BIBLEBOOK, biblebook').forEach((bk, i) => {
+        const bi = blibBookIdx(+bk.getAttribute('bnumber') || bk.getAttribute('bname') || bk.getAttribute('bsname') || i + 1) || (i + 1 <= 66 ? i + 1 : 0); if (!bi) return;
+        bk.querySelectorAll('CHAPTER, chapter').forEach(ch => { const c = +ch.getAttribute('cnumber'); ch.querySelectorAll('VERS, vers').forEach(v => { const t = blibClean(v.textContent); if (c > 0 && +v.getAttribute('vnumber') > 0 && t) out.push([bi, c, +v.getAttribute('vnumber'), t]); }); });
+    });
+    if (out.length) return out;
+    doc.querySelectorAll('verse').forEach(v => {
+        const id = (v.getAttribute('osisID') || '').split(/\s+/)[0]; const m = /^([^.]+)\.(\d+)\.(\d+)/.exec(id); if (!m) return;
+        const bi = blibBookIdx(m[1]); const clone = v.cloneNode(true); clone.querySelectorAll('note').forEach(n => n.remove());
+        const t = blibClean(clone.textContent); if (bi && t) out.push([bi, +m[2], +m[3], t]);
+    });
+    return out;
+}
+function blibParseUsfm(text, names) {
+    const out = []; let book = 0, chap = 0, verse = 0, buf = '';
+    const strip = t => t.replace(/\\(f|fe|x)\s.*?\\\1\*/g, '').replace(/\|[^\\|]*?(?=\\\+?\w+\*)/g, '').replace(/\\\+?\w+\*/g, '').replace(/\\\+?\w+\s?/g, '').replace(/\s+/g, ' ').trim();
+    const flush = () => { if (book && chap && verse) { const t = strip(buf); if (t) out.push([book, chap, verse, t]); } buf = ''; verse = 0; };
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim(); let m;
+        if ((m = /^\\id\s+(\S+)/.exec(line))) { flush(); book = BLIB_BOOKS.indexOf(BLIB_ALIASES[m[1]] || m[1]) + 1; chap = 0; continue; }
+        if (!book) continue;
+        if ((m = /^\\h\s+(.+)/.exec(line))) { if (names && !names[book]) names[book] = strip(m[1]); continue; }
+        if ((m = /^\\toc2\s+(.+)/.exec(line))) { if (names && !names[book]) names[book] = strip(m[1]); continue; }
+        if ((m = /^\\c\s+(\d+)/.exec(line))) { flush(); chap = +m[1]; continue; }
+        if ((m = /^\\v\s+(\d+)(?:[-,]\d+)?\s*(.*)$/.exec(line))) { flush(); verse = +m[1]; buf = m[2]; continue; }
+        if (/^\\(s\d?|r|d|ms\d?|mr|mt\d?|sp|cl|cd|toc\d|rem|ide|sts|h\d|imt\d?|is\d?|ip|ie|b)\b/.test(line)) continue;
+        if (verse && line) buf += ' ' + line.replace(/^\\(p|m|mi|pi\d?|q\d?|qr|qc|li\d?|nb|pmo|pm|pc|pr)\b\s*/, '');
+    }
+    flush();
+    return out;
+}
+function blibSniffAndParse(text, nameHint) {
+    const ext = (nameHint.match(/\.([a-z0-9]+)$/i) || [])[1] || ''; const t = text.replace(/^﻿/, '');
+    const head = t.trimStart().slice(0, 400);
+    const names = {};
+    let v = [];
+    if (/^<\?xml|^<(XMLBIBLE|osis|usx|bible)/i.test(head) || /^xml$/i.test(ext)) v = blibParseXml(t);
+    else if (/^[\[{]/.test(head) || /^json$/i.test(ext)) v = blibParseJson(t);
+    else if (/\\id\s+[A-Z0-9]{3}/.test(t.slice(0, 2000)) || /^(usfm|sfm|ptx)$/i.test(ext)) v = blibParseUsfm(t, names);
+    if (!v.length) { v = blibParseVerseLines(t); if (v.length < 100) { const c = blibParseCsv(t); if (c.length > v.length) v = c; } }
+    return { verses: v, names: Object.keys(names).length ? names : null, hint: t.trim().split(/\r?\n/)[0].slice(0, 80) };
+}
+async function blibParseZip(buf) {
+    const zip = await blibUnzip(buf);
+    const dec = new TextDecoder('utf-8');
+    const usfm = zip.list.filter(f => /\.(usfm|sfm|ptx)$/i.test(f.name));
+    if (usfm.length) {
+        const names = {}, verses = [];
+        for (const f of usfm) verses.push(...blibParseUsfm(dec.decode(await zip.read(f)), names));
+        if (verses.length) return { verses, names: Object.keys(names).length ? names : null };
+    }
+    const files = zip.list.filter(f => /\.(txt|vpl|json|xml|csv|tsv)$/i.test(f.name) && !/copr|licen|readme/i.test(f.name)).sort((a, b) => b.usize - a.usize);
+    if (!files.length) throw new Error('That file has no readable Bible text.');
+    const text = dec.decode(await zip.read(files[0]));
+    let verses = blibParseVpl(text), res = null;
+    if (verses.length < 1000) res = blibSniffAndParse(text, files[0].name);
+    return res || { verses, hint: text.trim().split(/\r?\n/)[0].slice(0, 80) };
+}
+async function blibParseFiles(files) {
+    if (files.length === 1 && /\.zip$/i.test(files[0].name)) return blibParseZip(await files[0].arrayBuffer());
+    const names = {}, verses = []; let hint = '';
+    for (const f of files) {
+        if (/\.zip$/i.test(f.name)) { const z = await blibParseZip(await f.arrayBuffer()); verses.push(...z.verses); if (z.names) Object.assign(names, z.names); continue; }
+        const r = blibSniffAndParse(new TextDecoder('utf-8').decode(await f.arrayBuffer()), f.name);
+        verses.push(...r.verses); if (r.names) Object.assign(names, r.names); hint = hint || r.hint;
+    }
+    return { verses, names: Object.keys(names).length ? names : null, hint };
+}
+async function blibImportFiles(files, label) {
+    const code = 'IM:' + blibKey(label).slice(0, 24) + '-' + Date.now().toString(36);
+    const ent = { code, label, short: label.replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 6).toUpperCase() || 'IMP', group: 'Imported', src: 'import' };
+    const count = await blibSaveParsed(ent, await blibParseFiles(files), null);
+    BLIB.push(ent); blibSaveCustom();
+    const list = blibEnabled(); list.push(code); blibSaveEnabled(list);
+    return { ent, count };
+}
+function initBibleImport() {
+    const btn = document.getElementById('blibImportBtn'), nameIn = document.getElementById('blibImportName'); if (!btn || !nameIn) return;
+    btn.addEventListener('click', () => {
+        const label = nameIn.value.trim();
+        if (!label) { blibNote('Type a name for this Bible first (for example: My Yoruba Bible).', true); nameIn.focus(); return; }
+        const inp = document.createElement('input'); inp.type = 'file'; inp.multiple = true; inp.accept = '.zip,.json,.txt,.csv,.tsv,.xml,.usfm,.sfm,.vpl';
+        inp.addEventListener('change', async () => {
+            const files = [...(inp.files || [])]; if (!files.length) return;
+            btn.disabled = true; blibNote('Reading file…');
+            try {
+                const r = await blibImportFiles(files, label);
+                nameIn.value = ''; blibRebuildDropdown(); blibRenderList();
+                blibNote(`${r.ent.label} imported (${r.count.toLocaleString()} verses). It is now in the version list under “Imported”.`);
+            } catch (err) { blibNote(err.message || String(err), true); }
+            btn.disabled = false;
+        });
+        inp.click();
+    });
+}
+initBibleImport();
+
+
+// ---- Voice accent (opt-in; default stays en-US so nothing changes unless you pick another) ----
+(function initVoiceAccent() {
+    const sel = document.getElementById('voiceAccentSelect'); if (!sel) return;
+    try { sel.value = localStorage.getItem('ebpVoiceLang') || 'en-US'; } catch (e) {}
+    if (!sel.value) sel.value = 'en-US';
+    sel.addEventListener('change', () => {
+        try { localStorage.setItem('ebpVoiceLang', sel.value); } catch (e) {}
+        const n = document.getElementById('voiceAccentNote'); if (n) n.textContent = 'Saved. It applies the next time you turn Live Voice on.';
+    });
+})();
