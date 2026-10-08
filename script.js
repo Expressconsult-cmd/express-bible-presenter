@@ -4623,7 +4623,7 @@ async function blibIngestZip(ent, buf, onProgress) {
 }
 async function blibSaveParsed(ent, parsed, onProgress) {
     const verses = parsed.verses || [];
-    if (verses.length < 1000) throw new Error('That file did not look like a full Bible, so it was not saved.' + (parsed.hint ? ' (First line read: "' + parsed.hint + '")' : ''));
+    if (verses.length < 1000) throw new Error('That file did not look like a full Bible, so it was not saved.' + (parsed.hint ? ' (First lines read: "' + parsed.hint + '")' : ''));
     await blibDbPut({ code: ent.code, verses, names: parsed.names || null, savedAt: Date.now() });
     blibMem.delete(ent.code); blibNames.delete(ent.code);
     if (onProgress) onProgress(100);
@@ -4784,16 +4784,19 @@ function blibBookIdx(x) {
         for (let i = 1; i <= 66; i++) { add(cleanBookNames[i], i); add(BLIB_BOOKS[i - 1], i); add(BLIB_OSIS[i - 1], i); add(String(i), i); }
         Object.entries(BLIB_ALIASES).forEach(([k, v]) => add(k, BLIB_BOOKS.indexOf(v) + 1));
         add('psalm', 19); add('songofsongs', 22); add('canticles', 22); add('revelations', 66); add('apocalypse', 66);
+        const ab = 'Gn Ge Gen|Ex Exo Exod|Lv Le Lev|Nm Nu Num|Dt De Deu Deut|Jos Josh|Jdg Jg Judg Jud|Ru Rut|1Sa 1Sm 1Sam|2Sa 2Sm 2Sam|1Ki 1Kg 1Kgs|2Ki 2Kg 2Kgs|1Ch 1Chr|2Ch 2Chr|Ezr|Ne Neh|Es Est Esth|Jb Job|Ps Psa Pss Psm|Pr Pro Prv Prov|Ec Ecc Eccl Qoh|So Sg Song SS SOS|Is Isa|Je Jer|La Lam|Eze Ezk Ezek|Da Dn Dan|Ho Hos|Joe Jl|Am Amo|Ob Oba Obad|Jon Jnh|Mi Mic|Na Nah|Hab Hb|Zep Zph Zeph|Hag Hg|Zec Zch Zech|Mal Ml|Mt Mat Matt|Mk Mr Mar Mrk|Lk Lu Luk|Jn Joh|Ac Act|Ro Rom|1Co 1Cor|2Co 2Cor|Ga Gal|Eph Ep|Php Phi Phil Pp|Col|1Th 1Thes 1Thess|2Th 2Thes 2Thess|1Ti 1Tim|2Ti 2Tim|Tit Ti|Phm Phlm Pm|He Heb|Jas Jam Jm|1Pe 1Pet|2Pe 2Pet|1Jn 1Jo 1Joh|2Jn 2Jo 2Joh|3Jn 3Jo 3Joh|Jude Jd|Re Rev Rv'.split('|');
+        ab.forEach((grp, i) => grp.split(' ').forEach(k => add(k, i + 1)));
     }
     const k = blibKey(x);
     if (blibNameMap.has(k)) return blibNameMap.get(k);
     if (k.length >= 3) { let hit = 0, n = 0; blibNameMap.forEach((i, key) => { if (key.length > 2 && key.startsWith(k) && !/^\d+$/.test(key) && hit !== i) { hit = i; n++; } }); if (n === 1) return hit; }
     return 0;
 }
+const blibHint = t => String(t).replace(/^\uFEFF/, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(0, 3).map(l => l.slice(0, 60)).join(' ⏎ ');
 const blibClean = t => String(t == null ? '' : t).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
 
 function blibParseVerseLines(text) {
-    const verses = [], re = /^\s*(.+?)\s+(\d+):(\d+)[\s|]+(.+?)\s*$/;
+    const verses = [], re = /^\s*\[?(.+?)\s+(\d+)[:.](\d+)\]?[\s|:-]+(.+?)\s*$/;
     for (const line of text.split(/\r?\n/)) {
         const m = re.exec(line); if (!m) continue;
         const bi = blibBookIdx(m[1]); const t = blibClean(m[4]);
@@ -4802,31 +4805,39 @@ function blibParseVerseLines(text) {
     return verses;
 }
 function blibParseCsv(text) {
-    const first = text.split(/\r?\n/, 1)[0] || '';
-    const delim = first.includes('\t') ? '\t' : (first.split(';').length > first.split(',').length ? ';' : ',');
+    const probe = text.split(/\r?\n/).filter(l => l.trim()).slice(0, 12);
+    const count = (l, d) => l.split(d).length - 1;
+    let delim = ',', bestScore = -1;
+    for (const d of [',', '\t', ';', '|']) { const sc = probe.filter(l => count(l, d) >= 3).length; if (sc > bestScore) { bestScore = sc; delim = d; } }
     const rows = []; let row = [], cur = '', q = false;
     for (let i = 0; i < text.length; i++) {
         const ch = text[i];
         if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
-        else if (ch === '"') q = true;
+        else if (ch === '"' && cur === '') q = true;
         else if (ch === delim) { row.push(cur); cur = ''; }
         else if (ch === '\n') { row.push(cur.replace(/\r$/, '')); rows.push(row); row = []; cur = ''; }
         else cur += ch;
     }
     if (cur || row.length) { row.push(cur.replace(/\r$/, '')); rows.push(row); }
-    if (!rows.length) return [];
-    let bi = 0, ci = 1, vi = 2, ti = 3, start = 0;
-    const head = rows[0].map(h => blibKey(h));
-    if (head.some(h => h === 'chapter' || h === 'verse' || h === 'text' || h === 'book')) {
+    const data = rows.filter(r => r.length >= 4);
+    if (!data.length) return [];
+    let bi = -1, ci = -1, vi = -1, ti = -1, start = 0;
+    const head = data[0].map(h => blibKey(h));
+    if (head.some(h => h === 'chapter' || h === 'verse' || h === 'text' || h === 'book' || h === 'bookname')) {
         start = 1;
-        const f = (...names) => head.findIndex(h => names.includes(h));
-        bi = f('book', 'bookname', 'bookid', 'b'); ci = f('chapter', 'chapterid', 'c'); vi = f('verse', 'verseid', 'v'); ti = f('text', 'verse text', 'versetext', 'content', 't');
+        const f = (...n) => head.findIndex(h => n.includes(h));
+        bi = f('book', 'bookname', 'bookid', 'booknumber', 'b'); ci = f('chapter', 'chapterid', 'c'); vi = f('verse', 'verseid', 'v'); ti = f('text', 'versetext', 'content', 't', 'scripture');
         if (bi < 0 || ci < 0 || vi < 0 || ti < 0) return [];
     }
     const out = [];
-    for (let r = start; r < rows.length; r++) {
-        const x = rows[r]; const b = blibBookIdx(/^\d+$/.test(x[bi] || '') ? +x[bi] : x[bi]); const t = blibClean(x[ti]);
-        if (b && +x[ci] > 0 && +x[vi] > 0 && t) out.push([b, +x[ci], +x[vi], t]);
+    for (let r = start; r < data.length; r++) {
+        const x = data[r]; let b = bi, c = ci, v = vi, t = ti;
+        if (b < 0) {   // no header: find "book, chapter, verse, text…" anywhere in the row
+            for (let k = 0; k + 3 < x.length; k++) { if (/^\d+$/.test(x[k + 1].trim()) && /^\d+$/.test(x[k + 2].trim()) && blibBookIdx(/^\d+$/.test(x[k].trim()) ? +x[k] : x[k])) { b = k; c = k + 1; v = k + 2; t = k + 3; break; } }
+            if (b < 0) continue;
+        }
+        const bk = blibBookIdx(/^\d+$/.test((x[b] || '').trim()) ? +x[b] : x[b]); const tx = blibClean(t === ti ? x[t] : x.slice(t).join(delim));
+        if (bk && +x[c] > 0 && +x[v] > 0 && tx) out.push([bk, +x[c], +x[v], tx]);
     }
     return out;
 }
@@ -4911,7 +4922,7 @@ function blibSniffAndParse(text, nameHint) {
     else if (/^[\[{]/.test(head) || /^json$/i.test(ext)) v = blibParseJson(t);
     else if (/\\id\s+[A-Z0-9]{3}/.test(t.slice(0, 2000)) || /^(usfm|sfm|ptx)$/i.test(ext)) v = blibParseUsfm(t, names);
     if (!v.length) { v = blibParseVerseLines(t); if (v.length < 100) { const c = blibParseCsv(t); if (c.length > v.length) v = c; } }
-    return { verses: v, names: Object.keys(names).length ? names : null, hint: t.trim().split(/\r?\n/)[0].slice(0, 80) };
+    return { verses: v, names: Object.keys(names).length ? names : null, hint: blibHint(t) };
 }
 async function blibParseZip(buf) {
     const zip = await blibUnzip(buf);
@@ -4929,7 +4940,7 @@ async function blibParseZip(buf) {
     let best = { verses: [], hint: '' };
     for (const f of cands) {
         const text = dec.decode(await zip.read(f));
-        let verses = blibParseVpl(text), res = { verses, hint: text.trim().split(/\r?\n/)[0].slice(0, 80) };
+        let verses = blibParseVpl(text), res = { verses, hint: blibHint(text) };
         if (verses.length < 1000) res = blibSniffAndParse(text, f.name);
         if (res.verses.length >= 1000) return res;
         if (res.verses.length > best.verses.length || !best.hint) best = res;
