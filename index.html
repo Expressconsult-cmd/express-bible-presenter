@@ -18,7 +18,7 @@
     <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <!-- ZIP READING: PowerPoint (.pptx) files are ZIP archives internally — used to pull out slide text/images -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <link rel="stylesheet" href="styles.css?v=4">
+    <link rel="stylesheet" href="styles.css?v=5">
     <!-- SIGN-IN: Firebase passwordless magic-link authentication (see auth.js) -->
     <script type="module" src="auth.js"></script>
 </head>
@@ -608,6 +608,7 @@
 
             <!-- CENTRE: Scene on top, Scripture Matches / suggestions underneath -->
             <div class="ws-center">
+            <div id="outputsBar" class="outputs-bar" style="display:none;"></div>
             <section class="screen-column live-column single-scene-column">
                 <div class="deck-label live-label">Scene (Single Click / Double Click / Enter)</div>
                 <div class="canvas-container">
@@ -808,6 +809,10 @@
                 <div class="integration-card">
                     <h4>Multi-Screen Outputs (Stage Screen, Stage Monitor, etc.)</h4>
                     <p>Send different content to different physical screens at the same time — e.g. your Stage Screen shows the Live scripture while a separate Stage Monitor shows the upcoming Preview slide, both updating independently. Each row below opens its own independent window you can drag onto any monitor (HDMI, wireless-extended display, or captured by NDI Screen Capture).</p>
+                    <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.6rem;">
+                        <button id="outputsBarToggleBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem;">Outputs bar on dashboard: ON</button>
+                        <span style="font-size:0.72rem; color:var(--text-muted);">Turn OFF to remove the Outputs bar from the dashboard (your outputs stay saved here). Turn ON to show it again.</span>
+                    </div>
                     <div id="outputSlotsList" style="display:flex; flex-direction:column; gap:0.5rem;"></div>
                     <button id="addOutputSlotBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem; background:#166534; border-color:#15803d; margin-top:0.5rem; align-self:flex-start;">+ Add Output</button>
                     <div id="outputScreenPicker" style="margin-top:0.6rem;"></div>
@@ -873,6 +878,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=17"></script>
+    <script src="script.js?v=18"></script>
 </body>
 </html>
