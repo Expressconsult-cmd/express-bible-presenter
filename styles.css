@@ -1310,3 +1310,22 @@
 .verse-row.active .verse-split-btn { background: rgba(255,255,255,0.18); color: #ffffff; border-color: rgba(255,255,255,0.7); }
 .verse-row.active .verse-split-btn:hover { background: #ffffff; color: #0284c7; }
 .verse-row.active .verse-split-count { color: #ffffff; }
+
+
+/* OUTPUTS BAR (dashboard) */
+.outputs-bar { position: relative; z-index: 20; display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; flex: 0 0 auto; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--bg-accent); background: var(--bg-panel); }
+.outputs-bar-title { font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); margin-right: 0.2rem; }
+.outputs-bar-empty { font-size: 0.72rem; color: var(--text-muted); }
+.outputs-chip { position: relative; display: flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.3rem 0.15rem 0.45rem; border: 1px solid var(--bg-accent); border-radius: 8px; background: var(--bg-main); }
+.outputs-chip-name { background: none; border: none; color: var(--text-main, inherit); font-family: inherit; font-size: 0.74rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.1rem; white-space: nowrap; }
+.outputs-dot { width: 9px; height: 9px; border-radius: 50%; background: #475569; display: inline-block; }
+.outputs-dot.on { background: #22c55e; }
+.outputs-chip-tag { border: none; border-radius: 5px; padding: 0.22rem 0.5rem; font-size: 0.68rem; font-weight: 700; color: #fff; cursor: pointer; white-space: nowrap; background: #0369a1; }
+.outputs-chip-tag.mode-congregation { background: #166534; }
+.outputs-chip-tag.mode-timer, .outputs-chip-tag.mode-timerverse { background: #7c3aed; }
+.outputs-chip-tag.mode-preview { background: #b45309; }
+.outputs-menu { position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; z-index: 50; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid var(--accent-primary); border-radius: 8px; background: var(--bg-panel); box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+.outputs-menu-item { text-align: left; background: none; border: none; color: var(--text-main, inherit); font-family: inherit; font-size: 0.74rem; padding: 0.4rem 0.5rem; border-radius: 5px; cursor: pointer; }
+.outputs-menu-item:hover { background: rgba(56,189,248,0.12); }
+.outputs-menu-item.sel { background: #1d4ed8; color: #fff; font-weight: 700; }
+.outputs-gear { margin-left: auto; background: none; border: 1px solid var(--bg-accent); color: var(--text-muted); border-radius: 6px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.8rem; }
