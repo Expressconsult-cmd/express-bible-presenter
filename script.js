@@ -288,6 +288,7 @@
             renderHotkeysList();
             renderOutputSlotsList();
             initOutputsBar();
+            try { initLowerThirdTemplates(); } catch (e) { console.warn(e); }
             document.getElementById('addOutputSlotBtn').addEventListener('click', () => {
                 const newSlot = { id: 'slot_' + Date.now(), name: 'New Output', sourceMode: 'live', windowRef: null };
                 outputSlots.push(newSlot);
@@ -1854,7 +1855,7 @@ async function initMediaEngine() {
             const existingVideoEl = canvasElement.querySelector('.canvas-video-bg-node:not(.media-layer-node)');
             const existingMediaEl = canvasElement.querySelector('video.media-layer-node');
 
-            canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'} ${stateObject.bgTransparent ? 'bg-is-transparent' : ''}`;
+            canvasElement.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'} ${lttBgT(stateObject) ? 'bg-is-transparent' : ''}`;
             const contentSig = computeSceneContentSig(stateObject);
             const contentChanged = canvasElement.dataset.contentSig !== contentSig;
             canvasElement.dataset.contentSig = contentSig;
@@ -1864,12 +1865,12 @@ async function initMediaEngine() {
 
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
-            if (!stateObject.bgTransparent && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
+            if (!lttBgT(stateObject) && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
                 canvasElement.style.backgroundColor = 'transparent';
                 canvasElement.style.backgroundImage = buildPresetBackgroundCss(stateObject.bgPreset, bgOpacity);
             } else {
                 canvasElement.style.backgroundImage = 'none';
-                canvasElement.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
+                canvasElement.style.backgroundColor = lttBgT(stateObject) ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
             }
 
             let contentNode = stateObject.text || '';
@@ -1909,7 +1910,7 @@ async function initMediaEngine() {
             const dynamicColorVar = `--dynamic-text-color: ${stateObject.textColor || '#38bdf8'};`;
 
             // Text backing panel (readability box behind text over busy backgrounds)
-            const backingPanelClass = (stateObject.textBackingPanel && !stateObject.bgTransparent) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
+            const backingPanelClass = (stateObject.textBackingPanel && !lttBgT(stateObject)) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
 
             // Lower third name tag (e.g. "Ministering: Pastor Ade")
             const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
@@ -1943,6 +1944,7 @@ async function initMediaEngine() {
             `;
 
             restoreAnnouncementBanner(canvasElement, reusableLayers, announcementHtml.trim());
+            try { lttApply(canvasElement, stateObject, logoBlobContext, transitionClass); } catch (e) { console.warn('Lower third template:', e); }
 
             // Text stays at the selected size and wraps; this only steps in if wrapped text would actually overflow the frame
             autoFitVerseText(canvasElement);
@@ -3471,14 +3473,14 @@ function songTabIsActive() {
             const customFontStyle = isTextItalic ? 'italic' : 'normal';
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
 
-            container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'} ${stateObject.bgTransparent ? 'bg-is-transparent' : ''}`;
+            container.className = `display-canvas ${stateObject.layout} size-${stateObject.fontSize} lt-pos-${stateObject.lowerThirdPosition || 'bottom'} ${lttBgT(stateObject) ? 'bg-is-transparent' : ''}`;
             container.style.fontFamily = customFontFamily;
-            if (!stateObject.bgTransparent && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
+            if (!lttBgT(stateObject) && stateObject.bgPreset && DEFAULT_BG_PRESETS[stateObject.bgPreset]) {
                 container.style.backgroundColor = 'transparent';
                 container.style.backgroundImage = buildPresetBackgroundCss(stateObject.bgPreset, bgOpacity);
             } else {
                 container.style.backgroundImage = 'none';
-                container.style.backgroundColor = stateObject.bgTransparent ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
+                container.style.backgroundColor = lttBgT(stateObject) ? 'transparent' : hexToRgbaWithOpacity(stateObject.bgColor, bgOpacity);
             }
             const outContentSig = computeSceneContentSig(stateObject);
             const outContentChanged = container.dataset.contentSig !== outContentSig;
@@ -3503,7 +3505,7 @@ function songTabIsActive() {
             const autoFontScale = 1;
             const gradientGlowClass = stateObject.gradientGlowText ? 'gradient-glow-active' : '';
             const dynamicColorVar = `--dynamic-text-color: ${stateObject.textColor || '#38bdf8'};`;
-            const backingPanelClass = (stateObject.textBackingPanel && !stateObject.bgTransparent) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
+            const backingPanelClass = (stateObject.textBackingPanel && !lttBgT(stateObject)) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
 
             const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
             const nameBarHtml = `
@@ -3535,6 +3537,7 @@ function songTabIsActive() {
             `;
 
             restoreAnnouncementBanner(container, outReusableLayers, announcementHtml.trim());
+            try { lttApply(container, stateObject, cachedLogoDataUrl, outTransitionClass); } catch (e) { console.warn('Lower third template:', e); }
 
             autoFitVerseText(container);
 
@@ -3916,6 +3919,7 @@ function songTabIsActive() {
                         : (importedData.savedPreviewState || importedData.savedLiveState || previewState);
                     Object.assign(previewState, restoredState);
                     liveState = previewState;
+                    try { lttSyncUI(); } catch (e) {}
                     document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('lowerThirdPositionSelector').value = previewState.lowerThirdPosition || 'bottom'; updateLowerThirdControlsVisibility(); document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('bgPresetSelector').value = previewState.bgPreset || ""; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || ""; document.getElementById('fontStyleOverrideSelector').value = previewState.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"; document.getElementById('textShadowSelector').value = previewState.textShadowStyle != null ? previewState.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)"; document.getElementById('fontBoldToggleBtn').classList.toggle('toggle-active', !!previewState.fontBold); document.getElementById('fontItalicToggleBtn').classList.toggle('toggle-active', !!previewState.fontItalic);
                     fetchCurrentChapterFromAPI(); renderPreview();
                 } catch (err) { console.error("Import failure: ", err); }
@@ -5176,3 +5180,288 @@ initBibleImport();
         const n = document.getElementById('voiceAccentNote'); if (n) n.textContent = 'Saved. It applies the next time you turn Live Voice on.';
     });
 })();
+
+
+// ===================== LOWER THIRD TEMPLATES (verse + name tag) =====================
+// Ready-made lower-third looks. Every part is a CSS shape (not a picture), so every colour, the gradient and the
+// font can be changed. When a template is active in the Lower Third layout the canvas background becomes
+// transparent, so the bar overlays cleanly on camera / video (OBS, projector, extra screens).
+var LTT_SAMPLE_V = 'For God so loved the world, that he gave his only begotten Son…';
+var LTT_SAMPLE_R = 'John 3:16 · KJV';
+var LTT_LOGO_PH = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><text x="60" y="70" font-family="Arial" font-weight="900" font-size="30" fill="#ffffff" text-anchor="middle">LOGO</text></svg>');
+var LTT_ORDER = ['broadcast', 'logo', 'capsule', 'slant', 'wave', 'glass', 'outline', 'church'];
+var LTT_COLOR_LABELS = { c1: 'Main bar colour', c1b: 'Gradient end colour', c2: 'Accent / tab colour', c3: 'Verse text colour', c4: 'Reference strip colour', c5: 'Reference text colour', c6: 'Border / outline colour' };
+var LTT_BASE = { c1: '#f5b800', c1b: '#e09a00', c2: '#e8a400', c3: '#ffffff', c4: '#ffffff', c5: '#222222', c6: '#ffffff', grad: true, dir: '180deg', opacity: 100, showRef: true, showLogo: true, font: '' };
+function lttImg(u) { return u ? `<img src="${u}" alt="">` : ''; }
+var LTT = {
+    broadcast: { name: 'Broadcast Bar', nameAcc: 'c2', uses: ['c1', 'c1b', 'c2', 'c3', 'c4', 'c5', 'c6'], d: {},
+        html: c => `<div class="q-tab"></div><div class="q-main"><div class="q-bar"><div class="ltt-verse">${c.v}</div></div>${c.r ? `<div class="q-strip"><div class="ltt-ref">${c.r}</div></div>` : ''}</div>` },
+    logo: { name: 'Logo Block', nameAcc: 'c2', uses: ['c1', 'c1b', 'c2', 'c3', 'c4', 'c5', 'c6'], d: { c1: '#ffd000', c1b: '#f0b800', c2: '#1c1c1c', c3: '#1c1c1c', c4: '#1c1c1c', c5: '#ffffff', c6: '#ffffff', grad: false },
+        html: c => `${c.logo ? `<div class="q-logo">${lttImg(c.logo)}</div>` : ''}<div class="q-frame"><div class="q-bar"><div class="ltt-verse">${c.v}</div></div></div>${c.r ? `<div class="q-sub"><div class="ltt-ref">${c.r}</div></div>` : ''}` },
+    capsule: { name: 'Capsule', nameAcc: 'c4', uses: ['c1', 'c1b', 'c3', 'c4', 'c5', 'c6'], d: { c1: '#f5a623', c1b: '#e8901a', c3: '#ffffff', c4: '#f5a623', c5: '#ffffff', c6: '#5d7a99' },
+        html: c => `<div class="q-pill"><div class="ltt-verse">${c.v}</div></div>${c.r ? `<div class="q-pill2"><div class="ltt-ref">${c.r}</div></div>` : ''}` },
+    slant: { name: 'Slant', nameAcc: 'c2', uses: ['c1', 'c1b', 'c2', 'c3', 'c4', 'c5'], d: { c1: '#ffffff', c1b: '#d9deea', c2: '#12409a', c3: '#12409a', c4: '#12409a', c5: '#ffffff' },
+        html: c => `<div class="q-a"><div class="q-blk">${c.logo ? lttImg(c.logo) : ''}</div><div class="q-bar"><div class="ltt-verse">${c.v}</div></div></div>${c.r ? `<div class="q-b"><div class="q-blk2"></div><div class="q-bar2"><div class="ltt-ref">${c.r}</div></div></div>` : ''}` },
+    wave: { name: 'Wave Gradient', nameAcc: 'c1b', uses: ['c1', 'c1b', 'c3', 'c4', 'c5'], d: { c1: '#f26a21', c1b: '#f9a825', c3: '#555555', c4: '#ffffff', c5: '#f26a21', dir: '90deg' },
+        html: c => `<div class="q-capl"></div><div class="q-txt"><div class="ltt-verse">${c.v}</div>${c.r ? `<div class="ltt-ref">${c.r}</div>` : ''}</div><div class="q-capr">${lttImg(c.logo)}</div>` },
+    glass: { name: 'Clean Glass', nameAcc: 'c2', uses: ['c1', 'c2', 'c3', 'c5'], d: { c1: '#060c18', c2: '#38bdf8', c3: '#ffffff', c5: '#38bdf8', opacity: 78, grad: false },
+        html: c => `<div class="q-glass"><div class="ltt-verse">${c.v}</div>${c.r ? `<div class="ltt-ref">${c.r}</div>` : ''}</div>` },
+    outline: { name: 'Outline Frame', nameAcc: 'c4', uses: ['c1', 'c3', 'c4', 'c5', 'c6'], d: { c1: '#000000', c1b: '#000000', c3: '#ffffff', c4: '#ffffff', c5: '#111111', c6: '#ffffff', opacity: 35, grad: false },
+        html: c => `<div class="q-wrap"><div class="q-box"><div class="ltt-verse">${c.v}</div></div>${c.r ? `<div class="q-tab2"><div class="ltt-ref">${c.r}</div></div>` : ''}</div>` },
+    church: { name: 'Classic Gold', nameAcc: 'c2', uses: ['c1', 'c1b', 'c2', 'c3', 'c5', 'c6'], d: { c1: '#1a1f33', c1b: '#0e1220', c2: '#d4af37', c3: '#ffffff', c5: '#d4af37', c6: '#d4af37' },
+        html: c => `<div class="q-panel"><div class="q-in"><div class="ltt-verse">${c.v}</div>${c.r ? `<div class="q-rule"></div><div class="ltt-ref">${c.r}</div>` : ''}</div></div>` }
+};
+LTT_ORDER.forEach(id => { LTT[id].d = Object.assign({}, LTT_BASE, LTT[id].d); });
+
+var LTT_CSS = `
+.ltt{position:absolute;left:5%;right:5%;bottom:7%;z-index:5;box-sizing:border-box;color:var(--t)}
+.lt-pos-top > .ltt{top:6%;bottom:auto}
+.lt-pos-center > .ltt{top:50%;bottom:auto;transform:translateY(-50%)}
+.ltt *{box-sizing:border-box}
+.ltt-verse{font-weight:800;line-height:1.25;font-size:calc(var(--canvas-font-size,4.8cqw)*.78);color:var(--t);word-wrap:break-word;overflow-wrap:break-word;white-space:pre-wrap}
+.ltt-ref{font-weight:800;letter-spacing:.05em;text-transform:uppercase;font-size:calc(var(--canvas-font-size,4.8cqw)*.46);color:var(--rt)}
+.tpl-broadcast{display:flex;gap:.8cqw}
+.tpl-broadcast .q-tab{width:2.4cqw;flex:none;background:var(--a);border:1px solid var(--b)}
+.tpl-broadcast .q-main{flex:1;min-width:0}
+.tpl-broadcast .q-bar{background:var(--f);padding:1.5cqw 2.6cqw;border:1px solid var(--b);box-shadow:0 .4cqw 1cqw rgba(0,0,0,.45)}
+.tpl-broadcast .q-strip{width:78%;background:var(--s);padding:.55cqw 2.6cqw;box-shadow:0 .3cqw .8cqw rgba(0,0,0,.35)}
+.tpl-logo{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto}
+.tpl-logo .q-logo{grid-row:1;grid-column:1;width:13cqw;min-height:9cqw;background:var(--a);display:flex;align-items:center;justify-content:center;padding:1.2cqw;z-index:2}
+.tpl-logo .q-logo img{max-width:100%;max-height:100%;object-fit:contain}
+.tpl-logo .q-frame{grid-row:1;grid-column:2;position:relative;padding-top:1.3cqw}
+.tpl-logo .q-frame:before{content:'';position:absolute;inset:0;border:.25cqw solid var(--b)}
+.tpl-logo .q-bar{position:relative;background:var(--f);margin:.8cqw -1.4cqw 0 -.9cqw;padding:1.4cqw 2.6cqw;text-align:center;box-shadow:0 .4cqw 1cqw rgba(0,0,0,.35)}
+.tpl-logo .q-sub{grid-row:2;grid-column:2;width:62%;margin:0 auto;background:var(--s);padding:.55cqw 1cqw;text-align:center;position:relative}
+.tpl-capsule .q-pill{background:var(--f);border:.5cqw solid var(--b);border-radius:6cqw;padding:1.5cqw 5cqw;text-align:center;box-shadow:0 .5cqw 1.2cqw rgba(0,0,0,.5),inset 0 .25cqw .5cqw rgba(255,255,255,.35)}
+.tpl-capsule .q-pill2{width:max-content;min-width:32%;white-space:nowrap;margin:1cqw auto 0;background:var(--s);border:.5cqw solid var(--b);border-radius:3cqw;padding:.35cqw 1cqw;text-align:center;box-shadow:0 .3cqw .8cqw rgba(0,0,0,.4)}
+.tpl-slant .q-a{display:flex;transform:skewX(-18deg);margin-bottom:1cqw;transform-origin:left bottom}
+.tpl-slant .q-blk{width:10cqw;flex:none;background:var(--a);margin-right:1cqw;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.tpl-slant .q-blk img{max-width:80%;max-height:80%;transform:skewX(18deg);object-fit:contain}
+.tpl-slant .q-bar{flex:1;background:var(--f);border-bottom:.45cqw solid var(--a);padding:1.4cqw 3cqw;box-shadow:0 .4cqw .8cqw rgba(0,0,0,.35)}
+.tpl-slant .q-bar > *,.tpl-slant .q-bar2 > *{transform:skewX(18deg);display:block}
+.tpl-slant .q-b{display:flex;transform:skewX(-18deg);width:64%;transform-origin:left bottom}
+.tpl-slant .q-blk2{width:5cqw;flex:none;background:var(--f);margin-right:1cqw}
+.tpl-slant .q-bar2{flex:1;background:var(--s);padding:.5cqw 3cqw}
+.tpl-wave{display:grid;grid-template-columns:20cqw 1fr 24cqw;align-items:stretch;background:var(--s);box-shadow:0 .5cqw 1.2cqw rgba(0,0,0,.5);overflow:hidden;left:3%;right:3%;min-height:14cqw}
+.tpl-wave .q-capl{background:var(--f);position:relative}
+.tpl-wave .q-capr{background:var(--fr);position:relative;display:flex;align-items:center;justify-content:center;padding:1.5cqw 1.5cqw 1.5cqw 5cqw}
+.tpl-wave .q-capr img{max-width:100%;max-height:11cqw;object-fit:contain;position:relative;z-index:2}
+.tpl-wave .q-capl:after{content:'';position:absolute;top:0;bottom:0;right:-2cqw;width:10cqw;background:radial-gradient(circle at 80% 20%,var(--s) 3.2cqw,transparent 3.4cqw),radial-gradient(circle at 80% 58%,var(--s) 4.2cqw,transparent 4.4cqw),radial-gradient(circle at 80% 92%,var(--s) 3cqw,transparent 3.2cqw)}
+.tpl-wave .q-capr:before{content:'';position:absolute;top:0;bottom:0;left:-2cqw;width:10cqw;z-index:1;background:radial-gradient(circle at 20% 22%,var(--s) 3.2cqw,transparent 3.4cqw),radial-gradient(circle at 20% 62%,var(--s) 4.2cqw,transparent 4.4cqw),radial-gradient(circle at 20% 94%,var(--s) 3cqw,transparent 3.2cqw)}
+.tpl-wave .q-txt{display:flex;flex-direction:column;justify-content:center;text-align:center;padding:1.4cqw 2cqw;position:relative;z-index:2}
+.tpl-wave .ltt-verse{font-size:calc(var(--canvas-font-size,4.8cqw)*.7)}
+.tpl-glass .q-glass{background:var(--f);border-left:1.1cqw solid var(--a);padding:1.6cqw 3cqw;border-radius:0 1cqw 1cqw 0;box-shadow:0 .6cqw 1.6cqw rgba(0,0,0,.55);backdrop-filter:blur(4px)}
+.tpl-glass .ltt-ref{margin-top:.6cqw}
+.tpl-outline .q-wrap{position:relative;padding-bottom:1.6cqw}
+.tpl-outline .q-box{background:var(--f);border:.3cqw solid var(--b);padding:1.6cqw 3cqw;text-align:center}
+.tpl-outline .q-tab2{position:absolute;right:3cqw;bottom:0;background:var(--s);padding:.4cqw 1.6cqw;box-shadow:0 .3cqw .8cqw rgba(0,0,0,.4)}
+.tpl-church .q-panel{background:var(--f);border:.45cqw solid var(--b);padding:.6cqw;box-shadow:0 .6cqw 1.6cqw rgba(0,0,0,.55)}
+.tpl-church .q-in{border:.12cqw solid var(--a);padding:1.4cqw 3cqw;text-align:center}
+.tpl-church .q-rule{width:12cqw;height:.2cqw;background:var(--a);margin:.8cqw auto .6cqw}
+/* matching name tag ("Ministering: Pastor Ade") */
+.canvas-namebar-node.ltn{background:none;border-radius:0;overflow:visible;box-shadow:0 .5cqw 1.4cqw rgba(0,0,0,.45);font-family:var(--n-font,inherit)}
+.canvas-namebar-node.ltn .namebar-role{background:var(--n-acc);color:var(--n-rt)}
+.canvas-namebar-node.ltn .namebar-name{background:var(--n-fill);color:var(--n-nt) !important}
+.ltn-broadcast .namebar-role,.ltn-broadcast .namebar-name,.ltn-logo .namebar-role,.ltn-logo .namebar-name,.ltn-outline .namebar-role,.ltn-outline .namebar-name{border:1px solid var(--n-b)}
+.ltn-capsule .namebar-role{border-radius:999px 0 0 999px;border:.3cqw solid var(--n-b);border-right:0}
+.ltn-capsule .namebar-name{border-radius:0 999px 999px 0;border:.3cqw solid var(--n-b);border-left:0}
+.ltn-slant .namebar-role{clip-path:polygon(0 0,100% 0,88% 100%,0 100%);padding-right:1.2em}
+.ltn-slant .namebar-name{clip-path:polygon(6% 0,100% 0,100% 100%,0 100%);padding-left:1.3em;margin-left:-.6em}
+.ltn-wave .namebar-role{border-radius:.8cqw 0 0 .8cqw}.ltn-wave .namebar-name{border-radius:0 .8cqw .8cqw 0}
+.ltn-glass .namebar-role{border-radius:0}.ltn-glass .namebar-name{border-radius:0 .8cqw .8cqw 0}
+.ltn-church .namebar-role,.ltn-church .namebar-name{border:.3cqw solid var(--n-b)}
+.ltn-church .namebar-name{border-left:0}
+/* settings panel */
+#ltTemplateDropdown{left:auto;right:0;width:500px;max-width:92vw;z-index:80}
+.ltu-sec{font-size:.65rem;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin:.7rem 0 .35rem}
+.ltu-sec:first-child{margin-top:0}
+.ltu-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem}
+.ltu-thumb{cursor:pointer;border:2px solid var(--bg-accent);border-radius:7px;padding:3px;background:var(--bg-main);text-align:center;font-size:.62rem;color:var(--text-muted)}
+.ltu-thumb.sel{border-color:#38bdf8;color:#fff}
+.ltu-tc{position:relative;aspect-ratio:16/9;border-radius:4px;overflow:hidden;background:radial-gradient(ellipse at 30% 20%,#27406b,#0c1424 70%);container-type:size;--canvas-font-size:5.4cqw;margin-bottom:3px}
+.ltu-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin:.3rem 0;font-size:.74rem}
+.ltu-row input[type=color]{width:38px;height:24px;padding:0;border:1px solid var(--bg-accent);background:none}
+.ltu-row select,.ltu-row input[type=text]{padding:.3rem;font-size:.72rem;max-width:230px}
+.ltu-prev{max-width:300px;margin:0 auto;position:relative;aspect-ratio:16/9;border-radius:6px;overflow:hidden;background:radial-gradient(ellipse at 30% 20%,#27406b,#0c1424 70%);container-type:size;--canvas-font-size:4.6cqw;font-family:sans-serif}
+.ltu-mine{display:flex;flex-wrap:wrap;gap:.35rem}
+.ltu-chip{display:flex;align-items:center;gap:.3rem;border:1px solid var(--bg-accent);border-radius:6px;padding:.2rem .45rem;font-size:.7rem;cursor:pointer}
+.ltu-chip b{color:#f87171;cursor:pointer}
+`;
+
+function lttEnsureStyle(doc) {
+    try {
+        if (!doc || doc.getElementById('ltt-style')) return;
+        const st = doc.createElement('style'); st.id = 'ltt-style'; st.textContent = LTT_CSS;
+        (doc.head || doc.documentElement).appendChild(st);
+    } catch (e) {}
+}
+function lttActive(st) { return !!(st && st.ltTemplate && st.ltTemplate !== 'none' && LTT && LTT[st.ltTemplate]); }
+// A template in the Lower Third layout always renders with a transparent background so it overlays cleanly
+function lttBgT(st) { return !!(st && (st.bgTransparent || (st.layout === 'mode-lowerthird' && lttActive(st)))); }
+function lttStyleOf(st) { return Object.assign({}, LTT[st.ltTemplate].d, st.ltStyle || {}); }
+function lttLum(hex) {
+    const h = (hex || '#000000').replace('#', ''); const n = h.length === 3 ? h.split('').map(x => x + x).join('') : h;
+    const f = i => { const v = parseInt(n.substr(i, 2), 16) / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(0) + 0.7152 * f(2) + 0.0722 * f(4);
+}
+function lttRatio(a, b) { const x = lttLum(a), y = lttLum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+function lttAutoText(bg) { return lttLum(bg) > 0.45 ? '#111111' : '#ffffff'; }
+function lttFlipDir(d) { const m = { '180deg': '0deg', '90deg': '270deg', '135deg': '315deg' }; return m[d] || '0deg'; }
+function lttFill(s, rev) {
+    const a = hexToRgbaWithOpacity(s.c1, s.opacity), b = hexToRgbaWithOpacity(s.c1b, s.opacity);
+    if (!s.grad) return a;
+    return rev ? `linear-gradient(${s.dir},${b},${a})` : `linear-gradient(${s.dir},${a},${b})`;
+}
+function lttMarkup(id, style, text, ref, logo, extraClass, extraStyle) {
+    const T = LTT[id]; const s = Object.assign({}, T.d, style || {});
+    const vars = `--f:${lttFill(s, false)};--fr:${lttFill(s, true)};--a:${s.c2};--t:${s.c3};--s:${s.c4};--rt:${s.c5};--b:${s.c6};`;
+    const font = s.font ? `font-family:${s.font};` : '';
+    return `<div class="ltt tpl-${id} ${extraClass || ''}" style="${vars}${font}${extraStyle || ''}">${T.html({ v: text, r: (s.showRef && ref) ? ref : '', logo: (s.showLogo && logo) ? logo : '', s })}</div>`;
+}
+function lttNameVars(id, s) {
+    const T = LTT[id]; const acc = s[T.nameAcc] || s.c2;
+    const nameBg = s.c1;
+    const nt = lttRatio(s.c3, nameBg) >= 3 ? s.c3 : lttAutoText(nameBg);
+    return `--n-fill:${lttFill(s, false)};--n-acc:${acc};--n-rt:${lttAutoText(acc)};--n-nt:${nt};--n-b:${s.c6};${s.font ? `--n-font:${s.font};` : ''}`;
+}
+// Applies the active template to a freshly-built canvas (main preview, OBS, projector, extra output windows)
+function lttApply(canvas, st, logoUrl, transitionClass) {
+    if (!lttActive(st)) return;
+    lttEnsureStyle(canvas.ownerDocument);
+    const s = lttStyleOf(st);
+    const id = st.ltTemplate;
+    const hasVerse = st.layout === 'mode-lowerthird' && !!st.text && !(st.timerVisible && st.timerSolo) && !(st.displayMode === 'media' && st.mediaUrl);
+    if (hasVerse) {
+        canvas.querySelectorAll(':scope > .text-display-box-container, :scope > .ref-out').forEach(el => el.style.setProperty('display', 'none', 'important'));
+        const nx = st.textNudgeX || 0, ny = st.textNudgeY || 0;
+        const nudge = (nx || ny) ? `translate:${nx}cqw ${ny}cqw;` : '';
+        const refText = st.refVisible === false ? '' : (st.ref || '');
+        canvas.insertAdjacentHTML('afterbegin', lttMarkup(id, st.ltStyle, st.text, refText, logoUrl, transitionClass || '', nudge));
+        lttFit(canvas);
+    }
+    const nb = canvas.querySelector(':scope > .canvas-namebar-node');
+    if (nb) {
+        nb.classList.add('ltn', 'ltn-' + id);
+        lttNameVars(id, s).split(';').forEach(p => { const i = p.indexOf(':'); if (i > 0) nb.style.setProperty(p.slice(0, i), p.slice(i + 1)); });
+        if (hasVerse && (st.lowerThirdPosition || 'bottom') !== 'top') { nb.style.top = '5%'; nb.style.bottom = 'auto'; } // keep the name tag clear of the verse bar
+    }
+}
+function lttFit(canvas) {
+    const el = canvas.querySelector(':scope > .ltt'); const v = el && el.querySelector('.ltt-verse');
+    const h = canvas.clientHeight; if (!el || !v || !h) return;
+    const win = (canvas.ownerDocument && canvas.ownerDocument.defaultView) || window;
+    let px = parseFloat(win.getComputedStyle(v).fontSize), g = 0;
+    while (el.offsetHeight > h * 0.42 && px > 8 && g < 60) { px -= Math.max(1, px * 0.05); v.style.fontSize = px + 'px'; g++; }
+}
+
+// ---------- Settings panel ----------
+var lttCustom = {}, lttUser = [];
+function lttLoad(k, fb) { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fb : v; } catch (e) { return fb; } }
+function lttSave(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function lttCurrentStyle() { return previewState.ltTemplate && LTT[previewState.ltTemplate] ? lttStyleOf(previewState) : null; }
+function lttLogoForPreview() { return (typeof cachedLogoDataUrl === 'string' && cachedLogoDataUrl) ? cachedLogoDataUrl : LTT_LOGO_PH; }
+function lttSelect(id) {
+    previewState.ltTemplate = id;
+    previewState.ltStyle = id === 'none' ? {} : Object.assign({}, LTT[id].d, lttCustom[id] || {});
+    lttSave('ebpLtLast', id);
+    lttSyncUI(); renderPreview();
+}
+function lttSet(k, v) {
+    const id = previewState.ltTemplate; if (!LTT[id]) return;
+    previewState.ltStyle = Object.assign({}, previewState.ltStyle || {}, { [k]: v });
+    lttCustom[id] = Object.assign({}, previewState.ltStyle); lttSave('ebpLtCustom', lttCustom);
+    lttSyncUI(true); renderPreview();
+}
+function lttFontOptionsHtml() {
+    const src = document.getElementById('fontStyleOverrideSelector'); let html = '<option value="">Same as main text font</option>';
+    if (src) src.querySelectorAll('optgroup').forEach(g => { html += `<optgroup label="${g.label}">` + Array.from(g.children).map(o => `<option value="${o.value.replace(/"/g, '&quot;')}">${o.textContent}</option>`).join('') + '</optgroup>'; });
+    return html;
+}
+function lttSyncUI(light) {
+    const dd = document.getElementById('ltTemplateDropdown'); if (!dd || !dd.dataset.built) return;
+    const cur = previewState.ltTemplate && LTT[previewState.ltTemplate] ? previewState.ltTemplate : 'none';
+    const btn = document.getElementById('ltTemplateToggleBtn');
+    if (btn) btn.innerText = cur === 'none' ? 'LT STYLE ▾' : 'LT: ' + LTT[cur].name.toUpperCase() + ' ▾';
+    // thumbnails
+    const grid = document.getElementById('lttThumbs');
+    if (!light) {
+        grid.innerHTML = LTT_ORDER.map(id => `<div class="ltu-thumb ${cur === id ? 'sel' : ''}" data-id="${id}"><div class="ltu-tc">${lttMarkup(id, lttCustom[id], LTT_SAMPLE_V, LTT_SAMPLE_R, lttLogoForPreview())}</div>${LTT[id].name}</div>`).join('');
+        grid.querySelectorAll('.ltu-thumb').forEach(t => t.addEventListener('click', () => lttSelect(t.dataset.id)));
+        const mine = document.getElementById('lttMine');
+        mine.innerHTML = lttUser.length ? lttUser.map(u => `<span class="ltu-chip" data-u="${u.id}">${u.name.replace(/</g, '&lt;')} <b data-del="${u.id}" title="Delete">✕</b></span>`).join('') : '<span style="font-size:.7rem;color:var(--text-muted)">None saved yet</span>';
+        mine.querySelectorAll('.ltu-chip').forEach(c => c.addEventListener('click', (e) => {
+            if (e.target.dataset.del) { lttUser = lttUser.filter(u => u.id !== e.target.dataset.del); lttSave('ebpLtUser', lttUser); lttSyncUI(); return; }
+            const u = lttUser.find(x => x.id === c.dataset.u); if (!u || !LTT[u.base]) return;
+            previewState.ltTemplate = u.base; previewState.ltStyle = Object.assign({}, LTT[u.base].d, u.style); lttSave('ebpLtLast', u.base); lttSyncUI(); renderPreview();
+        }));
+    } else {
+        const t = grid.querySelector(`.ltu-thumb[data-id="${cur}"] .ltu-tc`);
+        if (t) t.innerHTML = lttMarkup(cur, previewState.ltStyle, LTT_SAMPLE_V, LTT_SAMPLE_R, lttLogoForPreview());
+    }
+    document.getElementById('lttNoneBtn').classList.toggle('toggle-active', cur === 'none');
+    const edit = document.getElementById('lttEditor'); edit.style.display = cur === 'none' ? 'none' : '';
+    if (cur === 'none') return;
+    const s = lttStyleOf(previewState), T = LTT[cur];
+    Object.keys(LTT_COLOR_LABELS).forEach(k => {
+        const row = document.getElementById('lttRow_' + k); const inp = document.getElementById('lttIn_' + k);
+        row.style.display = T.uses.includes(k) && (k !== 'c1b' || true) ? '' : 'none';
+        if (document.activeElement !== inp) inp.value = s[k];
+        if (k === 'c1b') inp.disabled = !s.grad;
+    });
+    document.getElementById('lttGradRow').style.display = T.uses.includes('c1b') ? '' : 'none';
+    document.getElementById('lttGrad').checked = !!s.grad;
+    document.getElementById('lttDir').value = s.dir; document.getElementById('lttDir').disabled = !s.grad;
+    document.getElementById('lttOpacity').value = s.opacity; document.getElementById('lttOpacityVal').innerText = s.opacity + '%';
+    document.getElementById('lttShowRef').checked = !!s.showRef;
+    document.getElementById('lttShowLogo').checked = !!s.showLogo;
+    document.getElementById('lttFont').value = s.font || '';
+    // live preview: verse bar + matching name tag
+    const logo = lttLogoForPreview();
+    document.getElementById('lttPrev').innerHTML = lttMarkup(cur, previewState.ltStyle, LTT_SAMPLE_V, LTT_SAMPLE_R, logo)
+        + `<div class="canvas-namebar-node namebar-visible ltn ltn-${cur}" style="${lttNameVars(cur, s)}top:6%;bottom:auto;left:4%"><div class="namebar-role">Ministering</div><div class="namebar-name">Pastor Ade</div></div>`;
+}
+function initLowerThirdTemplates() {
+    const dd = document.getElementById('ltTemplateDropdown'), btn = document.getElementById('ltTemplateToggleBtn');
+    if (!dd || !btn) return;
+    lttEnsureStyle(document);
+    lttCustom = lttLoad('ebpLtCustom', {}) || {}; lttUser = lttLoad('ebpLtUser', []) || [];
+    const last = lttLoad('ebpLtLast', 'none');
+    if (last && LTT[last]) { previewState.ltTemplate = last; previewState.ltStyle = Object.assign({}, LTT[last].d, lttCustom[last] || {}); }
+    dd.innerHTML = `
+        <div class="ltu-sec">Template <button id="lttNoneBtn" type="button" class="btn" style="padding:.15rem .5rem;font-size:.65rem;margin-left:.5rem;">None (plain text)</button></div>
+        <div class="ltu-grid" id="lttThumbs"></div>
+        <div id="lttEditor">
+            <div class="ltu-sec">Live preview (verse + name tag)</div><div class="ltu-prev" id="lttPrev"></div>
+            <div class="ltu-sec">Colours</div>
+            ${Object.keys(LTT_COLOR_LABELS).map(k => `<div class="ltu-row" id="lttRow_${k}"><span>${LTT_COLOR_LABELS[k]}</span><input type="color" id="lttIn_${k}"></div>`).join('')}
+            <div class="ltu-row" id="lttGradRow"><label><input type="checkbox" id="lttGrad"> Use gradient (main → gradient end)</label>
+                <select id="lttDir"><option value="180deg">Top → bottom</option><option value="90deg">Left → right</option><option value="135deg">Diagonal</option></select></div>
+            <div class="ltu-row"><span>Bar opacity <b id="lttOpacityVal"></b></span><input type="range" id="lttOpacity" min="10" max="100" step="1" style="width:160px"></div>
+            <div class="ltu-row"><label><input type="checkbox" id="lttShowRef"> Show reference</label><label><input type="checkbox" id="lttShowLogo"> Show logo (where the design has one)</label></div>
+            <div class="ltu-row"><span>Font</span><select id="lttFont">${lttFontOptionsHtml()}</select></div>
+            <div class="ltu-sec">My templates</div><div class="ltu-mine" id="lttMine"></div>
+            <div class="ltu-row" style="margin-top:.5rem"><input type="text" id="lttSaveName" placeholder="Name this style…" style="flex:1"><button id="lttSaveBtn" type="button" class="btn" style="padding:.3rem .6rem;font-size:.72rem;background:#166534;border-color:#15803d;">Save as my template</button></div>
+            <div class="ltu-row"><button id="lttResetBtn" type="button" class="btn" style="padding:.3rem .6rem;font-size:.72rem;background:#475569;border-color:#64748b;">Reset this template's colours</button></div>
+            <div style="font-size:.65rem;color:var(--text-muted);margin-top:.4rem">Used by the Lower Third layout and by the Name Tag. The background becomes transparent so it overlays on video.</div>
+        </div>`;
+    dd.dataset.built = '1';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); lttSyncUI(); dd.classList.toggle('open'); });
+    dd.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => dd.classList.remove('open'));
+    document.getElementById('lttNoneBtn').addEventListener('click', () => lttSelect('none'));
+    Object.keys(LTT_COLOR_LABELS).forEach(k => document.getElementById('lttIn_' + k).addEventListener('input', (e) => lttSet(k, e.target.value)));
+    document.getElementById('lttGrad').addEventListener('change', (e) => lttSet('grad', e.target.checked));
+    document.getElementById('lttDir').addEventListener('change', (e) => lttSet('dir', e.target.value));
+    document.getElementById('lttOpacity').addEventListener('input', (e) => lttSet('opacity', parseInt(e.target.value, 10)));
+    document.getElementById('lttShowRef').addEventListener('change', (e) => lttSet('showRef', e.target.checked));
+    document.getElementById('lttShowLogo').addEventListener('change', (e) => lttSet('showLogo', e.target.checked));
+    document.getElementById('lttFont').addEventListener('change', (e) => lttSet('font', e.target.value));
+    document.getElementById('lttResetBtn').addEventListener('click', () => { const id = previewState.ltTemplate; if (!LTT[id]) return; delete lttCustom[id]; lttSave('ebpLtCustom', lttCustom); previewState.ltStyle = Object.assign({}, LTT[id].d); lttSyncUI(); renderPreview(); });
+    document.getElementById('lttSaveBtn').addEventListener('click', () => {
+        const id = previewState.ltTemplate; if (!LTT[id]) return;
+        const nameEl = document.getElementById('lttSaveName'); const name = (nameEl.value || '').trim() || (LTT[id].name + ' (mine)');
+        lttUser.push({ id: 'u' + Date.now(), name, base: id, style: Object.assign({}, previewState.ltStyle) }); lttSave('ebpLtUser', lttUser);
+        nameEl.value = ''; lttSyncUI();
+    });
+    lttSyncUI();
+}
