@@ -287,6 +287,7 @@
             initMediaEngine();
             renderHotkeysList();
             renderOutputSlotsList();
+            initOutputsBar();
             document.getElementById('addOutputSlotBtn').addEventListener('click', () => {
                 const newSlot = { id: 'slot_' + Date.now(), name: 'New Output', sourceMode: 'live', windowRef: null };
                 outputSlots.push(newSlot);
@@ -1466,6 +1467,9 @@ async function initMediaEngine() {
                     projectorOverlay.style.transform = `${liveState.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${liveState.timerScale || 1.0})`;
                 }
             }
+
+            // Keep the timer on every multi-screen output window ticking too
+            try { updateOutputSlotTimers(); } catch (e) {}
         }
 
         // LOGO MICRO-SIZING ADJUSTMENT ENGINE
@@ -3599,10 +3603,56 @@ function songTabIsActive() {
             } catch (e) {}
         }
 
+        // What each output can show. 'live' and 'preview' behave exactly as they always did.
+        const OUTPUT_FEED_MODES = [
+            { value: 'congregation', label: 'Congregation (no timer)' },
+            { value: 'timer', label: 'Preacher: timer only' },
+            { value: 'timerverse', label: 'Preacher: timer + verse' },
+            { value: 'live', label: 'Live Output (everything)' },
+            { value: 'preview', label: 'Preview (Next Up)' }
+        ];
+        function outputFeedLabel(mode) {
+            const m = OUTPUT_FEED_MODES.find(x => x.value === mode);
+            return m ? m.label : 'Live Output (everything)';
+        }
+        function outputFeedShort(mode) {
+            return ({ congregation: 'Congregation', timer: 'Timer only', timerverse: 'Timer + verse', live: 'Live', preview: 'Preview' })[mode] || 'Live';
+        }
+        // The scene each output window actually draws, based on what that output is set to show.
+        function getSlotState(slot) {
+            switch (slot.sourceMode) {
+                case 'preview': return previewState;
+                case 'congregation':
+                    return { ...liveState, timerVisible: false, timerSolo: false };
+                case 'timerverse':
+                    return { ...liveState, timerVisible: true, timerSolo: false };
+                case 'timer':
+                    return { ...liveState, text: '', ref: '', flierId: null, displayMode: 'text', mediaUrl: null, layout: 'mode-center',
+                        bgTransparent: false, bgPreset: '', bgColor: '#000000', bgOpacity: 100, textBgUrl: '',
+                        lowerThirdVisible: false, announcementVisible: false, logoPosition: '', isScrolling: false,
+                        timerVisible: true, timerSolo: true, timerPosition: 'timer-center', timerSize: 'timer-size-large', timerScale: 1.5 };
+                default: return liveState;
+            }
+        }
+
+        // Called every timer tick: updates only the timer box inside each open output window (no rebuild, no flicker).
+        function updateOutputSlotTimers() {
+            outputSlots.forEach(slot => {
+                if (!slot.windowRef || slot.windowRef.closed) return;
+                const st = getSlotState(slot);
+                const node = slot.windowRef.document.getElementById('outputCanvasOverlayTimer');
+                if (!node) return;
+                node.className = `canvas-timer-node ${st.timerPosition} ${st.timerSize} ${st.timerVisible ? 'timer-visible' : ''}`;
+                node.innerText = st.timerText || '00:00';
+                const originStr = st.timerPosition === 'timer-center' ? 'center' : (st.timerPosition.includes('left') ? 'left' : 'right');
+                node.style.transformOrigin = originStr;
+                node.style.transform = `${st.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${st.timerScale || 1.0})`;
+            });
+        }
+
         function renderOutputSlot(slot) {
             if (!slot.windowRef || slot.windowRef.closed) return;
-            const stateObject = slot.sourceMode === 'preview' ? previewState : liveState;
-            renderIntoOutputWindow(slot.windowRef, 'outputCanvas', stateObject);
+            renderIntoOutputWindow(slot.windowRef, 'outputCanvas', getSlotState(slot));
         }
 
         function renderAllOutputSlots() {
@@ -3626,7 +3676,7 @@ function songTabIsActive() {
             slot.windowRef.document.write(buildOutputWindowDocument(`Express Bible Presenter — ${slot.name}`, 'outputCanvas'));
             slot.windowRef.document.close();
             renderOutputSlot(slot);
-            bindOutputResizeRefit(slot.windowRef, 'outputCanvas', () => slot.sourceMode === 'preview' ? previewState : liveState);
+            bindOutputResizeRefit(slot.windowRef, 'outputCanvas', () => getSlotState(slot));
 
             if (screenDetails) {
                 setTimeout(() => {
@@ -3649,8 +3699,7 @@ function songTabIsActive() {
                     <div style="display:flex; align-items:center; gap:0.5rem; flex:1;">
                         <input type="text" class="output-slot-name-input" data-id="${slot.id}" value="${slot.name}" style="padding:0.35rem 0.5rem; font-size:0.78rem; width:130px;">
                         <select class="output-slot-source-select" data-id="${slot.id}" style="padding:0.35rem; font-size:0.75rem;">
-                            <option value="live" ${slot.sourceMode === 'live' ? 'selected' : ''}>Live Output</option>
-                            <option value="preview" ${slot.sourceMode === 'preview' ? 'selected' : ''}>Preview (Next Up)</option>
+                            ${OUTPUT_FEED_MODES.map(m => `<option value="${m.value}" ${slot.sourceMode === m.value ? 'selected' : ''}>${m.label}</option>`).join('')}
                         </select>
                     </div>
                     <div class="hotkey-row-controls">
@@ -3664,13 +3713,13 @@ function songTabIsActive() {
             listEl.querySelectorAll('.output-slot-name-input').forEach(input => {
                 input.addEventListener('input', (e) => {
                     const slot = outputSlots.find(s => s.id === e.target.dataset.id);
-                    if (slot) { slot.name = e.target.value; persistOutputSlotsConfig(); }
+                    if (slot) { slot.name = e.target.value; persistOutputSlotsConfig(); renderOutputsBar(); }
                 });
             });
             listEl.querySelectorAll('.output-slot-source-select').forEach(sel => {
                 sel.addEventListener('change', (e) => {
                     const slot = outputSlots.find(s => s.id === e.target.dataset.id);
-                    if (slot) { slot.sourceMode = e.target.value; persistOutputSlotsConfig(); renderOutputSlot(slot); }
+                    if (slot) { slot.sourceMode = e.target.value; persistOutputSlotsConfig(); renderOutputSlot(slot); updateOutputSlotTimers(); renderOutputsBar(); }
                 });
             });
             listEl.querySelectorAll('.output-slot-open-btn').forEach(btn => {
@@ -3685,6 +3734,114 @@ function songTabIsActive() {
                     renderOutputSlotsList();
                 });
             });
+            renderOutputsBar();
+        }
+
+        // ===================== OUTPUTS BAR (dashboard) =====================
+        // One chip per output: click the name to open/focus its window, click the tag to choose what that screen shows.
+        let outputsBarOpenMenuId = null;
+        function outputsBarEnabled() {
+            try { return localStorage.getItem('ebpOutputsBarVisible') !== '0'; } catch (e) { return true; }
+        }
+        function setOutputsBarEnabled(on) {
+            try { localStorage.setItem('ebpOutputsBarVisible', on ? '1' : '0'); } catch (e) {}
+            outputsBarOpenMenuId = null;
+            renderOutputsBar();
+        }
+        function syncOutputsBarToggleBtn() {
+            const btn = document.getElementById('outputsBarToggleBtn');
+            if (!btn) return;
+            const on = outputsBarEnabled();
+            btn.innerText = on ? 'Outputs bar on dashboard: ON' : 'Outputs bar on dashboard: OFF';
+            btn.style.background = on ? '#166534' : '#475569';
+            btn.style.borderColor = on ? '#15803d' : '#64748b';
+        }
+        function renderOutputsBar() {
+            syncOutputsBarToggleBtn();
+            const bar = document.getElementById('outputsBar');
+            if (!bar) return;
+            if (!outputsBarEnabled()) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+            bar.style.display = 'flex';
+            bar.innerHTML = '';
+            const title = document.createElement('span');
+            title.className = 'outputs-bar-title';
+            title.innerText = 'Outputs';
+            bar.appendChild(title);
+            if (!outputSlots.length) {
+                const empty = document.createElement('span');
+                empty.className = 'outputs-bar-empty';
+                empty.innerText = 'No outputs yet — add one in Settings';
+                bar.appendChild(empty);
+            }
+            outputSlots.forEach(slot => {
+                const isOpen = !!(slot.windowRef && !slot.windowRef.closed);
+                const chip = document.createElement('div');
+                chip.className = 'outputs-chip';
+                chip.dataset.slot = slot.id;
+                const nameBtn = document.createElement('button');
+                nameBtn.type = 'button';
+                nameBtn.className = 'outputs-chip-name';
+                nameBtn.title = isOpen ? 'Window is open — click to bring it forward' : 'Click to open this output window';
+                const dot = document.createElement('span');
+                dot.className = 'outputs-dot' + (isOpen ? ' on' : '');
+                nameBtn.appendChild(dot);
+                nameBtn.appendChild(document.createTextNode(slot.name || 'Output'));
+                nameBtn.addEventListener('click', () => { openOutputSlotWindow(slot.id); setTimeout(renderOutputsBar, 400); });
+                const tag = document.createElement('button');
+                tag.type = 'button';
+                tag.className = 'outputs-chip-tag mode-' + (OUTPUT_FEED_MODES.some(m => m.value === slot.sourceMode) ? slot.sourceMode : 'live');
+                tag.title = 'Choose what this screen shows';
+                tag.innerText = outputFeedShort(slot.sourceMode) + ' ▾';
+                tag.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    outputsBarOpenMenuId = outputsBarOpenMenuId === slot.id ? null : slot.id;
+                    renderOutputsBar();
+                });
+                chip.appendChild(nameBtn);
+                chip.appendChild(tag);
+                if (outputsBarOpenMenuId === slot.id) {
+                    const menu = document.createElement('div');
+                    menu.className = 'outputs-menu';
+                    OUTPUT_FEED_MODES.forEach(m => {
+                        const item = document.createElement('button');
+                        item.type = 'button';
+                        item.className = 'outputs-menu-item' + (slot.sourceMode === m.value ? ' sel' : '');
+                        item.innerText = (slot.sourceMode === m.value ? '✓ ' : '') + m.label;
+                        item.addEventListener('click', (ev) => {
+                            ev.stopPropagation();
+                            slot.sourceMode = m.value;
+                            persistOutputSlotsConfig();
+                            outputsBarOpenMenuId = null;
+                            renderOutputSlot(slot);
+                            updateOutputSlotTimers();
+                            renderOutputSlotsList();
+                        });
+                        menu.appendChild(item);
+                    });
+                    chip.appendChild(menu);
+                }
+                bar.appendChild(chip);
+            });
+            const gear = document.createElement('button');
+            gear.type = 'button';
+            gear.className = 'outputs-gear';
+            gear.title = 'Output settings';
+            gear.innerText = '⚙';
+            gear.addEventListener('click', () => { const b = document.getElementById('openSettingsModalBtn'); if (b) b.click(); });
+            bar.appendChild(gear);
+        }
+        function initOutputsBar() {
+            const toggleBtn = document.getElementById('outputsBarToggleBtn');
+            if (toggleBtn) toggleBtn.addEventListener('click', () => setOutputsBarEnabled(!outputsBarEnabled()));
+            document.addEventListener('click', () => { if (outputsBarOpenMenuId) { outputsBarOpenMenuId = null; renderOutputsBar(); } });
+            document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && outputsBarOpenMenuId) { outputsBarOpenMenuId = null; renderOutputsBar(); } });
+            // Keep the green "window open" dots honest when a window is closed by hand
+            let lastSig = '';
+            setInterval(() => {
+                const sig = outputSlots.map(s => (s.windowRef && !s.windowRef.closed) ? '1' : '0').join('');
+                if (sig !== lastSig) { lastSig = sig; renderOutputsBar(); }
+            }, 1500);
+            renderOutputsBar();
         }
 
         async function detectAndListScreens() {
