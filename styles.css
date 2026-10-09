@@ -1329,3 +1329,7 @@
 .outputs-menu-item:hover { background: rgba(56,189,248,0.12); }
 .outputs-menu-item.sel { background: #1d4ed8; color: #fff; font-weight: 700; }
 .outputs-gear { margin-left: auto; background: none; border: 1px solid var(--bg-accent); color: var(--text-muted); border-radius: 6px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.8rem; }
+
+/* SCENE PREVIEW: no title label, and only a thin border so the scene fills the black area (same frame ratio) */
+.single-scene-column > .deck-label { display: none; }
+.screen-column.single-scene-column { padding: 5px; }
