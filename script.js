@@ -5780,13 +5780,13 @@ function ovDefaultSend(name) {
     if (name === 'ann' && !ovAnnData().text) { ovAnnNote('Type the announcement text first.'); return; }
     if (ch.mode === 'scene') { ch.scene = true; note('Sent With the scene — drawn inside the verse scene.'); ovRefreshAll(); return; }
     ch.t.obs = true;
-    // send to every screen that is currently open (Projector + any output feed window); open the Projector if none is
+    // send to OBS plus every screen that is already open (Projector + any output feed window). Never opens a new window here —
+    // use the ▾ menu to pick (and open) a specific screen.
     const names = [];
     if (projectorWindowRef && !projectorWindowRef.closed) { ch.t.projector = true; names.push('Projector'); }
     outputSlots.forEach(sl => { if (sl.windowRef && !sl.windowRef.closed) { ch.t.slots[sl.id] = true; names.push(sl.name || 'Output'); } });
-    if (!names.length && !Object.keys(ch.t.slots).length && !ch.t.projector) { ovTurnOn(ch, 'projector', name); names.push('Projector (opening…)'); }
     names.push('OBS');
-    note('Sent (' + (ch.mode === 'ontop' ? 'On top of feed' : 'Overlay only') + ') to: ' + names.join(', ') + '. Use ▾ to change.');
+    note('Sent (' + (ch.mode === 'ontop' ? 'On top of feed' : 'Overlay only') + ') to: ' + names.join(', ') + '. Use ▾ to add screens.');
     ovRefreshAll();
 }
 function ovHide(name) { const ch = ovCh[name]; ch.t = { projector: false, slots: {}, obs: false, obsOnly: false }; ch.scene = false; ovRefreshAll(); }
