@@ -5711,8 +5711,18 @@ function ovApplyToWindow(win, key) {
     } catch (e) {}
 }
 // OBS pages: called from the OBS sync handler
+var EBP_BUILD = '29';
+function ovObsDebug(txt) {
+    try {
+        if (new URLSearchParams(window.location.search).get('debug') !== '1') return;
+        let d = document.getElementById('ebpObsDebug');
+        if (!d) { d = document.createElement('div'); d.id = 'ebpObsDebug'; d.style.cssText = 'position:fixed;left:6px;top:6px;z-index:2147483647;background:#000c;color:#0f0;font:12px monospace;padding:4px 8px;border-radius:4px;pointer-events:none;display:block!important'; document.documentElement.appendChild(d); }
+        d.textContent = 'EBP build ' + EBP_BUILD + ' · ' + txt;
+    } catch (e) {}
+}
 function ovObsApply(data) {
     try {
+        ovObsDebug(!data ? 'no data' : (!data.overlay ? 'payload has NO overlay field (sender is an older version?)' : 'overlay ' + (data.overlay.obs ? 'ON' : 'off') + ' · alone=' + !!data.overlay.alone));
         if (!data || !data.overlay) return;
         const html = data.overlay.obs || '', alone = !!(html && data.overlay.alone);
         lttEnsureStyle(document);
