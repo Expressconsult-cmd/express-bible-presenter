@@ -529,6 +529,12 @@
                     <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="Banner background colour">🎨<input type="color" id="announcementColorPicker" value="#b45309" style="width:28px; height:28px; padding:0;"></label>
                     <button id="stageAnnouncementBtn" class="btn announcement-btn">Stage Alert</button>
                     <button id="announcementEyeToggleBtn" class="btn" style="padding: 0.45rem 0.6rem; font-size: 0.9rem;" title="Show/hide the announcement banner without losing its text">👁</button>
+                    <span style="position:relative; display:inline-flex;">
+                        <button id="annSendBtn" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; border-radius:6px 0 0 6px; padding:0.45rem 0.7rem; font-size:0.78rem; white-space:nowrap;" title="Send the banner on its own as a transparent overlay on top of whatever the screens are showing">▶ Send Banner Overlay</button>
+                        <button id="annSendCaret" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; border-left:1px solid #93c5fd; border-radius:0 6px 6px 0; padding:0.45rem 0.5rem;" title="Choose which screens get the banner overlay">▾</button>
+                        <div id="annSendMenu" class="ntu-menu"></div>
+                    </span>
+                    <span id="annStatus" style="font-size:0.65rem; color:#fbbf24;"></span>
                     <button id="clearAnnouncementBtn" class="btn" style="background-color: #475569; border-color: #64748b; font-size: 0.8rem; padding: 0.45rem 0.85rem;" title="Clear announcement text entirely">Clear Alert</button>
                 </div>
                 <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">"Stage Alert" shows this as a banner over your main text — it never replaces your verse/lyrics. Edit the text any time and click Stage Alert again to update it. Use 👁 to hide/show it without deleting what you typed.</span>
@@ -810,6 +816,16 @@
                     </div>
                 </div>
 
+                <!-- OBS Overlay-only Source Card -->
+                <div class="integration-card">
+                    <h4>OBS Overlay-only Source Link</h4>
+                    <p>A second Browser Source that is fully transparent and shows only the name tag and announcement banner you send to "OBS Overlay-only source" (no verse, no background). Stack it above your camera and your normal verse source in OBS.</p>
+                    <div class="link-input-group">
+                        <input type="text" id="obsOverlayOnlyInput" readonly value="Session not initialized...">
+                        <button class="btn-copy" onclick="copyIntegrationLink('obsOverlayOnlyInput')">Copy</button>
+                    </div>
+                </div>
+
                 <!-- OBS Browser Source Card -->
                 <div class="integration-card">
                     <h4>OBS Browser Source Link</h4>
@@ -901,6 +917,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=21"></script>
+    <script src="script.js?v=22"></script>
 </body>
 </html>
