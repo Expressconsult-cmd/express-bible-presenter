@@ -18,7 +18,7 @@
     <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <!-- ZIP READING: PowerPoint (.pptx) files are ZIP archives internally — used to pull out slide text/images -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <link rel="stylesheet" href="styles.css?v=7">
+    <link rel="stylesheet" href="styles.css?v=8">
     <!-- SIGN-IN: Firebase passwordless magic-link authentication (see auth.js) -->
     <script type="module" src="auth.js"></script>
 </head>
@@ -533,7 +533,7 @@
                 </div>
                 <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">"Stage Alert" shows this as a banner over your main text — it never replaces your verse/lyrics. Edit the text any time and click Stage Alert again to update it. Use 👁 to hide/show it without deleting what you typed.</span>
 
-                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-wrap: wrap;">
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-wrap: wrap; flex-basis:100%; max-width:100%; min-width:0;">
                     <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Lower Third Name Tag:</label>
                     <select id="savedNamesDropdown" style="padding:0.4rem; font-size:0.75rem; max-width:140px;">
                         <option value="">-- Saved Names --</option>
@@ -541,9 +541,26 @@
                     <button id="deleteSavedNameBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected saved name">✕</button>
                     <input type="text" id="lowerThirdRoleInput" placeholder="Ministering" style="padding:0.4rem; font-size:0.75rem; width:100px;">
                     <input type="text" id="lowerThirdNameInput" placeholder="Pastor Ade" style="padding:0.4rem; font-size:0.75rem; width:120px;">
-                    <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="Name tag text colour">🎨<input type="color" id="lowerThirdColorPicker" value="#ffffff" style="width:28px; height:28px; padding:0;"></label>
+                    <label style="display:none; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="Name tag text colour">🎨<input type="color" id="lowerThirdColorPicker" value="#ffffff" style="width:28px; height:28px; padding:0;"></label>
                     <button id="addSavedNameBtn" class="btn" style="padding: 0.4rem 0.6rem; font-size: 0.75rem; background:#166534; border-color:#15803d;">+ Add</button>
-                    <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.75rem; white-space:nowrap;"><input type="checkbox" id="lowerThirdVisibleCheckbox"> Show</label>
+                    <label style="display:none; align-items:center; gap:0.3rem; font-size:0.75rem; white-space:nowrap;"><input type="checkbox" id="lowerThirdVisibleCheckbox"> Show</label>
+                    <span style="position:relative; display:inline-flex;">
+                        <button id="ntStyleBtn" type="button" class="btn" style="background:#0f766e; border-color:#14b8a6; padding:0.4rem 0.6rem; font-size:0.72rem; white-space:nowrap;" title="Choose the look of the name tag">NAME TAG STYLE ▾</button>
+                        <div id="ntStyleDropdown" class="bg-text-effect-dropdown"></div>
+                    </span>
+                    <select id="ntPosition" title="Where the name tag appears on the screen" style="padding:0.4rem; font-size:0.75rem;">
+                        <option value="bottom">Bottom</option>
+                        <option value="center">Centered</option>
+                        <option value="top">Top</option>
+                    </select>
+                    <span style="display:inline-flex; align-items:center; gap:0.3rem; font-size:0.7rem;">Size
+                        <button id="ntSizeDec" type="button" class="btn" style="padding:0.25rem 0.5rem;">−</button><b id="ntSizeVal">100%</b><button id="ntSizeInc" type="button" class="btn" style="padding:0.25rem 0.5rem;">+</button>
+                    </span>
+                    <span style="position:relative; display:inline-flex;">
+                        <button id="ntSendBtn" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; padding:0.4rem 0.7rem; font-size:0.72rem; border-radius:6px 0 0 6px; white-space:nowrap;" title="Show only the name tag as a transparent overlay on the projector">▶ Send Name Tag</button><button id="ntSendCaret" type="button" class="btn" style="background:#1e40af; border-color:#2563eb; padding:0.4rem 0.5rem; font-size:0.72rem; border-radius:0 6px 6px 0; margin-left:-1px;" title="Choose which screens get the name tag">▾</button>
+                        <div id="ntSendMenu" class="ntu-menu"></div>
+                    </span>
+                    <span id="ntStatus" style="font-size:0.68rem; color:var(--text-muted);"></span>
                 </div>
 
                 <div class="control-group" style="display: flex; gap: 0.4rem; flex-wrap: wrap; row-gap: 0.4rem; border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
@@ -884,6 +901,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=20"></script>
+    <script src="script.js?v=21"></script>
 </body>
 </html>
