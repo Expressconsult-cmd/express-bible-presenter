@@ -289,6 +289,7 @@
             renderOutputSlotsList();
             initOutputsBar();
             try { initLowerThirdTemplates(); } catch (e) { console.warn(e); }
+            try { initNameTagOverlay(); } catch (e) { console.warn(e); }
             document.getElementById('addOutputSlotBtn').addEventListener('click', () => {
                 const newSlot = { id: 'slot_' + Date.now(), name: 'New Output', sourceMode: 'live', windowRef: null };
                 outputSlots.push(newSlot);
@@ -1913,7 +1914,7 @@ async function initMediaEngine() {
             const backingPanelClass = (stateObject.textBackingPanel && !lttBgT(stateObject)) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
 
             // Lower third name tag (e.g. "Ministering: Pastor Ade")
-            const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
+            const nameBarVisible = false; // the name tag is now its own overlay (Message tab → Send Name Tag), never part of the scene
             const nameBarHtml = `
                 <div class="canvas-namebar-node ${nameBarVisible ? 'namebar-visible' : ''}" style="${videoAloneHide}">
                     <div class="namebar-role">${stateObject.lowerThirdRole || ''}</div>
@@ -3416,6 +3417,7 @@ function songTabIsActive() {
             projectorWindowRef.document.close();
             renderIntoOutputWindow(projectorWindowRef, "directProjectorCanvas", liveState);
             bindOutputResizeRefit(projectorWindowRef, "directProjectorCanvas", () => liveState);
+            try { ntApplyToWindow(projectorWindowRef, ntTargets.projector); } catch (e) {}
 
             if (bounds) {
                 try {
@@ -3507,7 +3509,7 @@ function songTabIsActive() {
             const dynamicColorVar = `--dynamic-text-color: ${stateObject.textColor || '#38bdf8'};`;
             const backingPanelClass = (stateObject.textBackingPanel && !lttBgT(stateObject)) ? 'backing-panel-active' : ''; // Transparent background is a master override — nothing shows behind the text, so it keys/overlays cleanly
 
-            const nameBarVisible = stateObject.lowerThirdVisible && (stateObject.lowerThirdName || stateObject.lowerThirdRole);
+            const nameBarVisible = false; // the name tag is now its own overlay (Message tab → Send Name Tag), never part of the scene
             const nameBarHtml = `
                 <div class="canvas-namebar-node ${nameBarVisible ? 'namebar-visible' : ''}" style="${videoAloneHide}">
                     <div class="namebar-role">${stateObject.lowerThirdRole || ''}</div>
@@ -3680,6 +3682,7 @@ function songTabIsActive() {
             slot.windowRef.document.close();
             renderOutputSlot(slot);
             bindOutputResizeRefit(slot.windowRef, 'outputCanvas', () => getSlotState(slot));
+            try { ntApplyToWindow(slot.windowRef, !!ntTargets.slots[slot.id]); } catch (e) {}
 
             if (screenDetails) {
                 setTimeout(() => {
@@ -5321,8 +5324,8 @@ function lttMarkup(id, style, text, ref, logo, extraClass, extraStyle) {
 function lttNameVars(id, s) {
     const T = LTT[id]; const acc = s[T.nameAcc] || s.c2;
     const nameBg = s.c1;
-    const nt = lttRatio(s.c3, nameBg) >= 3 ? s.c3 : lttAutoText(nameBg);
-    return `--n-fill:${lttFill(s, false)};--n-acc:${acc};--n-rt:${lttAutoText(acc)};--n-nt:${nt};--n-b:${s.c6};${s.font ? `--n-font:${s.font};` : ''}`;
+    const nt = s.nt || (lttRatio(s.c3, nameBg) >= 3 ? s.c3 : lttAutoText(nameBg));
+    return `--n-fill:${lttFill(s, false)};--n-acc:${acc};--n-rt:${s.rt || lttAutoText(acc)};--n-nt:${nt};--n-b:${s.c6};${s.font ? `--n-font:${s.font};` : ''}`;
 }
 // Applies the active template to a freshly-built canvas (main preview, OBS, projector, extra output windows)
 function lttApply(canvas, st, logoUrl, transitionClass) {
@@ -5464,4 +5467,159 @@ function initLowerThirdTemplates() {
         nameEl.value = ''; lttSyncUI();
     });
     lttSyncUI();
+}
+
+
+// ===================== NAME TAG OVERLAY ("Ministering: Pastor Ade") =====================
+// The name tag is no longer part of the verse scene. It has its own style (same families as the lower third),
+// its own position/size, and is sent on its own as a transparent layer on top of whatever a screen is already showing
+// (Projector and/or any extra output window). Nothing else (verse, background, timer) is sent with it.
+var NT_CSS = `
+.ntl{position:fixed;inset:0;pointer-events:none;z-index:2147483000;display:flex;align-items:center;justify-content:center}
+.ntl-frame{position:relative;width:min(100vw,calc(100vh*2752/1536));aspect-ratio:2752/1536;container-type:inline-size;--canvas-font-size:4.8cqw}
+.ntl-pos{position:absolute;left:4%}
+.ntl-bottom{bottom:6%}.ntl-top{top:6%}.ntl-center{top:50%;transform:translateY(-50%)}
+.ntw .canvas-namebar-node{position:static;display:flex;align-items:stretch;border-radius:0}
+.ntw .namebar-role{font-weight:900;font-size:calc(var(--canvas-font-size,4.8cqw)*.46*var(--nt-s,1));text-transform:uppercase;letter-spacing:.04em;padding:.35em .7em;display:flex;align-items:center;white-space:nowrap}
+.ntw .namebar-name{font-weight:800;font-size:calc(var(--canvas-font-size,4.8cqw)*.54*var(--nt-s,1));padding:.35em .9em;display:flex;align-items:center;white-space:nowrap}
+#ntStyleDropdown{left:0;right:auto;width:470px;max-width:92vw;z-index:80}
+.ntu-menu{position:absolute;top:calc(100% + 6px);right:0;min-width:300px;z-index:90;background:var(--bg-panel);border:1px solid var(--accent-primary);border-radius:9px;padding:6px;box-shadow:0 12px 30px rgba(0,0,0,.6);display:none}
+.ntu-menu.open{display:block}
+.ntu-item{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text-main,inherit);font-family:inherit;font-size:.76rem;font-weight:600;padding:.45rem .6rem;border-radius:6px;cursor:pointer}
+.ntu-item:hover{background:rgba(56,189,248,.12)}
+.ntu-item small{display:block;font-weight:400;color:var(--text-muted);font-size:.66rem}
+.ntu-sep{height:1px;background:var(--bg-accent);margin:4px 0}
+`;
+LTT_CSS += NT_CSS;
+var ntState = { tpl: 'broadcast', pos: 'bottom', scale: 100 };
+var ntCustom = {};
+var ntTargets = { projector: false, slots: {} };
+var NT_ROWS = [['c1', 'Name background colour'], ['c1b', 'Gradient end colour'], ['ACC', 'Role label colour'], ['rt', 'Role text colour'], ['nt', 'Name text colour'], ['c6', 'Border colour']];
+function ntStyle() { return Object.assign({}, LTT[ntState.tpl].d, ntCustom[ntState.tpl] || {}); }
+function ntSaveAll() { lttSave('ebpNtState', ntState); lttSave('ebpNtCustom', ntCustom); }
+function ntTagHtml(id, s, role, name) {
+    return `<div class="canvas-namebar-node namebar-visible ltn ltn-${id}" style="${lttNameVars(id, s)}"><div class="namebar-role">${role || ''}</div><div class="namebar-name">${name || ''}</div></div>`;
+}
+function ntLayerHtml() {
+    const s = ntStyle();
+    return `<div class="ntl ntw" id="ebpNtLayer"><div class="ntl-frame" style="--nt-s:${ntState.scale / 100}"><div class="ntl-pos ntl-${ntState.pos}">${ntTagHtml(ntState.tpl, s, previewState.lowerThirdRole, previewState.lowerThirdName)}</div></div></div>`;
+}
+function ntApplyToWindow(win, on) {
+    try {
+        if (!win || win.closed) return;
+        const doc = win.document; const old = doc.getElementById('ebpNtLayer'); if (old) old.remove();
+        if (!on || !(previewState.lowerThirdRole || previewState.lowerThirdName)) return;
+        lttEnsureStyle(doc);
+        doc.body.insertAdjacentHTML('beforeend', ntLayerHtml());
+    } catch (e) {}
+}
+function ntAnyActive() { return ntTargets.projector || Object.keys(ntTargets.slots).some(k => ntTargets.slots[k]); }
+function ntRefreshAll() {
+    try { ntApplyToWindow(projectorWindowRef, ntTargets.projector); } catch (e) {}
+    outputSlots.forEach(sl => ntApplyToWindow(sl.windowRef, !!ntTargets.slots[sl.id]));
+    ntSyncUI();
+}
+function ntTurnOn(kind, slotId) {
+    if (!(previewState.lowerThirdRole || previewState.lowerThirdName)) { ntNote('Type a role or name first.'); return false; }
+    if (kind === 'projector') {
+        ntTargets.projector = true;
+        if (!projectorWindowRef || projectorWindowRef.closed) sendToProjectorAutoDetect(); // opens the projector (it re-applies the tag when ready)
+    } else {
+        ntTargets.slots[slotId] = true;
+        const sl = outputSlots.find(s => s.id === slotId);
+        if (sl && (!sl.windowRef || sl.windowRef.closed)) openOutputSlotWindow(slotId);
+    }
+    ntNote('');
+    return true;
+}
+function ntNote(t) { const e = document.getElementById('ntStatus'); if (e) e.innerText = t || ''; }
+function ntHideAll() { ntTargets.projector = false; ntTargets.slots = {}; ntRefreshAll(); }
+function ntSyncUI() {
+    const s = document.getElementById('ntSendBtn'); if (!s) return;
+    const on = ntAnyActive();
+    s.innerText = on ? '⏹ Hide Name Tag' : '▶ Send Name Tag';
+    s.style.background = on ? '#b91c1c' : '#1d4ed8'; s.style.borderColor = on ? '#dc2626' : '#2563eb';
+    const sb = document.getElementById('ntStyleBtn'); if (sb) sb.innerText = 'NAME TAG: ' + LTT[ntState.tpl].name.toUpperCase() + ' ▾';
+    const pos = document.getElementById('ntPosition'); if (pos) pos.value = ntState.pos;
+    const sv = document.getElementById('ntSizeVal'); if (sv) sv.innerText = ntState.scale + '%';
+    // preview of the tag in the style panel
+    const prev = document.getElementById('ntPrev'); if (prev) prev.innerHTML = ntTagHtml(ntState.tpl, ntStyle(), previewState.lowerThirdRole || 'Ministering', previewState.lowerThirdName || 'Pastor Ade');
+}
+function ntBuildSendMenu() {
+    const m = document.getElementById('ntSendMenu'); if (!m) return;
+    const row = (label, active, key) => `<button type="button" class="ntu-item" data-k="${key}">${active ? '✓ ' : '○ '}${label}<small>${active ? 'showing — click to remove' : 'overlay only'}</small></button>`;
+    m.innerHTML = row('Projector', ntTargets.projector, 'projector') + outputSlots.map(sl => row(sl.name || 'Output', !!ntTargets.slots[sl.id], 's:' + sl.id)).join('')
+        + '<div class="ntu-sep"></div><button type="button" class="ntu-item" data-k="hide" style="color:#fca5a5">⏹ Hide name tag from all screens</button>';
+    m.querySelectorAll('.ntu-item').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); const k = b.dataset.k;
+        if (k === 'hide') ntHideAll();
+        else if (k === 'projector') { if (ntTargets.projector) ntTargets.projector = false; else if (!ntTurnOn('projector')) return; ntRefreshAll(); }
+        else { const id = k.slice(2); if (ntTargets.slots[id]) delete ntTargets.slots[id]; else if (!ntTurnOn('slot', id)) return; ntRefreshAll(); }
+        m.classList.remove('open');
+    }));
+}
+function ntBuildStylePanel() {
+    const dd = document.getElementById('ntStyleDropdown');
+    const grid = LTT_ORDER.map(id => `<div class="ltu-thumb ${ntState.tpl === id ? 'sel' : ''}" data-id="${id}"><div class="ltu-tc ntw" style="--canvas-font-size:13cqw;--nt-s:1;display:flex;align-items:center;padding-left:6px">${ntTagHtml(id, Object.assign({}, LTT[id].d, ntCustom[id] || {}), 'MINISTERING', 'Pastor Ade')}</div>${LTT[id].name}</div>`).join('');
+    dd.innerHTML = `<div class="ltu-sec">Name tag style (own colours &amp; font, separate from the verse lower third)</div><div class="ltu-grid" id="ntThumbs">${grid}</div>
+        <div class="ltu-sec">Preview</div><div class="ltu-prev ntw" style="display:flex;align-items:center;padding-left:6%;--canvas-font-size:5cqw;--nt-s:1" id="ntPrevBox"><span id="ntPrev"></span></div>
+        <div class="ltu-sec">Colours</div>
+        ${NT_ROWS.map(([k, l]) => `<div class="ltu-row" id="ntRow_${k}"><span>${l}</span><input type="color" id="ntIn_${k}"></div>`).join('')}
+        <div class="ltu-row" id="ntGradRow"><label><input type="checkbox" id="ntGrad"> Use gradient</label><select id="ntDir"><option value="180deg">Top → bottom</option><option value="90deg">Left → right</option><option value="135deg">Diagonal</option></select></div>
+        <div class="ltu-row"><span>Opacity <b id="ntOpacityVal"></b></span><input type="range" id="ntOpacity" min="10" max="100" style="width:160px"></div>
+        <div class="ltu-row"><span>Font</span><select id="ntFont">${lttFontOptionsHtml()}</select></div>
+        <div class="ltu-row"><button id="ntResetBtn" type="button" class="btn" style="padding:.3rem .6rem;font-size:.72rem;background:#475569;border-color:#64748b;">Reset this style's colours</button></div>`;
+    dd.querySelectorAll('.ltu-thumb').forEach(t => t.addEventListener('click', () => { ntState.tpl = t.dataset.id; ntSaveAll(); ntBuildStylePanel(); ntSyncPanel(); ntRefreshAll(); }));
+    const set = (k, v) => { ntCustom[ntState.tpl] = Object.assign({}, ntCustom[ntState.tpl] || {}, { [k]: v }); ntSaveAll(); ntSyncPanel(true); ntRefreshAll(); };
+    NT_ROWS.forEach(([k]) => document.getElementById('ntIn_' + k).addEventListener('input', (e) => set(k === 'ACC' ? LTT[ntState.tpl].nameAcc : k, e.target.value)));
+    document.getElementById('ntGrad').addEventListener('change', (e) => set('grad', e.target.checked));
+    document.getElementById('ntDir').addEventListener('change', (e) => set('dir', e.target.value));
+    document.getElementById('ntOpacity').addEventListener('input', (e) => set('opacity', parseInt(e.target.value, 10)));
+    document.getElementById('ntFont').addEventListener('change', (e) => set('font', e.target.value));
+    document.getElementById('ntResetBtn').addEventListener('click', () => { delete ntCustom[ntState.tpl]; ntSaveAll(); ntBuildStylePanel(); ntSyncPanel(); ntRefreshAll(); });
+}
+function ntSyncPanel(keepThumbs) {
+    const dd = document.getElementById('ntStyleDropdown'); if (!dd || !document.getElementById('ntIn_c1')) return;
+    const s = ntStyle(), T = LTT[ntState.tpl]; const acc = T.nameAcc;
+    NT_ROWS.forEach(([k]) => {
+        const row = document.getElementById('ntRow_' + k), inp = document.getElementById('ntIn_' + k);
+        let show = true, val;
+        if (k === 'c1b') { show = true; val = s.c1b; inp.disabled = !s.grad; }
+        else if (k === 'ACC') { show = acc !== 'c1b'; val = s[acc]; }
+        else if (k === 'rt') val = s.rt || lttAutoText(s[acc]);
+        else if (k === 'nt') val = s.nt || (lttRatio(s.c3, s.c1) >= 3 ? s.c3 : lttAutoText(s.c1));
+        else if (k === 'c6') show = T.uses.includes('c6'), val = s.c6;
+        else val = s[k];
+        row.style.display = show ? '' : 'none'; if (document.activeElement !== inp) inp.value = val;
+    });
+    document.getElementById('ntGrad').checked = !!s.grad; document.getElementById('ntDir').value = s.dir; document.getElementById('ntDir').disabled = !s.grad;
+    document.getElementById('ntOpacity').value = s.opacity; document.getElementById('ntOpacityVal').innerText = s.opacity + '%';
+    document.getElementById('ntFont').value = s.font || '';
+    dd.querySelectorAll('.ltu-thumb').forEach(t => t.classList.toggle('sel', t.dataset.id === ntState.tpl));
+    if (keepThumbs) { const th = dd.querySelector(`.ltu-thumb[data-id="${ntState.tpl}"] .ltu-tc`); if (th) th.innerHTML = ntTagHtml(ntState.tpl, s, 'MINISTERING', 'Pastor Ade'); }
+    ntSyncUI();
+}
+function initNameTagOverlay() {
+    const styleBtn = document.getElementById('ntStyleBtn'); if (!styleBtn) return;
+    const saved = lttLoad('ebpNtState', null); if (saved && LTT[saved.tpl]) ntState = Object.assign(ntState, saved);
+    ntCustom = lttLoad('ebpNtCustom', {}) || {};
+    lttEnsureStyle(document);
+    ntBuildStylePanel(); ntSyncPanel();
+    const dd = document.getElementById('ntStyleDropdown'), menu = document.getElementById('ntSendMenu');
+    styleBtn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.remove('open'); ntBuildStylePanel(); ntSyncPanel(); dd.classList.toggle('open'); });
+    dd.addEventListener('click', (e) => e.stopPropagation());
+    document.getElementById('ntPosition').addEventListener('change', (e) => { ntState.pos = e.target.value; ntSaveAll(); ntRefreshAll(); });
+    const size = d => { ntState.scale = Math.max(50, Math.min(250, ntState.scale + d)); ntSaveAll(); ntRefreshAll(); };
+    document.getElementById('ntSizeDec').addEventListener('click', () => size(-10));
+    document.getElementById('ntSizeInc').addEventListener('click', () => size(10));
+    document.getElementById('ntSendBtn').addEventListener('click', () => {
+        if (ntAnyActive()) { ntHideAll(); return; }
+        if (ntTurnOn('projector')) ntRefreshAll();
+    });
+    document.getElementById('ntSendCaret').addEventListener('click', (e) => { e.stopPropagation(); dd.classList.remove('open'); ntBuildSendMenu(); menu.classList.toggle('open'); });
+    menu.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => { menu.classList.remove('open'); dd.classList.remove('open'); });
+    ['lowerThirdRoleInput', 'lowerThirdNameInput'].forEach(id => document.getElementById(id).addEventListener('input', () => ntRefreshAll()));
+    document.getElementById('savedNamesDropdown').addEventListener('change', () => ntRefreshAll());
+    ntSyncUI();
 }
