@@ -816,20 +816,10 @@
                     </div>
                 </div>
 
-                <!-- OBS Overlay-only Source Card -->
-                <div class="integration-card">
-                    <h4>OBS Overlay-only Source Link</h4>
-                    <p>A second Browser Source that is fully transparent and shows only the name tag and announcement banner you send to "OBS Overlay-only source" (no verse, no background). Stack it above your camera and your normal verse source in OBS.</p>
-                    <div class="link-input-group">
-                        <input type="text" id="obsOverlayOnlyInput" readonly value="Session not initialized...">
-                        <button class="btn-copy" onclick="copyIntegrationLink('obsOverlayOnlyInput')">Copy</button>
-                    </div>
-                </div>
-
                 <!-- OBS Browser Source Card -->
                 <div class="integration-card">
                     <h4>OBS Browser Source Link</h4>
-                    <p>Paste this URL as a clean Browser Source inside OBS Studio (1920x1080 resolution, make sure 'transparent' is checked) to overlay lower-thirds and lyrics onto live camera feeds instantly.</p>
+                    <p>Paste this URL as a clean Browser Source inside OBS Studio (1920x1080 resolution, make sure 'transparent' is checked) to overlay lower-thirds and lyrics onto live camera feeds instantly. This one link does everything: your verses, plus the Name Tag and Announcement banner when you send them ("Overlay only" shows just the tag/banner on a transparent background; "On top of feed" and "With the scene" show them with the verse).</p>
                     <div class="link-input-group">
                         <input type="text" id="obsBrowserSourceInput" readonly value="Session not initialized...">
                         <button class="btn-copy" onclick="copyIntegrationLink('obsBrowserSourceInput')">Copy</button>
@@ -917,6 +907,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=24"></script>
+    <script src="script.js?v=25"></script>
 </body>
 </html>
