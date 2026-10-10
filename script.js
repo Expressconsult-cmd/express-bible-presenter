@@ -344,6 +344,7 @@
                 
                 document.getElementById('obsDockLinkInput').value = `${baseHref}?sessionToken=${id}`;
                 document.getElementById('obsBrowserSourceInput').value = `${baseHref}?mode=obs&sessionToken=${id}`;
+                { const o = document.getElementById('obsOverlayOnlyInput'); if (o) o.value = `${baseHref}?mode=obs&overlay=1&sessionToken=${id}`; }
 
                 document.getElementById('statusText').innerText = "System Ready";
                 document.getElementById('statusDot').className = "status-dot active";
@@ -387,7 +388,8 @@
                 previewState: previewState,
                 liveState: liveState,
                 importedAssetsLibrary: importedAssetsLibrary, 
-                cachedLogoDataUrl: cachedLogoDataUrl
+                cachedLogoDataUrl: cachedLogoDataUrl,
+                overlay: (typeof ovPayload === 'function') ? ovPayload() : undefined
             };
             activeRemoteDataConnections.forEach(conn => {
                 if (conn.open) conn.send(systemSyncPayload);
@@ -1946,6 +1948,7 @@ async function initMediaEngine() {
 
             restoreAnnouncementBanner(canvasElement, reusableLayers, announcementHtml.trim());
             try { lttApply(canvasElement, stateObject, logoBlobContext, transitionClass); } catch (e) { console.warn('Lower third template:', e); }
+            try { ovSceneApply(canvasElement, stateObject); } catch (e) {}
 
             // Text stays at the selected size and wraps; this only steps in if wrapped text would actually overflow the frame
             autoFitVerseText(canvasElement);
@@ -3417,7 +3420,7 @@ function songTabIsActive() {
             projectorWindowRef.document.close();
             renderIntoOutputWindow(projectorWindowRef, "directProjectorCanvas", liveState);
             bindOutputResizeRefit(projectorWindowRef, "directProjectorCanvas", () => liveState);
-            try { ntApplyToWindow(projectorWindowRef, ntTargets.projector); } catch (e) {}
+            try { ovApplyToWindow(projectorWindowRef, 'projector'); } catch (e) {}
 
             if (bounds) {
                 try {
@@ -3436,7 +3439,7 @@ function songTabIsActive() {
 
         function syncLiveStateToRemoteChannels() {
             // Channel 1: BroadcastChannel (Instant Offline Sync)
-            const stateSync = { liveState: liveState, cachedLogoDataUrl: cachedLogoDataUrl };
+            const stateSync = { liveState: liveState, cachedLogoDataUrl: cachedLogoDataUrl, overlay: (typeof ovPayload === 'function') ? ovPayload() : undefined };
             obsBroadcastChannel.postMessage({ type: "SYSTEM_SYNC_STATE", ...stateSync });
 
             // Channel 2: Remote WebRTC connections
@@ -3540,6 +3543,7 @@ function songTabIsActive() {
 
             restoreAnnouncementBanner(container, outReusableLayers, announcementHtml.trim());
             try { lttApply(container, stateObject, cachedLogoDataUrl, outTransitionClass); } catch (e) { console.warn('Lower third template:', e); }
+            try { ovSceneApply(container, stateObject); } catch (e) {}
 
             autoFitVerseText(container);
 
@@ -3682,7 +3686,7 @@ function songTabIsActive() {
             slot.windowRef.document.close();
             renderOutputSlot(slot);
             bindOutputResizeRefit(slot.windowRef, 'outputCanvas', () => getSlotState(slot));
-            try { ntApplyToWindow(slot.windowRef, !!ntTargets.slots[slot.id]); } catch (e) {}
+            try { ovApplyToWindow(slot.windowRef, 's:' + slot.id); } catch (e) {}
 
             if (screenDetails) {
                 setTimeout(() => {
@@ -3942,7 +3946,9 @@ function songTabIsActive() {
 
             function syncViewportState(data) {
                 if (data && data.liveState) {
+                    if (urlParameters.get('overlay') === '1') { obsCanvas.style.display = 'none'; try { ovObsApply(data); } catch (e) {} return; }
                     buildCanvasDOM(obsCanvas, data.liveState, [], data.cachedLogoDataUrl, true);
+                    try { ovObsApply(data); } catch (e) {}
                     
                     const innerTimer = obsCanvas.querySelector('.canvas-timer-node');
                     if (innerTimer) {
@@ -5515,7 +5521,7 @@ function ntApplyToWindow(win, on) {
 }
 function ntAnyActive() { return ntTargets.projector || Object.keys(ntTargets.slots).some(k => ntTargets.slots[k]); }
 function ntRefreshAll() {
-    try { ntApplyToWindow(projectorWindowRef, ntTargets.projector); } catch (e) {}
+    try { ovApplyToWindow(projectorWindowRef, 'projector'); } catch (e) {}
     outputSlots.forEach(sl => ntApplyToWindow(sl.windowRef, !!ntTargets.slots[sl.id]));
     ntSyncUI();
 }
@@ -5614,7 +5620,7 @@ function initNameTagOverlay() {
     document.getElementById('ntSizeInc').addEventListener('click', () => size(10));
     document.getElementById('ntSendBtn').addEventListener('click', () => {
         if (ntAnyActive()) { ntHideAll(); return; }
-        if (ntTurnOn('projector')) ntRefreshAll();
+        ovDefaultSend('nt');
     });
     document.getElementById('ntSendCaret').addEventListener('click', (e) => { e.stopPropagation(); dd.classList.remove('open'); ntBuildSendMenu(); menu.classList.toggle('open'); });
     menu.addEventListener('click', (e) => e.stopPropagation());
@@ -5622,4 +5628,183 @@ function initNameTagOverlay() {
     ['lowerThirdRoleInput', 'lowerThirdNameInput'].forEach(id => document.getElementById(id).addEventListener('input', () => ntRefreshAll()));
     document.getElementById('savedNamesDropdown').addEventListener('change', () => ntRefreshAll());
     ntSyncUI();
+    try { initAnnOverlay(); } catch (e) { console.warn(e); }
+}
+
+
+// ===================== OVERLAY CHANNELS (Name Tag + Announcement banner) =====================
+// Each channel can be sent "overlay only" (alone, on top of whatever a screen is already showing) to: the Projector,
+// any extra output window, the OBS browser source (over its verse scene) and the OBS overlay-only source (transparent,
+// nothing else). The name tag can also be sent "with the scene" (drawn inside the verse scene, reaching every screen).
+// Later definitions below intentionally replace the first-version name-tag helpers above.
+var OV_CSS = `
+.ov-scene{position:absolute!important;z-index:9}
+.ov-scene .ntl-frame{width:100%}
+.ov-ann{position:absolute;left:0;right:0;color:#fff8e7;font-weight:800;font-size:calc(var(--canvas-font-size,4.8cqw)*.5);padding:.45em 1em;text-align:center;text-shadow:0 2px 6px rgba(0,0,0,.8);overflow:hidden;white-space:nowrap;box-shadow:0 0 16px rgba(0,0,0,.4);pointer-events:none}
+.ov-ann-top{top:0}.ov-ann-bottom{bottom:0}
+.ov-ann-center{top:50%;transform:translateY(-50%);left:4%;right:4%;border-radius:8px}
+.ov-tick{display:inline-block;padding-left:100%;animation:ovTick 14s linear infinite}
+@keyframes ovTick{to{transform:translateX(-100%)}}
+@keyframes ovBreath{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes ovFade{0%,100%{opacity:0}15%,85%{opacity:1}}
+.ov-eff-breathing{animation:ovBreath 2.4s ease-in-out infinite}
+.ov-eff-fade{animation:ovFade 4s ease-in-out infinite}
+.ntu-seg{display:flex;background:rgba(0,0,0,.25);border-radius:7px;padding:3px;margin:2px 0 6px}
+.ntu-seg button{flex:1;border:none;background:none;color:var(--text-muted);font:inherit;font-size:.7rem;font-weight:600;padding:.35rem .3rem;border-radius:5px;cursor:pointer}
+.ntu-seg button.on{background:#2563eb;color:#fff}
+.ntu-hd{font-size:.68rem;font-weight:800;text-transform:uppercase;color:var(--text-muted);padding:.2rem .6rem}
+`;
+LTT_CSS += OV_CSS;
+var ovCh = {
+    nt: { mode: 'overlay', scene: false, t: { projector: false, slots: {}, obs: false, obsOnly: false } },
+    ann: { t: { projector: false, slots: {}, obs: false, obsOnly: false } }
+};
+var ovLastObs = '';
+function ovOn(ch, key) { return key.startsWith('s:') ? !!ch.t.slots[key.slice(2)] : !!ch.t[key]; }
+function ovSet(ch, key, v) { if (key.startsWith('s:')) { if (v) ch.t.slots[key.slice(2)] = true; else delete ch.t.slots[key.slice(2)]; } else ch.t[key] = !!v; }
+function ovAnyTarget(ch) { return ch.t.projector || ch.t.obs || ch.t.obsOnly || Object.keys(ch.t.slots).length > 0; }
+function ovHasTag() { return !!(previewState.lowerThirdRole || previewState.lowerThirdName); }
+function ovAnnData() {
+    const g = id => document.getElementById(id);
+    return { text: ((g('announcementInput') || {}).value || '').trim(), eff: (g('announcementEffectSelector') || {}).value || 'none', pos: (g('announcementPositionSelector') || {}).value || 'bottom', color: (g('announcementColorPicker') || {}).value || '#b45309' };
+}
+function ovTagPart() {
+    return `<div class="ntl-pos ntl-${ntState.pos}">${ntTagHtml(ntState.tpl, ntStyle(), previewState.lowerThirdRole, previewState.lowerThirdName)}</div>`;
+}
+function ovAnnPart() {
+    const a = ovAnnData(); if (!a.text) return '';
+    const esc = a.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const inner = a.eff === 'scroll' ? `<span class="ov-tick">${esc}</span>` : esc;
+    const eff = (a.eff === 'breathing' || a.eff === 'fade') ? ' ov-eff-' + a.eff : '';
+    return `<div class="ov-ann ov-ann-${a.pos}${eff}" style="background:${a.color}">${inner}</div>`;
+}
+function ovWrap(parts, cls) {
+    return parts ? `<div class="ntl ntw ${cls || ''}" id="${cls ? '' : 'ebpNtLayer'}"><div class="ntl-frame" style="--nt-s:${ntState.scale / 100}">${parts}</div></div>` : '';
+}
+function ovHtmlFor(key) {
+    let parts = '';
+    if (ovCh.nt.mode !== 'scene' && ovOn(ovCh.nt, key) && ovHasTag()) parts += ovTagPart();
+    if (ovOn(ovCh.ann, key)) parts += ovAnnPart();
+    return ovWrap(parts);
+}
+function ovApplyToWindow(win, key) {
+    try {
+        if (!win || win.closed) return;
+        const doc = win.document; const html = ovHtmlFor(key);
+        const old = doc.getElementById('ebpNtLayer'); if (old) old.remove();
+        if (!html) return;
+        lttEnsureStyle(doc);
+        doc.body.insertAdjacentHTML('beforeend', html);
+    } catch (e) {}
+}
+// OBS pages: called from the OBS sync handler
+function ovObsApply(data) {
+    try {
+        if (!data || !data.overlay) return;
+        const only = new URLSearchParams(window.location.search).get('overlay') === '1';
+        const html = only ? data.overlay.obsOnly : data.overlay.obs;
+        if (html === ovLastObs) return; ovLastObs = html;
+        const old = document.getElementById('ebpNtLayer'); if (old) old.remove();
+        if (!html) return;
+        lttEnsureStyle(document); document.body.insertAdjacentHTML('beforeend', html);
+    } catch (e) {}
+}
+// "With the scene" name tag: lives inside the scene state, so every canvas that draws the scene gets it
+function ovSceneApply(canvas, state) {
+    try {
+        if (!canvas) return;
+        const old = canvas.querySelector(':scope > .ov-scene'); if (old) old.remove();
+        if (!state || !state.ovScene) return;
+        const t = document.createElement('div'); t.innerHTML = state.ovScene;
+        const el = t.firstElementChild; if (el) canvas.appendChild(el);
+    } catch (e) {}
+}
+function ovPayload() { return { obs: ovHtmlFor('obs'), obsOnly: ovHtmlFor('obsOnly') }; }
+function ntAnyActive() { return ovCh.nt.mode === 'scene' ? ovCh.nt.scene : ovAnyTarget(ovCh.nt); }
+function ovRefreshAll() {
+    try { ovApplyToWindow(projectorWindowRef, 'projector'); } catch (e) {}
+    outputSlots.forEach(sl => ovApplyToWindow(sl.windowRef, 's:' + sl.id));
+    const scene = (ovCh.nt.mode === 'scene' && ovCh.nt.scene && ovHasTag()) ? ovWrap(ovTagPart(), 'ov-scene') : '';
+    if (previewState.ovScene !== scene) {
+        previewState.ovScene = scene;
+        try { renderPreview(); } catch (e) {}
+    }
+    try { transmitStatePacketToRemoteClients(); } catch (e) {}
+    ntSyncUI();
+}
+function ntRefreshAll() { ovRefreshAll(); }
+function ovTurnOn(ch, key, name) {
+    if (name === 'nt' && !ovHasTag()) { ntNote('Type a role or name first.'); return false; }
+    if (name === 'ann' && !ovAnnData().text) { ovAnnNote('Type the announcement text first.'); return false; }
+    ovSet(ch, key, true);
+    if (key === 'projector') { if (!projectorWindowRef || projectorWindowRef.closed) sendToProjectorAutoDetect(); }
+    else if (key.startsWith('s:')) { const id = key.slice(2), sl = outputSlots.find(s => s.id === id); if (sl && (!sl.windowRef || sl.windowRef.closed)) openOutputSlotWindow(id); }
+    return true;
+}
+function ovDefaultSend(name) {
+    const ch = ovCh[name];
+    if (name === 'nt' && ch.mode === 'scene') { if (!ovHasTag()) { ntNote('Type a role or name first.'); return; } ch.scene = true; ovRefreshAll(); return; }
+    if (name === 'nt' && !ovHasTag()) { ntNote('Type a role or name first.'); return; }
+    if (name === 'ann' && !ovAnnData().text) { ovAnnNote('Type the announcement text first.'); return; }
+    ch.t.obs = true;
+    const anyWin = Object.keys(ch.t.slots).length || ch.t.projector;
+    const projOpen = projectorWindowRef && !projectorWindowRef.closed;
+    if (projOpen) ch.t.projector = true; else if (!anyWin) ovTurnOn(ch, 'projector', name);
+    (name === 'nt' ? ntNote : ovAnnNote)('');
+    ovRefreshAll();
+}
+function ovHide(name) { const ch = ovCh[name]; ch.t = { projector: false, slots: {}, obs: false, obsOnly: false }; if (name === 'nt') ch.scene = false; ovRefreshAll(); }
+function ntHideAll() { ovHide('nt'); }
+function ovAnnNote(t) { const e = document.getElementById('annStatus'); if (e) e.innerText = t || ''; }
+function ovSyncBtn(btnId, on, label) {
+    const s = document.getElementById(btnId); if (!s) return;
+    s.innerText = on ? '⏹ Hide ' + label : '▶ Send ' + label;
+    s.style.background = on ? '#b91c1c' : '#1d4ed8'; s.style.borderColor = on ? '#dc2626' : '#2563eb';
+}
+function ntSyncUI() {
+    ovSyncBtn('ntSendBtn', ntAnyActive(), 'Name Tag');
+    ovSyncBtn('annSendBtn', ovAnyTarget(ovCh.ann), 'Banner Overlay');
+    const sb = document.getElementById('ntStyleBtn'); if (sb) sb.innerText = 'NAME TAG: ' + LTT[ntState.tpl].name.toUpperCase() + ' ▾';
+    const pos = document.getElementById('ntPosition'); if (pos) pos.value = ntState.pos;
+    const sv = document.getElementById('ntSizeVal'); if (sv) sv.innerText = ntState.scale + '%';
+    const prev = document.getElementById('ntPrev'); if (prev) prev.innerHTML = ntTagHtml(ntState.tpl, ntStyle(), previewState.lowerThirdRole || 'Ministering', previewState.lowerThirdName || 'Pastor Ade');
+}
+function ovBuildMenu(name) {
+    const m = document.getElementById(name + 'SendMenu'); if (!m) return;
+    const ch = ovCh[name], what = name === 'nt' ? 'name tag' : 'banner';
+    const row = (label, key, sub) => { const a = ovOn(ch, key); return `<button type="button" class="ntu-item" data-k="${key}">${a ? '✓ ' : '○ '}${label}<small>${a ? 'showing — click to remove' : sub}</small></button>`; };
+    let h = '';
+    const sceneMode = name === 'nt' && ch.mode === 'scene';
+    if (name === 'nt') h += `<div class="ntu-seg"><button type="button" data-mode="overlay" class="${sceneMode ? '' : 'on'}">Overlay only</button><button type="button" data-mode="scene" class="${sceneMode ? 'on' : ''}">With the scene</button></div>`;
+    if (sceneMode) h += `<div class="ntu-hd" style="text-transform:none;font-weight:500">The name tag is drawn inside the verse scene, so it goes to every screen the scene goes to (Projector, OBS, extra outputs). Use the main button to send / hide.</div>`;
+    else {
+        h += row('Projector', 'projector', 'overlay only') + outputSlots.map(sl => row(sl.name || 'Output', 's:' + sl.id, 'overlay only')).join('');
+        h += row('OBS Browser Source', 'obs', 'on top of the verse scene') + row('OBS Overlay-only source', 'obsOnly', 'transparent · link in Settings');
+        if (name === 'ann') h += '<div class="ntu-hd" style="text-transform:none;font-weight:500">To put the banner inside the verse scene instead, use “Stage Alert”.</div>';
+    }
+    h += `<div class="ntu-sep"></div><button type="button" class="ntu-item" data-k="hide" style="color:#fca5a5">⏹ Hide ${what} from all screens</button>`;
+    m.innerHTML = h;
+    m.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); const nm = b.dataset.mode; if (ch.mode === nm) return;
+        if (ch.mode === 'scene') ch.scene = false; ch.mode = nm; ovRefreshAll(); ovBuildMenu(name);
+    }));
+    m.querySelectorAll('.ntu-item').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); const k = b.dataset.k;
+        if (k === 'hide') ovHide(name);
+        else if (ovOn(ch, k)) { ovSet(ch, k, false); ovRefreshAll(); }
+        else { if (!ovTurnOn(ch, k, name)) return; ovRefreshAll(); }
+        m.classList.remove('open');
+    }));
+}
+function ntBuildSendMenu() { ovBuildMenu('nt'); }
+function initAnnOverlay() {
+    const btn = document.getElementById('annSendBtn'); if (!btn) return;
+    const menu = document.getElementById('annSendMenu');
+    btn.addEventListener('click', () => { if (ovAnyTarget(ovCh.ann)) ovHide('ann'); else ovDefaultSend('ann'); });
+    document.getElementById('annSendCaret').addEventListener('click', (e) => { e.stopPropagation(); const nt = document.getElementById('ntSendMenu'); if (nt) nt.classList.remove('open'); ovBuildMenu('ann'); menu.classList.toggle('open'); });
+    menu.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => menu.classList.remove('open'));
+    ['announcementInput', 'announcementEffectSelector', 'announcementPositionSelector'].forEach(id => { const el = document.getElementById(id); if (el) { el.addEventListener('input', () => { if (ovAnyTarget(ovCh.ann)) ovRefreshAll(); }); el.addEventListener('change', () => { if (ovAnyTarget(ovCh.ann)) ovRefreshAll(); }); } });
+    const col = document.getElementById('announcementColorPicker'); if (col) col.addEventListener('input', () => { if (ovAnyTarget(ovCh.ann)) ovRefreshAll(); });
+    const clr = document.getElementById('clearAnnouncementBtn'); if (clr) clr.addEventListener('click', () => { if (ovAnyTarget(ovCh.ann)) ovRefreshAll(); });
 }
