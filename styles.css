@@ -1313,7 +1313,7 @@
 
 
 /* OUTPUTS BAR (dashboard) */
-.outputs-bar { position: relative; z-index: 30; user-select: none; -webkit-user-select: none; display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; flex: 0 0 auto; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--bg-accent); background: var(--bg-panel); }
+.outputs-bar { position: relative; z-index: 2; user-select: none; -webkit-user-select: none; display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; flex: 0 0 auto; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--bg-accent); background: var(--bg-panel); }
 .outputs-bar-title { font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); margin-right: 0.2rem; }
 .outputs-bar-empty { font-size: 0.72rem; color: var(--text-muted); }
 .outputs-chip { position: relative; display: flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.3rem 0.15rem 0.45rem; border: 1px solid var(--bg-accent); border-radius: 8px; background: var(--bg-main); }
@@ -1336,3 +1336,6 @@
 
 /* Keep the scene's text/layers underneath the Outputs bar dropdown (the menu now stays solid on top of the scene) */
 .single-scene-column { isolation: isolate; }
+
+/* the Outputs bar only rises above the scene while one of its own menus is open, so ribbon dropdowns always stay on top of it */
+.outputs-bar:has(.outputs-menu) { z-index: 30; }
