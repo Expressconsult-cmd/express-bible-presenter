@@ -5638,6 +5638,7 @@ function initNameTagOverlay() {
 var OV_CSS = `
 .ntl-solid{background:#000}
 html.ov-alone,html.ov-alone body{background:transparent!important}
+html.ov-alone body > :not(#ebpNtLayer){display:none!important}
 html.ov-alone #outputCanvas,html.ov-alone #directProjectorCanvas,html.ov-alone #obsCanvas,html.ov-alone #outputCanvasOverlayTimer{visibility:hidden!important}
 .ov-scene{position:absolute!important;z-index:9}
 .ov-scene .ntl-frame{width:100%}
