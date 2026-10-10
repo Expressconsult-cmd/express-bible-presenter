@@ -5685,7 +5685,13 @@ function ovWrap(parts, cls, solid) {
 }
 function ovAnnActive() { return ovCh.ann.mode === 'scene' ? ovCh.ann.scene : ovAnyTarget(ovCh.ann); }
 function ovAloneFor(key) {
-    return !!((ovCh.nt.mode === 'overlay' && ovOn(ovCh.nt, key) && ovHasTag()) || (ovCh.ann.mode === 'overlay' && ovOn(ovCh.ann, key) && ovAnnData().text));
+    // "alone" (hide the verse, transparent page) only when every overlay being shown on this screen is "Overlay only"
+    // and nothing is being drawn into the scene itself
+    const modes = [];
+    if (ovCh.nt.mode !== 'scene' && ovOn(ovCh.nt, key) && ovHasTag()) modes.push(ovCh.nt.mode);
+    if (ovCh.ann.mode !== 'scene' && ovOn(ovCh.ann, key) && ovAnnData().text) modes.push(ovCh.ann.mode);
+    const sceneActive = (ovCh.nt.mode === 'scene' && ovCh.nt.scene) || (ovCh.ann.mode === 'scene' && ovCh.ann.scene);
+    return modes.length > 0 && modes.every(m => m === 'overlay') && !sceneActive;
 }
 function ovHtmlFor(key) {
     let parts = '';
@@ -5772,7 +5778,7 @@ function ovDefaultSend(name) {
     const ch = ovCh[name], note = name === 'nt' ? ntNote : ovAnnNote;
     if (name === 'nt' && !ovHasTag()) { ntNote('Type a role or name first.'); return; }
     if (name === 'ann' && !ovAnnData().text) { ovAnnNote('Type the announcement text first.'); return; }
-    if (ch.mode === 'scene') { ch.scene = true; note(''); ovRefreshAll(); return; }
+    if (ch.mode === 'scene') { ch.scene = true; note('Sent With the scene — drawn inside the verse scene.'); ovRefreshAll(); return; }
     ch.t.obs = true;
     // send to every screen that is currently open (Projector + any output feed window); open the Projector if none is
     const names = [];
@@ -5780,7 +5786,7 @@ function ovDefaultSend(name) {
     outputSlots.forEach(sl => { if (sl.windowRef && !sl.windowRef.closed) { ch.t.slots[sl.id] = true; names.push(sl.name || 'Output'); } });
     if (!names.length && !Object.keys(ch.t.slots).length && !ch.t.projector) { ovTurnOn(ch, 'projector', name); names.push('Projector (opening…)'); }
     names.push('OBS');
-    note('Sent to: ' + names.join(', ') + '. Use ▾ to change.');
+    note('Sent (' + (ch.mode === 'ontop' ? 'On top of feed' : 'Overlay only') + ') to: ' + names.join(', ') + '. Use ▾ to change.');
     ovRefreshAll();
 }
 function ovHide(name) { const ch = ovCh[name]; ch.t = { projector: false, slots: {}, obs: false, obsOnly: false }; ch.scene = false; ovRefreshAll(); }
@@ -5788,7 +5794,9 @@ function ntHideAll() { ovHide('nt'); }
 function ovAnnNote(t) { const e = document.getElementById('annStatus'); if (e) e.innerText = t || ''; }
 function ovSyncBtn(btnId, on, label) {
     const s = document.getElementById(btnId); if (!s) return;
-    s.innerText = on ? '⏹ Hide ' + label : '▶ Send ' + label;
+    const ch = ovCh[btnId === 'ntSendBtn' ? 'nt' : 'ann'], ml = { overlay: 'Overlay only', ontop: 'On top of feed', scene: 'With the scene' }[ch.mode];
+    s.innerText = (on ? '⏹ Hide ' + label : '▶ Send ' + label) + ' · ' + ml;
+    s.title = 'Mode: ' + ml + ' (change it in the ▾ menu)';
     s.style.background = on ? '#b91c1c' : '#1d4ed8'; s.style.borderColor = on ? '#dc2626' : '#2563eb';
 }
 function ntSyncUI() {
@@ -5816,7 +5824,7 @@ function ovBuildMenu(name) {
     m.innerHTML = h;
     m.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', (e) => {
         e.stopPropagation(); const nm = b.dataset.mode; if (ch.mode === nm) return;
-        if (ch.mode === 'scene') ch.scene = false; ch.mode = nm; ovRefreshAll(); ovBuildMenu(name);
+        if (ch.mode === 'scene') ch.scene = false; ch.mode = nm; try { lttSave('ebpOvModes', { nt: ovCh.nt.mode, ann: ovCh.ann.mode }); } catch (e) {} ovRefreshAll(); ovBuildMenu(name);
     }));
     m.querySelectorAll('.ntu-item').forEach(b => b.addEventListener('click', (e) => {
         e.stopPropagation(); const k = b.dataset.k;
@@ -5829,6 +5837,7 @@ function ovBuildMenu(name) {
 function ntBuildSendMenu() { ovBuildMenu('nt'); }
 function initAnnOverlay() {
     const btn = document.getElementById('annSendBtn'); if (!btn) return;
+    try { const m = lttLoad('ebpOvModes', null); if (m) { if (['overlay', 'ontop', 'scene'].includes(m.nt)) ovCh.nt.mode = m.nt; if (['overlay', 'ontop', 'scene'].includes(m.ann)) ovCh.ann.mode = m.ann; } } catch (e) {}
     const menu = document.getElementById('annSendMenu');
     btn.addEventListener('click', () => { if (ovAnnActive()) ovHide('ann'); else ovDefaultSend('ann'); });
     document.getElementById('annSendCaret').addEventListener('click', (e) => { e.stopPropagation(); const nt = document.getElementById('ntSendMenu'); if (nt) nt.classList.remove('open'); ovBuildMenu('ann'); menu.classList.toggle('open'); });
