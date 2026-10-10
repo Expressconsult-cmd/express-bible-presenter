@@ -18,7 +18,7 @@
     <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <!-- ZIP READING: PowerPoint (.pptx) files are ZIP archives internally — used to pull out slide text/images -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <link rel="stylesheet" href="styles.css?v=8">
+    <link rel="stylesheet" href="styles.css?v=9">
     <!-- SIGN-IN: Firebase passwordless magic-link authentication (see auth.js) -->
     <script type="module" src="auth.js"></script>
 </head>
@@ -530,7 +530,7 @@
                     <button id="stageAnnouncementBtn" class="btn announcement-btn">Stage Alert</button>
                     <button id="announcementEyeToggleBtn" class="btn" style="padding: 0.45rem 0.6rem; font-size: 0.9rem;" title="Show/hide the announcement banner without losing its text">👁</button>
                     <span style="position:relative; display:inline-flex;">
-                        <button id="annSendBtn" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; border-radius:6px 0 0 6px; padding:0.45rem 0.7rem; font-size:0.78rem; white-space:nowrap;" title="Send the banner on its own as a transparent overlay on top of whatever the screens are showing">▶ Send Banner Overlay</button>
+                        <button id="annSendBtn" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; border-radius:6px 0 0 6px; padding:0.45rem 0.7rem; font-size:0.78rem; white-space:nowrap;" title="Send the banner on its own as a transparent overlay on top of whatever the screens are showing">▶ Send Banner</button>
                         <button id="annSendCaret" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; border-left:1px solid #93c5fd; border-radius:0 6px 6px 0; padding:0.45rem 0.5rem;" title="Choose which screens get the banner overlay">▾</button>
                         <div id="annSendMenu" class="ntu-menu"></div>
                     </span>
@@ -917,6 +917,6 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="script.js?v=22"></script>
+    <script src="script.js?v=23"></script>
 </body>
 </html>
