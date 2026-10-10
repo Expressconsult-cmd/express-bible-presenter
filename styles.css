@@ -1313,7 +1313,7 @@
 
 
 /* OUTPUTS BAR (dashboard) */
-.outputs-bar { position: relative; z-index: 2; display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; flex: 0 0 auto; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--bg-accent); background: var(--bg-panel); }
+.outputs-bar { position: relative; z-index: 30; user-select: none; -webkit-user-select: none; display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; flex: 0 0 auto; padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--bg-accent); background: var(--bg-panel); }
 .outputs-bar-title { font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); margin-right: 0.2rem; }
 .outputs-bar-empty { font-size: 0.72rem; color: var(--text-muted); }
 .outputs-chip { position: relative; display: flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.3rem 0.15rem 0.45rem; border: 1px solid var(--bg-accent); border-radius: 8px; background: var(--bg-main); }
@@ -1324,7 +1324,7 @@
 .outputs-chip-tag.mode-congregation { background: #166534; }
 .outputs-chip-tag.mode-timer, .outputs-chip-tag.mode-timerverse { background: #7c3aed; }
 .outputs-chip-tag.mode-preview { background: #b45309; }
-.outputs-menu { position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; z-index: 50; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid var(--accent-primary); border-radius: 8px; background: var(--bg-panel); box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+.outputs-menu { user-select: none; -webkit-user-select: none; position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; z-index: 50; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid var(--accent-primary); border-radius: 8px; background: var(--bg-panel); box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
 .outputs-menu-item { text-align: left; background: none; border: none; color: var(--text-main, inherit); font-family: inherit; font-size: 0.74rem; padding: 0.4rem 0.5rem; border-radius: 5px; cursor: pointer; }
 .outputs-menu-item:hover { background: rgba(56,189,248,0.12); }
 .outputs-menu-item.sel { background: #1d4ed8; color: #fff; font-weight: 700; }
@@ -1333,3 +1333,6 @@
 /* SCENE PREVIEW: no title label, and only a thin border so the scene fills the black area (same frame ratio) */
 .single-scene-column > .deck-label { display: none; }
 .screen-column.single-scene-column { padding: 5px; }
+
+/* Keep the scene's text/layers underneath the Outputs bar dropdown (the menu now stays solid on top of the scene) */
+.single-scene-column { isolation: isolate; }
