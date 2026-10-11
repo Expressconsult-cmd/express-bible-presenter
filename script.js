@@ -350,6 +350,7 @@
             });
 
             hostPeerNode.on('connection', (conn) => {
+                if (conn.metadata && conn.metadata.rc) { rcHandleConn(conn); return; } // phone / tablet remote control (see REMOTE CONTROL block)
                 activeRemoteDataConnections.push(conn);
                 conn.on('data', (incomingPayload) => {
                     handleIncomingRemoteDataPayload(incomingPayload);
@@ -5942,3 +5943,280 @@ function ebpBridgeVideo(conn, url, tries) {
     const b = syncLiveStateToRemoteChannels;
     syncLiveStateToRemoteChannels = function () { const r = b.apply(this, arguments); ebpBridgeMedia(); return r; };
 })();
+
+
+// ===================== REMOTE CONTROL (phone / tablet / laptop) =====================
+// A separate light page (remote.html, no sign-in screen) connects to this dashboard over the same PeerJS link method as OBS and
+// sends commands. Every command just presses the same buttons / runs the same functions the dashboard already uses, so nothing
+// about the existing behaviour changes. Access needs the link AND a 4-digit PIN; each device can be limited to chosen tabs.
+const RC_TABS = ['live', 'bible', 'songs', 'media', 'message'];
+const RC_TAB_LABEL = { live: 'Live', bible: 'Bible', songs: 'Songs', media: 'Media', message: 'Message' };
+const RC_CMD_TAB = {
+    freeze: 'live', blank: 'live', restore: 'live', next: 'live', prev: 'live', layout_lt: 'live', split: 'live', timer_toggle: 'live', timer_reset: 'live',
+    verse: 'bible', goto: 'bible', version: 'bible', bnext: 'bible', bprev: 'bible',
+    song_load: 'songs', slide: 'songs', song_next: 'songs', song_prev: 'songs',
+    media_show: 'media', media_hide: 'media', play: 'media', skip: 'media', seek: 'media', page: 'media', slides_prev: 'media', slides_next: 'media', slides_play: 'media', slides_toggle: 'media',
+    ann_stage: 'message', ann_send: 'message', ann_clear: 'message', ann_eye: 'message', tag_send: 'message', tag_hide: 'message'
+};
+const rc = { on: true, pin: '', defPerms: RC_TABS.slice(), permsByName: {}, devices: [], lastLight: '', lastHeavy: '', stash: null, ctx: null, prevLayout: 'mode-center', lastId: '', soon: null };
+
+function rcLoad() {
+    try { rc.on = localStorage.getItem('ebpRcOn') !== '0'; } catch (e) {}
+    try { rc.pin = localStorage.getItem('ebpRcPin') || ''; } catch (e) {}
+    if (!/^\d{4}$/.test(rc.pin)) rcNewPin(true);
+    try { const d = JSON.parse(localStorage.getItem('ebpRcDefPerms')); if (Array.isArray(d)) rc.defPerms = d.filter(t => RC_TABS.includes(t)); } catch (e) {}
+    try { const p = JSON.parse(localStorage.getItem('ebpRcPermsByName')); if (p && typeof p === 'object') rc.permsByName = p; } catch (e) {}
+}
+function rcSave() {
+    try {
+        localStorage.setItem('ebpRcOn', rc.on ? '1' : '0'); localStorage.setItem('ebpRcPin', rc.pin);
+        localStorage.setItem('ebpRcDefPerms', JSON.stringify(rc.defPerms)); localStorage.setItem('ebpRcPermsByName', JSON.stringify(rc.permsByName));
+    } catch (e) {}
+}
+function rcNewPin(silent) {
+    rc.pin = String(Math.floor(1000 + Math.random() * 9000));
+    rcSave();
+    if (!silent) { rc.devices.slice().forEach(d => rcKick(d)); rcRenderPanel(); }
+}
+function rcLink() {
+    if (typeof hostPeerNode === 'undefined' || !hostPeerNode || !hostPeerNode.id) return '';
+    return new URL('remote.html', window.location.href).href.split('?')[0].split('#')[0] + '?s=' + hostPeerNode.id;
+}
+function rcSend(dev, msg) { try { if (dev.conn && dev.conn.open) dev.conn.send(msg); } catch (e) {} }
+function rcKick(dev) {
+    rcSend(dev, { t: 'denied', why: 'kicked' });
+    setTimeout(() => { try { dev.conn.close(); } catch (e) {} }, 200);
+    rcDrop(dev);
+}
+function rcDrop(dev) {
+    const i = rc.devices.indexOf(dev);
+    if (i >= 0) { rc.devices.splice(i, 1); rcRenderPanel(); }
+}
+function rcHandleConn(conn) {
+    const dev = { conn, name: 'Device', perms: [], ok: false, fails: 0, joined: 0 };
+    conn.on('data', m => { try { rcOnMessage(dev, m); } catch (e) { console.warn('remote', e); } });
+    conn.on('close', () => rcDrop(dev));
+    conn.on('error', () => rcDrop(dev));
+}
+function rcOnMessage(dev, m) {
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'hello') {
+        if (!rc.on) { rcSend(dev, { t: 'denied', why: 'off' }); return; }
+        const now = Date.now(); rc.failTimes = (rc.failTimes || []).filter(t => now - t < 60000);
+        if (rc.failTimes.length >= 8) { rcSend(dev, { t: 'denied', why: 'locked' }); return; } // too many wrong PINs lately
+        if (String(m.pin) !== rc.pin) {
+            rc.failTimes.push(now);
+            dev.fails++; rcSend(dev, { t: 'denied', why: 'pin' });
+            if (dev.fails >= 5) setTimeout(() => { try { dev.conn.close(); } catch (e) {} }, 300);
+            return;
+        }
+        dev.ok = true; dev.name = String(m.name || 'Device').replace(/[<>]/g, '').slice(0, 24) || 'Device'; dev.joined = Date.now();
+        dev.perms = (rc.permsByName[dev.name] || rc.defPerms).filter(t => RC_TABS.includes(t));
+        if (!rc.devices.includes(dev)) rc.devices.push(dev);
+        rcSend(dev, { t: 'welcome', perms: dev.perms, name: dev.name });
+        rcSend(dev, { t: 'heavy', d: rcHeavy() });
+        rcSend(dev, { t: 'light', d: rcLight() });
+        rcRenderPanel();
+        return;
+    }
+    if (!dev.ok || !rc.on) return;
+    if (m.t === 'cmd') rcRunCmd(dev, String(m.c), m.a || {});
+}
+function rcRunCmd(dev, c, a) {
+    const need = RC_CMD_TAB[c];
+    if (!need || dev.perms.indexOf(need) < 0) { rcSend(dev, { t: 'toast', msg: 'This device is not allowed to do that' }); return; }
+    const r = RC_CMDS[c](a);
+    const done = () => { rcTickSoon(); };
+    if (r && r.then) r.then(done, done); else done();
+}
+const rcEl = id => document.getElementById(id);
+function rcFire(el, type) { if (el) el.dispatchEvent(new Event(type, { bubbles: true })); }
+function rcContext() { return rc.ctx || ((rcEl('lyrics-tab') && rcEl('lyrics-tab').classList.contains('active')) ? 'song' : 'bible'); }
+const RC_CMDS = {
+    freeze() { rcEl('freezeLiveBtn').click(); },
+    blank() {
+        if (liveState.text) rc.stash = { text: liveState.text, ref: liveState.ref };
+        switchToTextDisplay(); previewState.text = ''; previewState.ref = '';
+        renderPreview(); transmitStatePacketToRemoteClients();
+    },
+    restore() {
+        if (!rc.stash) return;
+        switchToTextDisplay(); previewState.text = rc.stash.text; previewState.ref = rc.stash.ref; rc.stash = null;
+        renderPreview(); transmitStatePacketToRemoteClients();
+    },
+    next() { if (rcContext() === 'song') navigateSongSlide(1); else { navigateSequentialOffsetVerses(1); sendStagedToLiveView(); } },
+    prev() { if (rcContext() === 'song') navigateSongSlide(-1); else { navigateSequentialOffsetVerses(-1); sendStagedToLiveView(); } },
+    bnext() { rc.ctx = 'bible'; RC_CMDS.next(); },
+    bprev() { rc.ctx = 'bible'; RC_CMDS.prev(); },
+    layout_lt() {
+        const sel = rcEl('layoutSelector');
+        if (sel.value === 'mode-lowerthird') sel.value = rc.prevLayout || 'mode-center'; else { rc.prevLayout = sel.value; sel.value = 'mode-lowerthird'; }
+        rcFire(sel, 'change');
+    },
+    split() {
+        if (typeof splitState === 'undefined') return;
+        if (splitState.active) splitCancel(true); else splitStart(currentVerse);
+    },
+    timer_toggle() { rcEl('timerToggleStartBtn').click(); },
+    timer_reset() { rcEl('timerResetBtn').click(); },
+    verse(a) {
+        const n = parseInt(a.n, 10); if (!activeChapterVerses.some(v => v.verse === n)) return;
+        rc.ctx = 'bible'; forceTextVisibleOnDoubleClick(); selectSpecificVerseCoordinate(n); sendStagedToLiveView();
+    },
+    async goto(a) {
+        const q = String(a.q || '').slice(0, 60); if (!q.trim()) return;
+        rc.ctx = 'bible'; rcEl('manualSearchInput').value = q;
+        await parseAndRouteInput(q, false);
+        switchToTextDisplay(); sendStagedToLiveView();
+    },
+    version(a) {
+        const sel = rcEl('versionSelector');
+        if (!Array.from(sel.options).some(o => o.value === a.v)) return;
+        sel.value = a.v; rcFire(sel, 'change');
+    },
+    song_load(a) {
+        const dd = rcEl('savedSongsDropdown');
+        if (!Array.from(dd.options).some(o => o.value === a.id)) return;
+        rc.ctx = 'song'; dd.value = a.id; rcEl('loadSavedSongBtn').click();
+    },
+    slide(a) {
+        const rows = document.querySelectorAll('#lyricsSlidesDeck .verse-row'), r = rows[parseInt(a.i, 10)];
+        if (!r) return; rc.ctx = 'song'; r.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    },
+    song_next() { rc.ctx = 'song'; navigateSongSlide(1); },
+    song_prev() { rc.ctx = 'song'; navigateSongSlide(-1); },
+    media_show(a) {
+        if (!mediaLibrary.some(m => m.id === a.id)) return;
+        rcEl('mediaLibraryDropdown').value = a.id; showMedia(a.id);
+    },
+    media_hide() { rcEl('mediaHideBtn').click(); },
+    play() { rcEl('mediaPlayPauseBtn').click(); },
+    skip(a) { rcEl(a.d < 0 ? 'mediaSkipBackBtn' : 'mediaSkipFwdBtn').click(); },
+    seek(a) { const s = rcEl('mediaSeekSlider'); s.value = Math.max(0, Math.min(100, Number(a.p) || 0)); rcFire(s, 'input'); },
+    page(a) { navigatePagedMedia(a.d < 0 ? -1 : 1); },
+    slides_prev() { rcEl('slidesPrevBtn').click(); },
+    slides_next() { rcEl('slidesNextBtn').click(); },
+    slides_play() { rcEl('slidesPlayBtn').click(); },
+    slides_toggle() { rcEl('slidesEyeBtn').click(); },
+    ann_stage(a) {
+        const t = rcEl('announcementInput');
+        if (a.text != null) { t.value = String(a.text).slice(0, 200); rcFire(t, 'input'); }
+        ['effect:announcementEffectSelector:none,scroll,breathing,fade', 'pos:announcementPositionSelector:bottom,top,center'].forEach(spec => {
+            const [k, id, list] = spec.split(':'); if (a[k] && list.split(',').includes(a[k])) { const s = rcEl(id); s.value = a[k]; rcFire(s, 'change'); }
+        });
+        rcEl('stageAnnouncementBtn').click();
+    },
+    ann_send(a) {
+        const t = rcEl('announcementInput');
+        if (a.text != null) { t.value = String(a.text).slice(0, 200); rcFire(t, 'input'); }
+        if (typeof ovAnnActive === 'function' && ovAnnActive() && a.text == null) { rcEl('annSendBtn').click(); return; }
+        if (typeof ovAnnActive === 'function' && !ovAnnActive()) rcEl('annSendBtn').click(); else if (typeof ovRefreshAll === 'function') ovRefreshAll();
+    },
+    ann_clear() { rcEl('clearAnnouncementBtn').click(); },
+    ann_eye() { rcEl('announcementEyeToggleBtn').click(); },
+    tag_send(a) {
+        const role = String(a.role || '').slice(0, 60), name = String(a.name || '').slice(0, 80); if (!role && !name) return;
+        const ri = rcEl('lowerThirdRoleInput'), ni = rcEl('lowerThirdNameInput');
+        ri.value = role; ni.value = name; previewState.lowerThirdRole = role; previewState.lowerThirdName = name;
+        rcFire(ri, 'input'); rcFire(ni, 'input');
+        renderPreview();
+        if (typeof ntAnyActive === 'function' && !ntAnyActive()) ovDefaultSend('nt'); else if (typeof ovRefreshAll === 'function') ovRefreshAll();
+    },
+    tag_hide() { if (typeof ntAnyActive === 'function' && ntAnyActive()) ntHideAll(); }
+};
+
+function rcStrip(s) { return String(s == null ? '' : s).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim(); }
+function rcVideoEl() {
+    const st = liveState.displayMode === 'media' ? liveState : previewState;
+    if (!(st.displayMode === 'media' && st.mediaKind === 'video' && st.mediaUrl)) return null;
+    const e = masterVideoRegistry.get(st.mediaUrl); return e ? e.masterEl : null;
+}
+function rcHeavy() {
+    let names = []; try { names = JSON.parse(localStorage.getItem('ebp_saved_names') || '[]'); } catch (e) {}
+    const rows = Array.from(document.querySelectorAll('#lyricsSlidesDeck .verse-row'));
+    return {
+        verses: activeChapterVerses.map(v => ({ n: v.verse, t: rcStrip(v.text).slice(0, 220) })),
+        versions: Array.from(rcEl('versionSelector').options).map(o => ({ v: o.value, l: o.value })),
+        songs: savedSongsLibrary.map(s => ({ id: s.id, t: s.title })).sort((x, y) => String(x.t).localeCompare(String(y.t))),
+        slides: rows.map(r => { const p = r.querySelector('.verse-preview-text'); return rcStrip(p ? p.textContent : '').slice(0, 140); }),
+        media: mediaLibrary.map(m => ({ id: m.id, n: m.name, k: m.kind })),
+        names: (Array.isArray(names) ? names : []).map(n => ({ r: n.role || '', n: n.name || '' })),
+        book: blibBookName(currentBookCode, currentBookName) + ' ' + currentChapter
+    };
+}
+function rcLight() {
+    const v = rcVideoEl(), rows = Array.from(document.querySelectorAll('#lyricsSlidesDeck .verse-row'));
+    const live = liveState;
+    return {
+        text: rcStrip(live.text).slice(0, 240), ref: rcStrip(live.ref), mode: live.displayMode, mname: live.mediaName || '', mkind: live.mediaKind || '',
+        page: live.mediaPdfPage || 0, pages: live.mediaPdfPageCount || 0,
+        frozen: !!isLiveFrozen, blanked: !!rc.stash && !live.text && live.displayMode !== 'media',
+        layout: rcEl('layoutSelector').value, verse: currentVerse, version: rcEl('versionSelector').value, book: blibBookName(currentBookCode, currentBookName) + ' ' + currentChapter,
+        timer: { t: live.timerText || '', run: !!isTimerActive },
+        vid: v ? { paused: !!v.paused, t: Math.floor(v.currentTime || 0), d: Math.floor(v.duration || 0) } : null,
+        sl: { n: slides.items.length, i: slides.index, vis: !!slides.visible, play: !!slides.playing },
+        song: { i: rows.findIndex(r => r.classList.contains('active')), n: rows.length },
+        ann: { on: (typeof ovAnnActive === 'function') ? !!ovAnnActive() : false, shown: !!previewState.announcementVisible, text: previewState.announcementText || '' },
+        tag: { on: (typeof ntAnyActive === 'function') ? !!ntAnyActive() : false },
+        ctx: rcContext(),
+        split: (typeof splitState !== 'undefined') ? { on: !!splitState.active, i: splitState.index, n: splitState.parts.length, ok: !!(splitProbe && splitProbe.shrinks && splitProbe.shrinks.get(currentVerse)) } : { on: false, i: 0, n: 0, ok: false }
+    };
+}
+function rcTickSoon() { if (rc.soon) return; rc.soon = setTimeout(() => { rc.soon = null; rcTick(); }, 60); }
+function rcTick() {
+    if (typeof hostPeerNode !== 'undefined' && hostPeerNode && hostPeerNode.id !== rc.lastId) { rc.lastId = hostPeerNode.id; rcRenderPanel(); }
+    if (!rc.devices.length) return;
+    let h = '', l = '';
+    try { h = JSON.stringify(rcHeavy()); l = JSON.stringify(rcLight()); } catch (e) { return; }
+    if (h !== rc.lastHeavy) { rc.lastHeavy = h; const d = JSON.parse(h); rc.devices.forEach(dev => dev.ok && rcSend(dev, { t: 'heavy', d })); }
+    if (l !== rc.lastLight) { rc.lastLight = l; const d = JSON.parse(l); rc.devices.forEach(dev => dev.ok && rcSend(dev, { t: 'light', d })); }
+}
+
+// ---- dashboard panel (Settings -> Integrations) ----
+function rcEnsureStyle() {
+    if (document.getElementById('rcStyle')) return;
+    const st = document.createElement('style'); st.id = 'rcStyle';
+    st.textContent = '#rcBody .rc-row{display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start;margin-top:.6rem}#rcBody .rc-qr{width:170px;height:170px;background:#fff;border-radius:10px;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#111;font-size:.7rem;text-align:center}'
+        + '#rcBody .rc-pin{font-size:1.9rem;font-weight:700;letter-spacing:.3em;color:#f5b942;font-variant-numeric:tabular-nums}#rcBody .rc-chip{padding:.28rem .6rem;border-radius:999px;border:1px solid var(--border-color,#334155);background:transparent;color:var(--text-muted,#94a3b8);font-size:.72rem;cursor:pointer}'
+        + '#rcBody .rc-chip.on{background:rgba(245,185,66,.15);border-color:#f5b942;color:#f5b942}#rcBody .rc-dev{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:.5rem 0;border-top:1px solid var(--border-color,#334155)}';
+    document.head.appendChild(st);
+}
+function rcRenderPanel() {
+    const body = rcEl('rcBody'); if (!body) return;
+    rcEnsureStyle();
+    const link = rcLink(), esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const chips = (list, attr) => RC_TABS.map(t => `<button type="button" class="rc-chip${list.includes(t) ? ' on' : ''}" ${attr}="${t}">${RC_TAB_LABEL[t]}</button>`).join('');
+    let h = `<div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap"><button type="button" class="btn" id="rcToggle" style="padding:.4rem .7rem;font-size:.78rem">Remote control: ${rc.on ? 'ON' : 'OFF'}</button><span style="font-size:.72rem;color:var(--text-muted)">${rc.devices.length} device${rc.devices.length === 1 ? '' : 's'} connected</span></div>`;
+    if (rc.on) {
+        h += `<div class="rc-row"><div class="rc-qr" id="rcQr">${link ? '' : 'Starting…'}</div><div style="flex:1;min-width:230px;display:flex;flex-direction:column;gap:.5rem">`
+            + `<div style="font-size:.74rem;color:var(--text-muted)">Scan the QR code with the phone camera, or copy this link to any phone, tablet or laptop:</div>`
+            + `<div class="link-input-group"><input type="text" id="rcLinkInput" readonly value="${esc(link || 'Session not initialized...')}"><button type="button" class="btn-copy" id="rcCopy">Copy</button></div>`
+            + `<div style="font-size:.74rem;color:var(--text-muted)">PIN to type on the phone</div><div class="rc-pin">${esc(rc.pin)}</div>`
+            + `<div><button type="button" class="btn" id="rcNewPin" style="padding:.35rem .7rem;font-size:.74rem">New PIN (disconnects everyone)</button></div></div></div>`
+            + `<div style="margin-top:.8rem;font-size:.78rem;font-weight:600">Tabs a new device may use</div><div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.3rem" id="rcDefChips">${chips(rc.defPerms, 'data-def')}</div>`
+            + `<div style="margin-top:.8rem;font-size:.78rem;font-weight:600">Connected devices</div>`
+            + (rc.devices.length ? rc.devices.map((d, i) => `<div class="rc-dev"><div style="min-width:120px"><b>${esc(d.name)}</b></div><div style="display:flex;gap:.3rem;flex-wrap:wrap;flex:1">${chips(d.perms, 'data-dev="' + i + '" data-tab')}</div><button type="button" class="btn" data-kick="${i}" style="padding:.3rem .6rem;font-size:.72rem">Disconnect</button></div>`).join('') : '<div style="font-size:.74rem;color:var(--text-muted);margin-top:.3rem">Nobody connected yet.</div>')
+            + `<div style="margin-top:.7rem;font-size:.7rem;color:var(--text-muted);line-height:1.5">Works over the internet, like the OBS link: keep this dashboard open on the main PC. The link changes every time the dashboard is reloaded, so scan the QR code again then (the PIN stays the same until you change it).</div>`;
+    }
+    body.innerHTML = h;
+    if (rc.on && link && window.ebpQrSvg) { const q = rcEl('rcQr'); const svg = ebpQrSvg(link, 170); if (q) q.innerHTML = svg || 'Link too long for QR'; }
+    rcEl('rcToggle').onclick = () => { rc.on = !rc.on; rcSave(); if (!rc.on) rc.devices.slice().forEach(rcKick); rcRenderPanel(); };
+    if (!rc.on) return;
+    rcEl('rcCopy').onclick = () => { const i = rcEl('rcLinkInput'); i.select(); try { document.execCommand('copy'); } catch (e) {} };
+    rcEl('rcNewPin').onclick = () => rcNewPin(false);
+    body.querySelectorAll('[data-def]').forEach(b => b.onclick = () => { const t = b.dataset.def, i = rc.defPerms.indexOf(t); if (i >= 0) rc.defPerms.splice(i, 1); else rc.defPerms.push(t); rcSave(); rcRenderPanel(); });
+    body.querySelectorAll('[data-dev]').forEach(b => b.onclick = () => {
+        const d = rc.devices[+b.dataset.dev]; if (!d) return; const t = b.dataset.tab, i = d.perms.indexOf(t);
+        if (i >= 0) d.perms.splice(i, 1); else d.perms.push(t);
+        rc.permsByName[d.name] = d.perms.slice(); rcSave(); rcSend(d, { t: 'perms', perms: d.perms }); rcRenderPanel();
+    });
+    body.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => { const d = rc.devices[+b.dataset.kick]; if (d) rcKick(d); });
+}
+function rcInit() {
+    if (isObsMode) return;
+    rcLoad(); rcRenderPanel();
+    setInterval(rcTick, 800);
+    const a = transmitStatePacketToRemoteClients;
+    transmitStatePacketToRemoteClients = function () { const r = a.apply(this, arguments); rcTickSoon(); return r; };
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', rcInit); else rcInit();
