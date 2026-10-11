@@ -59,6 +59,17 @@ nav button.act{background:var(--goldbg);color:var(--gold)}
 .time{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
 input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;z-index:9;max-width:90%}
+.mic{width:84px;height:84px;border-radius:50%;border:0;background:var(--blue);color:#fff;font-weight:700;font-size:14px;flex-shrink:0}
+.mic.on{background:var(--red);animation:pulse 1.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}100%{box-shadow:0 0 0 22px rgba(239,68,68,0)}}
+.seg{display:flex;gap:6px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:4px}
+.seg button{flex:1;min-height:40px;border-radius:9px;border:0;background:transparent;color:var(--mut);font-size:13px;font-weight:600}
+.seg button.sel{background:var(--goldbg);color:var(--gold)}
+.card.pend{background:#2a2312;border-color:var(--gold)}
+.card.sent{background:#122a1c;border-color:#1f6b3e}
+.card .h{font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.card .r{font-size:15px;font-weight:700;margin-top:3px}
+.card .t{font-size:13px;color:#c7d2de;margin-top:3px;line-height:1.4}
 #banner{background:#7f1d1d;color:#fff;text-align:center;font-size:14px;padding:8px}
 </style>
 </head>
@@ -150,6 +161,21 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
       <div class="row"><input id="tagRole" class="inp" placeholder="Role" maxlength="60"><input id="tagName" class="inp" placeholder="Name" maxlength="80"></div>
       <div class="row"><button class="btn pri" id="tagSend" style="min-height:52px">Send name tag</button><button class="btn" id="tagHide" style="min-height:52px">Hide tag</button></div>
     </div>
+    <div class="view" id="v-voice">
+      <div class="seg" id="vSrc"><button data-s="phone">This phone's mic</button><button data-s="pc">PC mic</button></div>
+      <div class="row" style="align-items:center;gap:14px"><button class="mic" id="vMic" style="flex:none">Start</button>
+        <div style="flex:1"><div style="font-size:15px;font-weight:600" id="vTitle">Voice is off</div><div class="sub" id="vSub" style="font-size:12px">Tap Start. You decide when a scripture goes to live.</div></div></div>
+      <div class="err" id="vErr"></div>
+      <div class="card"><div class="lbl">Heard</div><div id="vHeard" style="font-size:15px;margin-top:3px;min-height:22px"></div></div>
+      <div class="card pend" id="vPend" hidden><div class="h" style="color:var(--gold)">Ready to send</div><div class="r" id="vPendR"></div><div class="t" id="vPendT"></div>
+        <div class="row" style="margin-top:8px"><button class="btn go" id="vSend" style="min-height:48px">Send to live</button><button class="btn" id="vDismiss" style="min-height:48px">Dismiss</button></div></div>
+      <div class="card sent" id="vSent" hidden><div class="h" style="color:var(--green)">Sent to live</div><div class="r" id="vSentR"></div><div class="t" id="vSentT"></div>
+        <div class="row" style="margin-top:8px"><button class="btn" id="vUndo" style="min-height:48px;grid-column:1/-1">Undo</button></div></div>
+      <button class="btn" id="vPause" style="min-height:48px" hidden>Pause voice</button>
+      <div class="chips"><button class="chip" id="vAuto">Auto-send: Off</button><button class="chip sel" id="vFollow">Follow my reading: On</button><button class="chip sel" id="vCmds">"Next verse": On</button></div>
+      <select id="vLang" class="inp"><option value="en-US">Accent: English (US)</option><option value="en-GB">English (UK)</option><option value="en-NG">English (Nigeria)</option><option value="en-GH">English (Ghana)</option><option value="en-ZA">English (South Africa)</option><option value="en-KE">English (Kenya)</option><option value="en-IN">English (India)</option></select>
+      <div class="lbl">Recent (tap to send again)</div><div class="list" id="vRecent"></div>
+    </div>
     <div class="sub" id="noTabs" hidden style="text-align:center;padding:30px 10px">This device has no tabs enabled. Ask the person at the dashboard to allow some.</div>
   </div>
 
@@ -161,11 +187,11 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var TABS = [['live', 'Live'], ['bible', 'Bible'], ['songs', 'Songs'], ['media', 'Media'], ['message', 'Message']];
+  var TABS = [['live', 'Live'], ['bible', 'Bible'], ['songs', 'Songs'], ['media', 'Media'], ['message', 'Message'], ['voice', 'Voice']];
   var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
   var token = new URLSearchParams(location.search).get('s') || '';
   var peer = null, conn = null, authed = false, perms = [], st = null, hv = null, tab = 'live', retry = null, stopped = false, wasAuthed = false;
-  var pin = store.get('ebpRemotePin') || '', devName = store.get('ebpRemoteName') || '', seeking = false, annTouched = false, lastVerse = null, lastTab = null;
+  var myName = '', pin = store.get('ebpRemotePin') || '', devName = store.get('ebpRemoteName') || '', seeking = false, annTouched = false, lastVerse = null, lastTab = null;
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function show(id) { ['connect', 'nolink', 'main'].forEach(function (x) { $(x).hidden = x !== id; }); }
   function toast(m) { var t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(function () { t.hidden = true; }, 2200); }
@@ -205,14 +231,14 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
   function scheduleRetry() { if (stopped) return; clearTimeout(retry); retry = setTimeout(function () { if (!authed) connect(); }, 4000); }
   function onClose() {
     if (stopped) return;
-    var was = authed; authed = false;
+    var was = authed; authed = false; if (V.on) vStopLocal();
     if (was) { $('banner').hidden = false; $('banner').textContent = 'Connection lost, reconnecting…'; $('dot').classList.add('bad'); }
     scheduleRetry();
   }
   function onData(m) {
     if (!m || !m.t) return;
     if (m.t === 'welcome') {
-      authed = true; wasAuthed = true; perms = m.perms || []; store.set('ebpRemotePin', pin); store.set('ebpRemoteName', devName);
+      myName = m.name || devName; authed = true; wasAuthed = true; perms = m.perms || []; store.set('ebpRemotePin', pin); store.set('ebpRemoteName', devName);
       $('banner').hidden = true; $('dot').classList.remove('bad'); $('hstat').textContent = 'Connected to ' + 'dashboard'; show('main');
       buildNav(); keepAwake();
     } else if (m.t === 'denied') {
@@ -224,7 +250,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
       show('connect'); $('goBtn').disabled = false; $('pin').value = '';
     } else if (m.t === 'heavy') { hv = m.d; renderHeavy(); }
     else if (m.t === 'light') { st = m.d; renderLight(); }
-    else if (m.t === 'perms') { perms = m.perms || []; buildNav(); }
+    else if (m.t === 'perms') { perms = m.perms || []; if (perms.indexOf('voice') < 0 && V.on) vStopLocal(); buildNav(); }
     else if (m.t === 'toast') toast(m.msg);
   }
   function keepAwake() { try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(function () {}); } catch (e) {} }
@@ -294,6 +320,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
     if (isPaged) $('pageTx').textContent = (st.mkind === 'pptx' ? 'Slide ' : 'Page ') + st.page + ' of ' + st.pages;
     $('slCard').hidden = !st.sl.n; $('slLbl').textContent = 'Slideshow · ' + (st.sl.i + 1) + ' / ' + st.sl.n; $('slPlay').textContent = st.sl.play ? 'Pause' : 'Play'; $('slToggle').textContent = st.sl.vis ? 'Hide slideshow' : 'Show slideshow'; $('slToggle').className = 'btn' + (st.sl.vis ? ' on' : '');
     Array.prototype.forEach.call($('mediaList').children, function (el) { el.classList.toggle('cur', isMedia && el.dataset.id && hv && hv.media.some(function (m) { return m.id === el.dataset.id && m.n === st.mname; })); });
+    try { renderVoice(); } catch (e) {}
     // message
     if (!annTouched && document.activeElement !== $('annText')) $('annText').value = st.ann.text || $('annText').value;
     $('annSend').textContent = st.ann.on ? 'Stop overlay' : 'Send as overlay'; $('annSend').className = 'btn' + (st.ann.on ? ' on' : '');
@@ -327,6 +354,67 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
   $('nameChips').addEventListener('click', function (e) { var b = e.target.closest('[data-k]'); if (!b || !hv) return; var n = hv.names[+b.dataset.k]; $('tagRole').value = n.r; $('tagName').value = n.n; Array.prototype.forEach.call($('nameChips').children, function (c) { c.classList.toggle('sel', c === b); }); });
   $('tagSend').onclick = function () { var r = $('tagRole').value.trim(), n = $('tagName').value.trim(); if (!r && !n) { toast('Pick or type a name'); return; } cmd('tag_send', { role: r, name: n }); };
   $('tagHide').onclick = function () { cmd('tag_hide'); };
+
+  // ---------- voice ----------
+  var V = { src: store.get('ebpVoiceSrc') === 'pc' ? 'pc' : 'phone', auto: false, follow: true, cmds: true, on: false, rec: null, want: false, sess: 0 };
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  $('vLang').value = store.get('ebpVoiceLang') || 'en-US'; if (!$('vLang').value) $('vLang').value = 'en-US';
+  function vopts() { cmd('voice_opts', { auto: V.auto, follow: V.follow, cmds: V.cmds }); }
+  function vStartPhone() {
+    if (!SR) { $('vErr').textContent = 'This browser cannot listen. Use Chrome on Android, or switch to PC mic.'; return false; }
+    var r = new SR(); r.continuous = true; r.interimResults = true; r.maxAlternatives = 3; r.lang = $('vLang').value || 'en-US';
+    r.onstart = function () { cmd('voice_session'); };
+    r.onresult = function (e) {
+      var list = []; for (var k = e.resultIndex; k < e.results.length; k++) { var res = e.results[k], al = []; for (var n = 0; n < res.length && n < 3; n++) al.push(res[n].transcript); list.push({ f: !!res.isFinal, a: al }); }
+      if (conn && conn.open && authed) { try { conn.send({ t: 'cmd', c: 'voice_text', a: { i: e.resultIndex, r: list } }); } catch (x) {} }
+      var last = list[list.length - 1]; if (last && last.a[0]) $('vHeard').textContent = last.a[0];
+    };
+    r.onerror = function (e) { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; $('vErr').textContent = 'Microphone blocked. Allow the microphone for this page in the browser settings.'; vStopLocal(); cmd('voice_stop'); } };
+    r.onend = function () { if (V.want && V.on) { setTimeout(function () { if (V.want && V.on) { try { r.start(); } catch (x) {} } }, 250); } };
+    V.rec = r; V.want = true;
+    try { r.start(); } catch (x) { $('vErr').textContent = 'Could not start the microphone.'; return false; }
+    return true;
+  }
+  function vStopLocal() { V.want = false; try { if (V.rec) { V.rec.onend = null; V.rec.abort(); } } catch (x) {} V.rec = null; V.on = false; }
+  function vToggle() {
+    $('vErr').textContent = '';
+    if (V.on || (st && st.voice && st.voice.active && st.voice.owner === myName)) { vStopLocal(); cmd('voice_stop'); renderVoice(); return; }
+    V.on = true;
+    if (V.src === 'phone' && !vStartPhone()) { V.on = false; return; }
+    cmd('voice_start', { src: V.src, auto: V.auto, follow: V.follow, cmds: V.cmds });
+    renderVoice();
+  }
+  function renderVoice() {
+    var s = st && st.voice; if (!s) return;
+    var mine = s.active && s.owner === myName, on = V.on || mine;
+    if (s.active && !mine && V.on) { vStopLocal(); on = false; }
+    if (V.on && !s.active && Date.now() - (V.t0 || 0) > 3000 && V.t0) { vStopLocal(); on = false; }
+    if (V.on && !V.t0) V.t0 = Date.now(); if (!V.on) V.t0 = 0;
+    Array.prototype.forEach.call($('vSrc').children, function (b) { b.className = b.dataset.s === V.src ? 'sel' : ''; });
+    $('vMic').textContent = on ? 'Stop' : 'Start'; $('vMic').className = 'mic' + (on ? ' on' : '');
+    $('vTitle').textContent = !on ? (s.active ? 'In use by ' + s.owner : 'Voice is off') : s.paused ? 'Paused' : 'Listening';
+    $('vSub').textContent = !on ? 'Tap Start. You decide when a scripture goes to live.' : V.src === 'phone' ? "Using this phone's microphone. Keep this screen on." : 'Using the microphone on the dashboard PC.';
+    $('vErr').textContent = s.err || ($('vErr').dataset.local || '') ? (s.err || $('vErr').textContent) : $('vErr').textContent;
+    if (s.err) $('vErr').textContent = s.err;
+    if (V.src === 'pc' || !V.on) $('vHeard').textContent = s.heard || (on ? 'Listening…' : 'Say a scripture, for example "Romans eight twenty eight"');
+    if (!on && V.src === 'phone') $('vHeard').textContent = 'Say a scripture, for example "Romans eight twenty eight"';
+    var p = s.pending; $('vPend').hidden = !p; if (p) { $('vPendR').textContent = p.label; $('vPendT').textContent = p.text; }
+    var d = s.sent; $('vSent').hidden = !d; if (d) { $('vSentR').textContent = d.label; $('vSentT').textContent = d.text; $('vUndo').disabled = !d.canUndo; }
+    $('vPause').hidden = !on; $('vPause').textContent = s.paused ? 'Resume voice' : 'Pause voice';
+    function chip(id, lab, on2) { $(id).textContent = lab + ': ' + (on2 ? 'On' : 'Off'); $(id).className = 'chip' + (on2 ? ' sel' : ''); }
+    chip('vAuto', 'Auto-send', V.auto); chip('vFollow', 'Follow my reading', V.follow); chip('vCmds', '"Next verse"', V.cmds);
+    $('vRecent').innerHTML = s.recent.length ? s.recent.map(function (l, i) { return '<button class="item" data-i="' + i + '">' + esc(l) + '</button>'; }).join('') : '<div class="sub">Scriptures you send will appear here.</div>';
+  }
+  $('vSrc').addEventListener('click', function (e) { var b = e.target.closest('[data-s]'); if (!b || V.on) { if (b && V.on) toast('Stop voice first to change the microphone'); return; } V.src = b.dataset.s; store.set('ebpVoiceSrc', V.src); renderVoice(); });
+  $('vMic').onclick = vToggle;
+  $('vLang').onchange = function () { store.set('ebpVoiceLang', $('vLang').value); if (V.on && V.src === 'phone') { vStopLocal(); V.on = true; vStartPhone(); } };
+  $('vAuto').onclick = function () { V.auto = !V.auto; vopts(); renderVoice(); };
+  $('vFollow').onclick = function () { V.follow = !V.follow; vopts(); renderVoice(); };
+  $('vCmds').onclick = function () { V.cmds = !V.cmds; vopts(); renderVoice(); };
+  $('vSend').onclick = function () { cmd('voice_send'); }; $('vDismiss').onclick = function () { cmd('voice_dismiss'); };
+  $('vUndo').onclick = function () { cmd('voice_undo'); };
+  $('vPause').onclick = function () { var p = !(st && st.voice && st.voice.paused); cmd('voice_pause', { on: p }); };
+  $('vRecent').addEventListener('click', function (e) { var b = e.target.closest('[data-i]'); if (b) cmd('voice_resend', { i: +b.dataset.i }); });
 
   // ---------- start ----------
   $('devName').value = devName;
