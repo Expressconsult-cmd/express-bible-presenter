@@ -3943,9 +3943,31 @@ function songTabIsActive() {
             
             const targetToken = urlParameters.get('sessionToken');
 
+            let obsLastData = null, obsStream = null, obsAssets = [];
+            const obsMediaMap = new Map(); // dashboard blob: address -> address valid in THIS page
+            function obsMapMedia(st) {
+                if (!obsMediaMap.size || !st) return st;
+                const m = u => (u && obsMediaMap.get(u)) || u;
+                return Object.assign({}, st, { mediaUrl: m(st.mediaUrl), slidePrevUrl: m(st.slidePrevUrl) });
+            }
+            function obsAttachStream(st) {
+                if (!obsStream || !st || st.displayMode !== 'media' || st.mediaKind !== 'video') return;
+                const v = obsCanvas.querySelector('video.media-layer-node');
+                if (!v || v.srcObject === obsStream) return;
+                v.srcObject = obsStream; v.muted = false;
+                const p = v.play(); if (p && p.catch) p.catch(() => { v.muted = true; v.play().catch(() => {}); });
+            }
             function syncViewportState(data) {
+                if (data && data.type === 'EBP_MEDIA' && data.buf) { // an image / slide sent from the dashboard
+                    try { obsMediaMap.set(data.url, URL.createObjectURL(new Blob([data.buf], { type: data.mime || 'image/jpeg' }))); } catch (e) {}
+                    if (obsLastData) syncViewportState(obsLastData);
+                    return;
+                }
                 if (data && data.liveState) {
-                    buildCanvasDOM(obsCanvas, data.liveState, [], data.cachedLogoDataUrl, true);
+                    obsLastData = data;
+                    if (Array.isArray(data.importedAssetsLibrary) && data.importedAssetsLibrary.length) obsAssets = data.importedAssetsLibrary;
+                    buildCanvasDOM(obsCanvas, obsMapMedia(data.liveState), obsAssets, data.cachedLogoDataUrl, true);
+                    obsAttachStream(data.liveState);
                     try { ovObsApply(data); } catch (e) {}
                     
                     const innerTimer = obsCanvas.querySelector('.canvas-timer-node');
@@ -3986,6 +4008,13 @@ function songTabIsActive() {
             // REDUNDANCY LEVEL 3: WebRTC Client fallback
             if (targetToken) {
                 const clientPeer = new Peer();
+                clientPeer.on('call', (call) => { // live video from the dashboard
+                    try {
+                        call.answer();
+                        call.on('stream', (s) => { obsStream = s; if (obsLastData) syncViewportState(obsLastData); });
+                        call.on('close', () => { if (obsStream) { obsStream = null; if (obsLastData) syncViewportState(obsLastData); } });
+                    } catch (e) {}
+                });
                 clientPeer.on('open', () => {
                     peerClientConnection = clientPeer.connect(targetToken);
                     peerClientConnection.on('data', (data) => {
@@ -4463,7 +4492,7 @@ function splitSceneSignature() {
     const c = document.getElementById('liveCanvas');
     if (!c || !c.clientWidth) return '';
     return [c.className, c.clientWidth, c.clientHeight, previewState.fontFamilyOverride, previewState.fontBold, previewState.fontItalic,
-        previewState.textBackingPanel, previewState.refVisible, previewState.gradientGlowText, currentBookCode, currentChapter,
+        previewState.textBackingPanel, previewState.refVisible, previewState.gradientGlowText, previewState.layout, previewState.ltTemplate, JSON.stringify(previewState.ltStyle || {}), currentBookCode, currentChapter,
         (document.getElementById('versionSelector') || {}).value, activeChapterVerses.length].join('|');
 }
 function splitRefFor(verse) {
@@ -4488,14 +4517,23 @@ function splitEnsureProbe() {
     buildCanvasDOM(el, st, importedAssetsLibrary, cachedLogoDataUrl, false);
     const t = el.querySelector('.text-out');
     if (!t) return false;
+    // Lower Third layout with a template: the verse lives in the template bar (.ltt), which shrinks when taller than 42% of the screen
+    splitProbe.lt = el.querySelector(':scope > .ltt');
+    if (splitProbe.lt) { splitProbe.textOut = t; splitProbe.baseFs = 1; return true; }
     t.style.fontSize = '';                      // buildCanvasDOM may have shrunk it; restore the selected size
     splitProbe.textOut = t;
-    splitProbe.baseStyle = 'calc(var(--canvas-font-size) * 1)';
+    splitProbe.baseStyle = previewState.layout === 'mode-lowerthird' ? 'calc(var(--canvas-font-size) * 0.85)' : 'calc(var(--canvas-font-size) * 1)';
     t.style.fontSize = splitProbe.baseStyle;
     splitProbe.baseFs = parseFloat(getComputedStyle(t).fontSize) || 0;
     return splitProbe.baseFs > 0;
 }
 function splitTextShrinks(text) {
+    if (splitProbe.lt) {
+        const bar = splitProbe.lt, v = bar.querySelector('.ltt-verse'), h = splitProbe.el.clientHeight;
+        if (!v || !h) return false;
+        v.style.fontSize = ''; v.textContent = text;
+        return bar.offsetHeight > h * 0.42;
+    }
     const t = splitProbe.textOut;
     if (!t || !splitProbe.baseFs) return false;
     t.style.fontSize = splitProbe.baseStyle;
@@ -5857,3 +5895,50 @@ function initAnnOverlay() {
     const col = document.getElementById('announcementColorPicker'); if (col) col.addEventListener('input', () => { if (ovAnnActive()) ovRefreshAll(); });
     const clr = document.getElementById('clearAnnouncementBtn'); if (clr) clr.addEventListener('click', () => { if (ovAnnActive()) ovRefreshAll(); });
 }
+
+
+// ===================== MEDIA BRIDGE TO OBS / REMOTE SOURCES =====================
+// OBS's Browser Source is a separate program, so the blob: addresses of media imported on the PC mean nothing there (only text
+// travelled). Over the existing share link we now also send: images / slides / PDF & PowerPoint pages (once each, cached by the
+// receiver) and the live picture + sound of the playing video (the same shared master stream every other screen already uses).
+function ebpBridgeMedia() {
+    try {
+        const st = liveState;
+        const conns = (activeRemoteDataConnections || []).filter(c => c && c.open);
+        const has = !!(st && st.displayMode === 'media' && st.mediaUrl);
+        conns.forEach(conn => {
+            if (has && st.mediaKind === 'video') ebpBridgeVideo(conn, st.mediaUrl, 0);
+            else if (conn.__vcall) { try { conn.__vcall.close(); } catch (e) {} conn.__vcall = null; conn.__vurl = ''; }
+            if (has && st.mediaKind !== 'video') [st.mediaUrl, st.slidePrevUrl].forEach(u => { if (u && /^blob:/.test(u)) ebpBridgeSendBlob(conn, u); });
+        });
+    } catch (e) {}
+}
+async function ebpBridgeSendBlob(conn, url) {
+    conn.__sent = conn.__sent || new Set();
+    if (conn.__sent.has(url)) return;
+    conn.__sent.add(url);
+    try {
+        const b = await (await fetch(url)).blob();
+        const buf = await b.arrayBuffer();
+        if (conn.open) conn.send({ type: 'EBP_MEDIA', url, mime: b.type, buf });
+    } catch (e) { conn.__sent.delete(url); }
+}
+function ebpBridgeVideo(conn, url, tries) {
+    if (conn.__vurl === url) return;
+    const entry = (typeof masterVideoRegistry !== 'undefined') ? masterVideoRegistry.get(url) : null;
+    if (!entry || !entry.stream) { // the shared stream appears a moment after the video starts loading
+        if (tries < 40) setTimeout(() => { if (liveState.mediaUrl === url && conn.open) ebpBridgeVideo(conn, url, tries + 1); }, 500);
+        return;
+    }
+    try {
+        if (conn.__vcall) { try { conn.__vcall.close(); } catch (e) {} }
+        conn.__vurl = url;
+        conn.__vcall = hostPeerNode.call(conn.peer, entry.stream);
+    } catch (e) { conn.__vurl = ''; }
+}
+(function hookMediaBridge() {
+    const a = transmitStatePacketToRemoteClients;
+    transmitStatePacketToRemoteClients = function () { const r = a.apply(this, arguments); ebpBridgeMedia(); return r; };
+    const b = syncLiveStateToRemoteChannels;
+    syncLiveStateToRemoteChannels = function () { const r = b.apply(this, arguments); ebpBridgeMedia(); return r; };
+})();
