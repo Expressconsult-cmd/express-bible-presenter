@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1217">
+<meta name="robots" content="noindex">
+<title>Express Bible Presenter Remote</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+:root{--bg:#0e1217;--card:#1b2430;--card2:#121820;--line:#2b3848;--txt:#e8edf3;--mut:#9fb0c3;--gold:#f5b942;--goldbg:#2a2312;--blue:#2f7de1;--green:#3ddc84;--red:#ef4444}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
+button,input,select,textarea{font-family:inherit;font-size:16px;color:var(--txt)}
+button{cursor:pointer;touch-action:manipulation}
+[hidden]{display:none!important}
+#app{height:100%;max-width:720px;margin:0 auto;display:flex;flex-direction:column}
+.center{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:24px}
+h1{font-size:22px;margin:0}
+.sub{color:var(--mut);font-size:14px;line-height:1.5}
+.inp{width:100%;min-height:52px;border-radius:12px;border:1px solid var(--line);background:var(--card);padding:0 14px}
+textarea.inp{padding:12px 14px;min-height:76px;resize:none}
+.pin{font-size:30px;letter-spacing:.5em;text-align:center;font-variant-numeric:tabular-nums}
+.btn{min-height:48px;border-radius:12px;border:1px solid var(--line);background:var(--card);padding:0 14px;font-weight:600}
+.btn:active{transform:scale(.97);filter:brightness(1.2)}
+.btn.pri{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700}
+.btn.go{background:var(--green);border-color:var(--green);color:#0e1217;font-weight:700}
+.btn.gold{background:var(--gold);border-color:var(--gold);color:#0e1217;font-weight:700}
+.btn.on{background:var(--goldbg);border-color:var(--gold);color:var(--gold)}
+.btn.big{min-height:92px;font-size:17px;border-radius:14px}
+.btn.tall{min-height:64px;font-size:16px;border-radius:14px}
+.err{color:#fca5a5;font-size:14px;min-height:20px}
+header{display:flex;align-items:center;gap:10px;padding:max(14px,env(safe-area-inset-top)) 16px 8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--green);flex-shrink:0}
+.dot.bad{background:var(--red)}
+#hstat{font-size:13px;color:var(--mut);flex:1}
+.mini{margin:0 16px;border-radius:12px;background:var(--card);border:1px solid var(--line);padding:10px 12px}
+.mini .lab{font-size:11px;letter-spacing:.08em;color:var(--gold);text-transform:uppercase}
+.mini .ref{font-size:15px;font-weight:600;margin-top:2px}
+.mini .tx{font-size:13px;color:var(--mut);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#views{flex:1;overflow-y:auto;padding:12px 16px 16px;display:flex;flex-direction:column}
+.view{display:none;flex-direction:column;gap:12px}
+.view.act{display:flex}
+.row{display:flex;gap:10px}
+.row>*{flex:1;min-width:0}
+.lbl{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
+.card{border-radius:12px;background:var(--card);border:1px solid var(--line);padding:12px}
+.item{border-radius:12px;background:var(--card);border:1px solid var(--line);padding:12px;font-size:15px;line-height:1.4;text-align:left;width:100%}
+.item b{color:var(--mut);margin-right:6px}
+.item.cur{background:var(--goldbg);border-color:var(--gold)}
+.item.cur b{color:var(--gold)}
+.list{display:flex;flex-direction:column;gap:6px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{min-height:44px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--card)}
+.chip.sel{border-color:var(--gold);background:var(--goldbg);color:var(--gold)}
+nav{display:flex;border-top:1px solid var(--line);background:var(--card2);padding:6px 6px max(12px,env(safe-area-inset-bottom))}
+nav button{flex:1;min-height:56px;border:0;border-radius:12px;background:transparent;color:var(--mut);font-size:13px;font-weight:600}
+nav button.act{background:var(--goldbg);color:var(--gold)}
+.time{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#000c;color:#fff;padding:10px 16px;border-radius:999px;font-size:14px;z-index:9;max-width:90%}
+#banner{background:#7f1d1d;color:#fff;text-align:center;font-size:14px;padding:8px}
+</style>
+</head>
+<body>
+<div id="app">
+
+<section id="connect" class="center" hidden>
+  <h1>Express Bible Presenter Remote</h1>
+  <div class="sub" id="cmsg">Type the 4-digit PIN shown on the dashboard.</div>
+  <input id="devName" class="inp" placeholder="Name this device (e.g. Pastor's phone)" maxlength="24" autocomplete="off">
+  <input id="pin" class="inp pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="----" autocomplete="off">
+  <div class="err" id="cerr"></div>
+  <button id="goBtn" class="btn pri" style="min-height:54px">Connect</button>
+</section>
+
+<section id="nolink" class="center" hidden>
+  <h1>No dashboard link</h1>
+  <div class="sub">Open the Remote Control card in the dashboard's Settings, then scan its QR code with this device's camera (or copy the link here).</div>
+</section>
+
+<section id="main" hidden style="flex:1;display:flex;flex-direction:column;min-height:0">
+  <div id="banner" hidden>Connection lost, reconnecting…</div>
+  <header>
+    <div class="dot" id="dot"></div><div id="hstat">Connecting…</div>
+    <button class="btn" id="freezeBtn" style="min-height:44px">Freeze</button>
+  </header>
+  <div class="mini"><div class="lab" id="mLab">On screen now</div><div class="ref" id="mRef">&nbsp;</div><div class="tx" id="mTx"></div></div>
+
+  <div id="views">
+    <div class="view" id="v-live">
+      <button class="btn tall" id="blankBtn">Blank screen</button>
+      <div class="lbl" id="ctxLbl">Bible verses</div>
+      <div class="row"><button class="btn big" id="prevBtn">&larr; Previous</button><button class="btn big pri" id="nextBtn">Next &rarr;</button></div>
+      <div class="chips">
+        <button class="btn" id="splitBtn" hidden>Split verse</button>
+        <button class="btn" id="ltBtn">Lower third</button>
+      </div>
+      <div class="card" style="display:flex;align-items:center;gap:12px">
+        <div style="flex:1"><div class="lbl">Broadcast timer</div><div class="time" id="timeTx">--:--</div></div>
+        <button class="btn go" id="tStart">Start</button><button class="btn" id="tReset">Reset</button>
+      </div>
+    </div>
+
+    <div class="view" id="v-bible">
+      <div class="row"><input id="refIn" class="inp" placeholder="e.g. Rom 8:28" autocapitalize="off" autocomplete="off" enterkeyhint="go" style="flex:3"><button class="btn pri" id="goRef" style="flex:1;min-height:52px">Go</button></div>
+      <select id="verSel" class="inp"></select>
+      <div class="lbl" id="bHead">&nbsp;</div>
+      <div class="list" id="verses"></div>
+    </div>
+
+    <div class="view" id="v-songs">
+      <select id="songSel" class="inp"></select>
+      <div class="lbl" id="sHead">Song slides</div>
+      <div class="list" id="slideList"></div>
+      <div class="row"><button class="btn big" id="sPrev">&larr; Back</button><button class="btn big pri" id="sNext">Next &rarr;</button></div>
+    </div>
+
+    <div class="view" id="v-media">
+      <div class="card" id="nowCard" hidden>
+        <div class="lbl" id="nowLbl">Now playing</div>
+        <div style="font-size:16px;font-weight:600;margin:4px 0 10px;word-break:break-word" id="nowName"></div>
+        <div id="vidCtl" hidden>
+          <input type="range" id="seek" min="0" max="100" value="0" step="1">
+          <div class="row"><button class="btn tall" id="back10">-10s</button><button class="btn tall go" id="playPause" style="flex:2">Play / Pause</button><button class="btn tall" id="fwd10">+10s</button></div>
+        </div>
+        <div id="pageCtl" hidden>
+          <div class="sub" id="pageTx" style="text-align:center;margin-bottom:8px"></div>
+          <div class="row"><button class="btn tall" id="pgPrev">&larr; Previous</button><button class="btn tall pri" id="pgNext">Next &rarr;</button></div>
+        </div>
+        <button class="btn" id="hideMedia" style="width:100%;margin-top:10px">Hide media</button>
+      </div>
+      <div class="card" id="slCard" hidden>
+        <div class="lbl" id="slLbl">Slideshow</div>
+        <div class="row" style="margin-top:8px"><button class="btn tall" id="slPrev">&larr;</button><button class="btn tall" id="slPlay">Pause</button><button class="btn tall pri" id="slNext">&rarr;</button></div>
+        <button class="btn" id="slToggle" style="width:100%;margin-top:8px">Show slideshow</button>
+      </div>
+      <div class="lbl">Tap to show on screen</div>
+      <div class="list" id="mediaList"></div>
+    </div>
+
+    <div class="view" id="v-message">
+      <div class="lbl">Announcement banner</div>
+      <textarea id="annText" class="inp" placeholder="Type the announcement…" maxlength="200"></textarea>
+      <div class="row"><select id="annEff" class="inp"><option value="none">No effect</option><option value="scroll">Scroll</option><option value="breathing">Pulse</option><option value="fade">Fade</option></select><select id="annPos" class="inp"><option value="bottom">Bottom</option><option value="top">Top</option><option value="center">Center</option></select></div>
+      <div class="row"><button class="btn pri" id="annStage" style="min-height:52px">Show banner</button><button class="btn" id="annHide" style="min-height:52px">Hide banner</button></div>
+      <button class="btn" id="annSend" style="min-height:52px">Send as overlay</button>
+      <div class="lbl" style="margin-top:6px">Name tag</div>
+      <div class="chips" id="nameChips"></div>
+      <div class="row"><input id="tagRole" class="inp" placeholder="Role" maxlength="60"><input id="tagName" class="inp" placeholder="Name" maxlength="80"></div>
+      <div class="row"><button class="btn pri" id="tagSend" style="min-height:52px">Send name tag</button><button class="btn" id="tagHide" style="min-height:52px">Hide tag</button></div>
+    </div>
+    <div class="sub" id="noTabs" hidden style="text-align:center;padding:30px 10px">This device has no tabs enabled. Ask the person at the dashboard to allow some.</div>
+  </div>
+
+  <nav id="nav"></nav>
+</section>
+</div>
+<div id="toast" hidden></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var TABS = [['live', 'Live'], ['bible', 'Bible'], ['songs', 'Songs'], ['media', 'Media'], ['message', 'Message']];
+  var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  var token = new URLSearchParams(location.search).get('s') || '';
+  var peer = null, conn = null, authed = false, perms = [], st = null, hv = null, tab = 'live', retry = null, stopped = false, wasAuthed = false;
+  var pin = store.get('ebpRemotePin') || '', devName = store.get('ebpRemoteName') || '', seeking = false, annTouched = false, lastVerse = null, lastTab = null;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function show(id) { ['connect', 'nolink', 'main'].forEach(function (x) { $(x).hidden = x !== id; }); }
+  function toast(m) { var t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(function () { t.hidden = true; }, 2200); }
+  function can(t) { return perms.indexOf(t) >= 0; }
+
+  function cmd(c, a) {
+    if (!conn || !conn.open || !authed) { toast('Not connected'); return; }
+    try { conn.send({ t: 'cmd', c: c, a: a || {} }); } catch (e) {}
+    try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) {}
+  }
+
+  // ---------- connection ----------
+  function cleanup() { try { if (conn) conn.close(); } catch (e) {} try { if (peer) peer.destroy(); } catch (e) {} conn = null; peer = null; authed = false; }
+  function connect() {
+    cleanup(); stopped = false;
+    if (!token) { show('nolink'); return; }
+    $('hstat').textContent = 'Connecting…';
+    peer = new Peer();
+    peer.on('open', function () {
+      conn = peer.connect(token, { metadata: { rc: 1 }, reliable: true });
+      conn.on('open', function () { conn.send({ t: 'hello', pin: pin, name: devName || 'Device' }); });
+      conn.on('data', onData);
+      conn.on('close', onClose);
+      conn.on('error', onClose);
+    });
+    peer.on('disconnected', function () { try { peer.reconnect(); } catch (e) {} });
+    peer.on('error', function (e) {
+      if (e && e.type === 'peer-unavailable') { problem('Can\'t find the dashboard. Make sure it is open on the main PC. If it was reloaded, scan the new QR code.'); }
+      else if (e && e.type === 'network') { problem('No internet connection.'); }
+    });
+  }
+  function problem(msg) {
+    if (wasAuthed) { $('banner').hidden = false; $('banner').textContent = msg + ' Retrying…'; $('dot').classList.add('bad'); }
+    else { show('connect'); $('cerr').textContent = msg; $('goBtn').disabled = false; }
+    scheduleRetry();
+  }
+  function scheduleRetry() { if (stopped) return; clearTimeout(retry); retry = setTimeout(function () { if (!authed) connect(); }, 4000); }
+  function onClose() {
+    if (stopped) return;
+    var was = authed; authed = false;
+    if (was) { $('banner').hidden = false; $('banner').textContent = 'Connection lost, reconnecting…'; $('dot').classList.add('bad'); }
+    scheduleRetry();
+  }
+  function onData(m) {
+    if (!m || !m.t) return;
+    if (m.t === 'welcome') {
+      authed = true; wasAuthed = true; perms = m.perms || []; store.set('ebpRemotePin', pin); store.set('ebpRemoteName', devName);
+      $('banner').hidden = true; $('dot').classList.remove('bad'); $('hstat').textContent = 'Connected to ' + 'dashboard'; show('main');
+      buildNav(); keepAwake();
+    } else if (m.t === 'denied') {
+      stopped = true; clearTimeout(retry); wasAuthed = false; authed = false;
+      if (m.why === 'pin') { pin = ''; store.set('ebpRemotePin', ''); $('cerr').textContent = 'Wrong PIN. Check the number on the dashboard.'; }
+      else if (m.why === 'locked') $('cerr').textContent = 'Too many wrong PINs. Wait a minute and try again.';
+      else if (m.why === 'off') $('cerr').textContent = 'Remote control is switched off on the dashboard.';
+      else $('cerr').textContent = 'You were disconnected by the dashboard. Enter the PIN to connect again.';
+      show('connect'); $('goBtn').disabled = false; $('pin').value = '';
+    } else if (m.t === 'heavy') { hv = m.d; renderHeavy(); }
+    else if (m.t === 'light') { st = m.d; renderLight(); }
+    else if (m.t === 'perms') { perms = m.perms || []; buildNav(); }
+    else if (m.t === 'toast') toast(m.msg);
+  }
+  function keepAwake() { try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(function () {}); } catch (e) {} }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { keepAwake(); if (wasAuthed && (!conn || !conn.open)) { clearTimeout(retry); connect(); } } });
+
+  $('goBtn').onclick = function () {
+    var p = $('pin').value.replace(/\D/g, '');
+    if (p.length !== 4) { $('cerr').textContent = 'The PIN has 4 digits.'; return; }
+    pin = p; devName = $('devName').value.trim() || devName || 'Phone'; $('cerr').textContent = ''; $('goBtn').disabled = true; connect();
+  };
+  $('pin').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('goBtn').click(); });
+
+  // ---------- nav ----------
+  function buildNav() {
+    var nav = $('nav'); nav.innerHTML = '';
+    var allowed = TABS.filter(function (t) { return can(t[0]); });
+    if (!allowed.some(function (t) { return t[0] === tab; })) tab = allowed.length ? allowed[0][0] : '';
+    allowed.forEach(function (t) { var b = document.createElement('button'); b.textContent = t[1]; b.dataset.t = t[0]; b.onclick = function () { tab = t[0]; buildNav(); renderLight(); }; if (t[0] === tab) b.className = 'act'; nav.appendChild(b); });
+    TABS.forEach(function (t) { $('v-' + t[0]).classList.toggle('act', t[0] === tab); });
+    $('noTabs').hidden = !!tab; $('freezeBtn').hidden = !can('live');
+    if (tab === 'bible' && lastTab !== 'bible') setTimeout(scrollVerse, 30);
+    lastTab = tab;
+  }
+
+  // ---------- rendering ----------
+  function renderHeavy() {
+    if (!hv) return;
+    var vs = $('verses'), html = '';
+    hv.verses.forEach(function (v) { html += '<button class="item" data-n="' + v.n + '"><b>' + v.n + '</b>' + esc(v.t) + '</button>'; });
+    vs.innerHTML = html || '<div class="sub">Loading chapter…</div>';
+    $('bHead').textContent = hv.book || '';
+    var vsel = $('verSel'), cur = st ? st.version : vsel.value;
+    vsel.innerHTML = hv.versions.map(function (v) { return '<option value="' + esc(v.v) + '">' + esc(v.l) + '</option>'; }).join(''); vsel.value = cur;
+    var ss = $('songSel'), sc = ss.value;
+    ss.innerHTML = '<option value="">Choose a saved song…</option>' + hv.songs.map(function (s) { return '<option value="' + esc(s.id) + '">' + esc(s.t) + '</option>'; }).join(''); ss.value = sc;
+    $('slideList').innerHTML = hv.slides.length ? hv.slides.map(function (t, i) { return '<button class="item" data-i="' + i + '"><b>' + (i + 1) + '</b>' + esc(t) + '</button>'; }).join('') : '<div class="sub">Pick a song above to see its slides.</div>';
+    $('mediaList').innerHTML = hv.media.length ? hv.media.map(function (m) { var k = { video: 'Video', image: 'Image', pdf: 'PDF', pptx: 'Slides' }[m.k] || m.k; return '<button class="item" data-id="' + esc(m.id) + '"><b>' + esc(k) + '</b>' + esc(m.n) + '</button>'; }).join('') : '<div class="sub">No saved media on the dashboard yet.</div>';
+    $('nameChips').innerHTML = hv.names.length ? hv.names.map(function (n, i) { return '<button class="chip" data-k="' + i + '">' + esc(n.n) + '</button>'; }).join('') : '<div class="sub">No saved names yet. Type one below.</div>';
+    renderLight();
+  }
+  function scrollVerse() { var el = document.querySelector('#verses .item.cur'); if (el) el.scrollIntoView({ block: 'center' }); }
+  function fmt(s) { s = Math.max(0, s | 0); return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2); }
+  function renderLight() {
+    if (!st) return;
+    $('mLab').textContent = st.frozen ? 'Frozen (screens locked)' : st.mode === 'media' ? 'Media on screen' : st.blanked ? 'Screen blank' : 'On screen now';
+    $('mRef').innerHTML = esc(st.mode === 'media' ? st.mname : (st.ref || '')) || '&nbsp;';
+    $('mTx').textContent = st.mode === 'media' ? (st.pages ? (st.mkind === 'pptx' ? 'Slide ' : 'Page ') + st.page + ' / ' + st.pages : st.mkind) : st.text;
+    $('freezeBtn').className = 'btn' + (st.frozen ? ' on' : ''); $('freezeBtn').textContent = st.frozen ? 'Frozen' : 'Freeze';
+    // live
+    $('blankBtn').textContent = st.blanked ? 'Show text again' : 'Blank screen'; $('blankBtn').className = 'btn tall' + (st.blanked ? ' gold' : '');
+    $('ctxLbl').textContent = st.ctx === 'song' ? 'Song slides' : 'Bible verses';
+    $('ltBtn').className = 'btn' + (st.layout === 'mode-lowerthird' ? ' on' : '');
+    var sp = st.split || {}; $('splitBtn').hidden = !(sp.ok || sp.on); $('splitBtn').textContent = sp.on ? 'Part ' + (sp.i + 1) + '/' + sp.n + ' · end split' : 'Split verse'; $('splitBtn').className = 'btn' + (sp.on ? ' on' : '');
+    $('timeTx').textContent = st.timer.t || '--:--'; $('tStart').textContent = st.timer.run ? 'Pause' : 'Start'; $('tStart').className = 'btn ' + (st.timer.run ? 'gold' : 'go');
+    // bible
+    var cur = String(st.verse);
+    Array.prototype.forEach.call($('verses').children, function (el) { el.classList.toggle('cur', el.dataset.n === cur); });
+    if (document.activeElement !== $('verSel')) $('verSel').value = st.version;
+    if (tab === 'bible' && lastVerse !== st.verse) setTimeout(scrollVerse, 30); lastVerse = st.verse;
+    // songs
+    Array.prototype.forEach.call($('slideList').children, function (el) { el.classList.toggle('cur', el.dataset.i === String(st.song.i)); });
+    // media
+    var isMedia = st.mode === 'media', isVid = isMedia && st.mkind === 'video', isPaged = isMedia && st.pages > 0;
+    $('nowCard').hidden = !isMedia; $('nowName').textContent = st.mname; $('vidCtl').hidden = !isVid; $('pageCtl').hidden = !isPaged;
+    if (isVid) { $('playPause').textContent = st.vid && st.vid.paused ? 'Play' : 'Pause'; if (!seeking && st.vid && st.vid.d) $('seek').value = Math.round(st.vid.t / st.vid.d * 100); $('nowLbl').textContent = st.vid ? fmt(st.vid.t) + ' / ' + fmt(st.vid.d) : 'Video'; }
+    else $('nowLbl').textContent = isPaged ? 'On screen' : 'Image on screen';
+    if (isPaged) $('pageTx').textContent = (st.mkind === 'pptx' ? 'Slide ' : 'Page ') + st.page + ' of ' + st.pages;
+    $('slCard').hidden = !st.sl.n; $('slLbl').textContent = 'Slideshow · ' + (st.sl.i + 1) + ' / ' + st.sl.n; $('slPlay').textContent = st.sl.play ? 'Pause' : 'Play'; $('slToggle').textContent = st.sl.vis ? 'Hide slideshow' : 'Show slideshow'; $('slToggle').className = 'btn' + (st.sl.vis ? ' on' : '');
+    Array.prototype.forEach.call($('mediaList').children, function (el) { el.classList.toggle('cur', isMedia && el.dataset.id && hv && hv.media.some(function (m) { return m.id === el.dataset.id && m.n === st.mname; })); });
+    // message
+    if (!annTouched && document.activeElement !== $('annText')) $('annText').value = st.ann.text || $('annText').value;
+    $('annSend').textContent = st.ann.on ? 'Stop overlay' : 'Send as overlay'; $('annSend').className = 'btn' + (st.ann.on ? ' on' : '');
+    $('tagSend').className = 'btn pri'; $('tagHide').className = 'btn' + (st.tag.on ? ' on' : ''); $('tagHide').textContent = st.tag.on ? 'Hide tag (showing)' : 'Hide tag';
+  }
+
+  // ---------- wiring ----------
+  $('freezeBtn').onclick = function () { cmd('freeze'); };
+  $('blankBtn').onclick = function () { cmd(st && st.blanked ? 'restore' : 'blank'); };
+  $('prevBtn').onclick = function () { cmd('prev'); }; $('nextBtn').onclick = function () { cmd('next'); };
+  $('splitBtn').onclick = function () { cmd('split'); }; $('ltBtn').onclick = function () { cmd('layout_lt'); };
+  $('tStart').onclick = function () { cmd('timer_toggle'); }; $('tReset').onclick = function () { cmd('timer_reset'); };
+  $('goRef').onclick = function () { var q = $('refIn').value.trim(); if (q) { cmd('goto', { q: q }); $('refIn').blur(); } };
+  $('refIn').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('goRef').click(); });
+  $('verSel').onchange = function () { cmd('version', { v: $('verSel').value }); };
+  $('verses').addEventListener('click', function (e) { var b = e.target.closest('[data-n]'); if (b) cmd('verse', { n: +b.dataset.n }); });
+  $('songSel').onchange = function () { if ($('songSel').value) cmd('song_load', { id: $('songSel').value }); };
+  $('slideList').addEventListener('click', function (e) { var b = e.target.closest('[data-i]'); if (b) cmd('slide', { i: +b.dataset.i }); });
+  $('sPrev').onclick = function () { cmd('song_prev'); }; $('sNext').onclick = function () { cmd('song_next'); };
+  $('mediaList').addEventListener('click', function (e) { var b = e.target.closest('[data-id]'); if (b) cmd('media_show', { id: b.dataset.id }); });
+  $('hideMedia').onclick = function () { cmd('media_hide'); };
+  $('playPause').onclick = function () { cmd('play'); }; $('back10').onclick = function () { cmd('skip', { d: -1 }); }; $('fwd10').onclick = function () { cmd('skip', { d: 1 }); };
+  $('seek').addEventListener('input', function () { seeking = true; }); $('seek').addEventListener('change', function () { cmd('seek', { p: +$('seek').value }); setTimeout(function () { seeking = false; }, 600); });
+  $('pgPrev').onclick = function () { cmd('page', { d: -1 }); }; $('pgNext').onclick = function () { cmd('page', { d: 1 }); };
+  $('slPrev').onclick = function () { cmd('slides_prev'); }; $('slNext').onclick = function () { cmd('slides_next'); }; $('slPlay').onclick = function () { cmd('slides_play'); }; $('slToggle').onclick = function () { cmd('slides_toggle'); };
+  $('annText').addEventListener('input', function () { annTouched = true; });
+  function annArgs() { return { text: $('annText').value.trim(), effect: $('annEff').value, pos: $('annPos').value }; }
+  $('annStage').onclick = function () { var a = annArgs(); if (!a.text) { toast('Type the announcement first'); return; } cmd('ann_stage', a); };
+  $('annHide').onclick = function () { cmd('ann_clear'); annTouched = false; $('annText').value = ''; };
+  $('annSend').onclick = function () { var a = annArgs(); if (!st || !st.ann.on) { if (!a.text) { toast('Type the announcement first'); return; } cmd('ann_stage', a); cmd('ann_send', { text: a.text }); } else cmd('ann_send', {}); };
+  $('nameChips').addEventListener('click', function (e) { var b = e.target.closest('[data-k]'); if (!b || !hv) return; var n = hv.names[+b.dataset.k]; $('tagRole').value = n.r; $('tagName').value = n.n; Array.prototype.forEach.call($('nameChips').children, function (c) { c.classList.toggle('sel', c === b); }); });
+  $('tagSend').onclick = function () { var r = $('tagRole').value.trim(), n = $('tagName').value.trim(); if (!r && !n) { toast('Pick or type a name'); return; } cmd('tag_send', { role: r, name: n }); };
+  $('tagHide').onclick = function () { cmd('tag_hide'); };
+
+  // ---------- start ----------
+  $('devName').value = devName;
+  if (!token) show('nolink');
+  else if (pin) { show('main'); $('hstat').textContent = 'Connecting…'; buildNav(); connect(); }
+  else show('connect');
+})();
+</script>
+</body>
+</html>
