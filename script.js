@@ -5949,16 +5949,17 @@ function ebpBridgeVideo(conn, url, tries) {
 // A separate light page (remote.html, no sign-in screen) connects to this dashboard over the same PeerJS link method as OBS and
 // sends commands. Every command just presses the same buttons / runs the same functions the dashboard already uses, so nothing
 // about the existing behaviour changes. Access needs the link AND a 4-digit PIN; each device can be limited to chosen tabs.
-const RC_TABS = ['live', 'bible', 'songs', 'media', 'message'];
-const RC_TAB_LABEL = { live: 'Live', bible: 'Bible', songs: 'Songs', media: 'Media', message: 'Message' };
+const RC_TABS = ['live', 'bible', 'songs', 'media', 'message', 'voice'];
+const RC_TAB_LABEL = { live: 'Live', bible: 'Bible', songs: 'Songs', media: 'Media', message: 'Message', voice: 'Voice' };
 const RC_CMD_TAB = {
     freeze: 'live', blank: 'live', restore: 'live', next: 'live', prev: 'live', layout_lt: 'live', split: 'live', timer_toggle: 'live', timer_reset: 'live',
     verse: 'bible', goto: 'bible', version: 'bible', bnext: 'bible', bprev: 'bible',
     song_load: 'songs', slide: 'songs', song_next: 'songs', song_prev: 'songs',
     media_show: 'media', media_hide: 'media', play: 'media', skip: 'media', seek: 'media', page: 'media', slides_prev: 'media', slides_next: 'media', slides_play: 'media', slides_toggle: 'media',
-    ann_stage: 'message', ann_send: 'message', ann_clear: 'message', ann_eye: 'message', tag_send: 'message', tag_hide: 'message'
+    ann_stage: 'message', ann_send: 'message', ann_clear: 'message', ann_eye: 'message', tag_send: 'message', tag_hide: 'message',
+    voice_start: 'voice', voice_stop: 'voice', voice_text: 'voice', voice_session: 'voice', voice_opts: 'voice', voice_pause: 'voice', voice_send: 'voice', voice_dismiss: 'voice', voice_undo: 'voice', voice_resend: 'voice'
 };
-const rc = { on: true, pin: '', defPerms: RC_TABS.slice(), permsByName: {}, devices: [], lastLight: '', lastHeavy: '', stash: null, ctx: null, prevLayout: 'mode-center', lastId: '', soon: null };
+const rc = { on: true, pin: '', defPerms: RC_TABS.filter(t => t !== 'voice'), permsByName: {}, devices: [], lastLight: '', lastHeavy: '', stash: null, ctx: null, prevLayout: 'mode-center', lastId: '', soon: null };
 
 function rcLoad() {
     try { rc.on = localStorage.getItem('ebpRcOn') !== '0'; } catch (e) {}
@@ -5990,7 +5991,7 @@ function rcKick(dev) {
 }
 function rcDrop(dev) {
     const i = rc.devices.indexOf(dev);
-    if (i >= 0) { rc.devices.splice(i, 1); rcRenderPanel(); }
+    if (i >= 0) { rc.devices.splice(i, 1); if (typeof rcVoiceOwnerGone === 'function') rcVoiceOwnerGone(dev); rcRenderPanel(); }
 }
 function rcHandleConn(conn) {
     const dev = { conn, name: 'Device', perms: [], ok: false, fails: 0, joined: 0 };
@@ -6025,6 +6026,7 @@ function rcOnMessage(dev, m) {
 function rcRunCmd(dev, c, a) {
     const need = RC_CMD_TAB[c];
     if (!need || dev.perms.indexOf(need) < 0) { rcSend(dev, { t: 'toast', msg: 'This device is not allowed to do that' }); return; }
+    rc.curDev = dev;
     const r = RC_CMDS[c](a);
     const done = () => { rcTickSoon(); };
     if (r && r.then) r.then(done, done); else done();
@@ -6159,6 +6161,7 @@ function rcLight() {
         ann: { on: (typeof ovAnnActive === 'function') ? !!ovAnnActive() : false, shown: !!previewState.announcementVisible, text: previewState.announcementText || '' },
         tag: { on: (typeof ntAnyActive === 'function') ? !!ntAnyActive() : false },
         ctx: rcContext(),
+        voice: (typeof rcVoiceState === 'function') ? rcVoiceState() : null,
         split: (typeof splitState !== 'undefined') ? { on: !!splitState.active, i: splitState.index, n: splitState.parts.length, ok: !!(splitProbe && splitProbe.shrinks && splitProbe.shrinks.get(currentVerse)) } : { on: false, i: 0, n: 0, ok: false }
     };
 }
@@ -6208,7 +6211,7 @@ function rcRenderPanel() {
     body.querySelectorAll('[data-dev]').forEach(b => b.onclick = () => {
         const d = rc.devices[+b.dataset.dev]; if (!d) return; const t = b.dataset.tab, i = d.perms.indexOf(t);
         if (i >= 0) d.perms.splice(i, 1); else d.perms.push(t);
-        rc.permsByName[d.name] = d.perms.slice(); rcSave(); rcSend(d, { t: 'perms', perms: d.perms }); rcRenderPanel();
+        rc.permsByName[d.name] = d.perms.slice(); rcSave(); rcSend(d, { t: 'perms', perms: d.perms }); if (typeof rcVoicePermsChanged === 'function') rcVoicePermsChanged(d); rcRenderPanel();
     });
     body.querySelectorAll('[data-kick]').forEach(b => b.onclick = () => { const d = rc.devices[+b.dataset.kick]; if (d) rcKick(d); });
 }
@@ -6220,3 +6223,153 @@ function rcInit() {
     transmitStatePacketToRemoteClients = function () { const r = a.apply(this, arguments); rcTickSoon(); return r; };
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', rcInit); else rcInit();
+
+
+// ===================== REMOTE VOICE (listen from the phone or the PC, send scriptures to live) =====================
+// Adds a "Voice" tab to the phone remote. The words (from the phone's mic, or from the dashboard PC's mic) go through the SAME voice
+// engine the dashboard already has (processContinuousSpeechForScriptures -> executeVoiceIntent), so references, "one three" vs "thirteen",
+// follow-my-reading and next/previous behave exactly as they do today. Nothing changes while the remote voice is not in use.
+// Auto-send OFF (the default): what was heard becomes a card on the phone; nothing reaches the screen until it is tapped.
+rc.voice = { active: false, src: 'pc', owner: null, paused: false, auto: false, follow: true, cmds: true, pcStarted: false, startedAt: 0, heard: '', hfinal: true, pending: null, sent: null, recent: [], err: '', seq: 0 };
+const rcVoiceExec = executeVoiceIntent; // the dashboard's own function, untouched
+const rcVoiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+function rcVoiceState() {
+    const v = rc.voice;
+    let err = v.err;
+    if (v.active && v.src === 'pc' && !isListening && Date.now() - v.startedAt > 2500 && !err) err = 'The microphone on the dashboard PC is not listening. Check the dashboard.';
+    return {
+        active: v.active, src: v.src, owner: v.owner ? v.owner.name : '', paused: v.paused, auto: v.auto, follow: v.follow, cmds: v.cmds,
+        pcOk: rcVoiceSupported && !!recognition, heard: v.heard, hfinal: v.hfinal, err,
+        pending: v.pending ? { label: v.pending.label, text: v.pending.text } : null,
+        sent: v.sent ? { label: v.sent.label, text: v.sent.text, ts: v.sent.ts, canUndo: !!v.sent.snap } : null,
+        recent: v.recent.map(r => r.label)
+    };
+}
+
+executeVoiceIntent = async function (intent) {
+    const v = rc.voice;
+    if (!v.active) return rcVoiceExec.apply(this, arguments);       // remote voice not in use: the dashboard behaves exactly as before
+    if (v.paused) return;
+    if (intent.type === 'quote' && !v.follow) return;
+    if ((intent.type === 'next' || intent.type === 'prev' || intent.type === 'chapterStep') && !v.cmds) return;
+    if (!v.auto) { rcVoiceHold(intent); return; }
+    return rcVoiceRun(intent);
+};
+
+async function rcVoiceVerseText(book, ch, vnum, ver) {
+    try {
+        if (book === currentBookCode && ch === currentChapter) { const f = activeChapterVerses.find(x => x.verse === vnum); return f ? rcStrip(f.text) : ''; }
+        const data = await bollsChapterJson(ver, book, ch);
+        const f = (data || []).find(x => x.verse === vnum);
+        return f ? cleanBibleText(f.text) : '';
+    } catch (e) { return ''; }
+}
+async function rcVoiceDescribe(intent) {
+    const ver = rcEl('versionSelector').value, vl = getVersionDisplayLabel(ver);
+    const nameOf = id => (typeof cleanBookNames !== 'undefined' && cleanBookNames[id]) || blibBookName(id, '');
+    const here = () => blibBookName(currentBookCode, currentBookName);
+    const idx = activeChapterVerses.findIndex(x => x.verse === currentVerse);
+    switch (intent.type) {
+        case 'ref': return { label: `${nameOf(intent.bookId)} ${intent.chapter}:${intent.verse} (${vl})`, text: await rcVoiceVerseText(intent.bookId, intent.chapter, intent.verse, ver) };
+        case 'chapter': return { label: `${here()} ${intent.chapter}:${intent.verse || 1} (${vl})`, text: await rcVoiceVerseText(currentBookCode, intent.chapter, intent.verse || 1, ver) };
+        case 'chapterStep': return { label: `${here()} ${currentChapter + intent.dir}:1 (${vl})`, text: await rcVoiceVerseText(currentBookCode, currentChapter + intent.dir, 1, ver) };
+        case 'verse': case 'quote': return { label: `${here()} ${currentChapter}:${intent.verse} (${vl})`, text: await rcVoiceVerseText(currentBookCode, currentChapter, intent.verse, ver) };
+        case 'next': case 'prev': { const t = activeChapterVerses[idx + intent.dir]; return t ? { label: `${here()} ${currentChapter}:${t.verse} (${vl})`, text: rcStrip(t.text) } : { label: intent.dir > 0 ? 'Next verse' : 'Previous verse', text: '' }; }
+        case 'version': return { label: `Switch to ${getVersionDisplayLabel(intent.code || '')}`, text: '' };
+    }
+    return { label: 'Voice command', text: '' };
+}
+async function rcVoiceHold(intent) {
+    const v = rc.voice, id = ++v.seq;
+    const pend = { id, intent, label: 'Working it out…', text: '', ts: Date.now() };
+    v.pending = pend; rcTickSoon();
+    const info = await rcVoiceDescribe(intent);
+    if (v.pending && v.pending.id === id) { pend.label = info.label; pend.text = info.text; }
+    rcTickSoon();
+}
+async function rcVoiceRun(intent) {
+    const v = rc.voice;
+    const snap = { bookCode: currentBookCode, bookName: currentBookName, chapter: currentChapter, verse: currentVerse, text: liveState.text || '', ref: liveState.ref || '' };
+    const before = snap.text + '|' + snap.ref;
+    try { await rcVoiceExec(intent); } catch (e) { console.warn('voice run', e); }
+    const after = (liveState.text || '') + '|' + (liveState.ref || '');
+    v.pending = null;
+    if (after !== before) {
+        const rec = { label: liveState.ref || 'Scripture', text: rcStrip(liveState.text).slice(0, 240), ts: Date.now(), snap, intent };
+        v.sent = rec;
+        if (intent.type === 'ref' || intent.type === 'verse' || intent.type === 'chapter' || intent.type === 'quote') {
+            v.recent = [{ label: rec.label, intent }].concat(v.recent.filter(r => r.label !== rec.label)).slice(0, 5);
+        }
+    }
+    rcTickSoon();
+}
+async function rcVoiceUndo() {
+    const v = rc.voice, s = v.sent && v.sent.snap; if (!s) return;
+    try {
+        if (s.bookCode !== currentBookCode || s.chapter !== currentChapter) await voiceGoToChapterVerse(s.bookCode, s.bookName, s.chapter, s.verse);
+        else if (s.verse !== currentVerse) selectSpecificVerseCoordinate(s.verse);
+        previewState.text = s.text; previewState.ref = s.ref;
+        if (previewState.displayMode === 'media') switchToTextDisplay();
+        renderPreview(); transmitStatePacketToRemoteClients();
+    } catch (e) { console.warn('voice undo', e); }
+    v.sent = null; rcTickSoon();
+}
+function rcVoiceStop(keepErr) {
+    const v = rc.voice;
+    if (v.src === 'pc' && v.pcStarted && isListening) rcEl('listeningBtn').click();
+    v.active = false; v.owner = null; v.paused = false; v.pcStarted = false; v.pending = null; v.heard = ''; if (!keepErr) v.err = '';
+    clearTimeout(voicePendingTimer); rcTickSoon();
+}
+function rcVoiceOwnerGone(dev) { if (rc.voice.active && rc.voice.owner === dev) rcVoiceStop(); }
+function rcVoicePermsChanged(dev) { if (rc.voice.active && rc.voice.owner === dev && dev.perms.indexOf('voice') < 0) rcVoiceStop(); }
+(function () { // what the PC microphone hears is mirrored to the phone
+    const orig = renderTranscriptLog;
+    renderTranscriptLog = function (f, i) {
+        const r = orig.apply(this, arguments);
+        try { const v = rc.voice; if (v.active) { const t = String(i || f || '').trim(); if (t) { v.heard = t.slice(0, 200); v.hfinal = !i; rcTickSoon(); } } } catch (e) {}
+        return r;
+    };
+})();
+
+Object.assign(RC_CMDS, {
+    voice_start(a) {
+        const v = rc.voice, dev = rc.curDev;
+        if (v.active && v.owner && v.owner !== dev && rc.devices.includes(v.owner)) { rcSend(dev, { t: 'toast', msg: 'Voice is already being used by ' + v.owner.name }); return; }
+        if (v.active) rcVoiceStop();
+        const src = a.src === 'phone' ? 'phone' : 'pc';
+        Object.assign(v, { active: true, src, owner: dev, paused: false, auto: a.auto === true, follow: a.follow !== false, cmds: a.cmds !== false, pcStarted: false, startedAt: Date.now(), heard: '', hfinal: true, pending: null, err: '' });
+        if (src === 'pc') {
+            if (!rcVoiceSupported || !recognition) { v.err = 'Voice listening is not supported by the browser on the dashboard PC. Use Chrome or Edge.'; return; }
+            if (!isListening) { v.pcStarted = true; rcEl('listeningBtn').click(); }
+        } else {
+            if (isListening) { if (rc.voice.pcStarted) rcEl('listeningBtn').click(); else rcSend(dev, { t: 'toast', msg: 'Live Voice is also on at the PC. Turn one off to avoid double sends.' }); }
+        }
+    },
+    voice_stop() { if (rc.voice.active && (!rc.voice.owner || rc.voice.owner === rc.curDev)) rcVoiceStop(); },
+    voice_session() { if (rc.voice.active && rc.voice.src === 'phone') { voiceCommitted = { utterance: -1, sig: '' }; if (typeof aiState !== 'undefined') aiState.results = {}; } },
+    voice_text(a) {
+        const v = rc.voice; if (!v.active || v.src !== 'phone' || v.owner !== rc.curDev) return;
+        const list = Array.isArray(a.r) ? a.r.slice(0, 8) : [], ri = Math.max(0, Math.min(500, parseInt(a.i, 10) || 0));
+        const results = []; for (let k = 0; k < ri; k++) results.push({ isFinal: true, length: 0 });
+        let fin = '', interim = '';
+        list.forEach(item => {
+            const alts = (Array.isArray(item.a) ? item.a : []).slice(0, 5).map(t => ({ transcript: String(t).slice(0, 300), confidence: 0.9 }));
+            const res = { isFinal: item.f === true, length: alts.length }; alts.forEach((x, n) => { res[n] = x; });
+            results.push(res);
+            if (alts.length) { if (res.isFinal) fin += alts[0].transcript; else interim += alts[0].transcript; }
+        });
+        const event = { resultIndex: ri, results };
+        try { renderTranscriptLog(fin, interim); } catch (e) {}
+        try { processContinuousSpeechForScriptures(event); } catch (e) { console.warn('phone speech', e); }
+    },
+    voice_opts(a) { const v = rc.voice; if (!v.active || v.owner !== rc.curDev) return; if (typeof a.auto === 'boolean') { v.auto = a.auto; if (v.auto === false) { /* keep any card already waiting */ } } if (typeof a.follow === 'boolean') v.follow = a.follow; if (typeof a.cmds === 'boolean') v.cmds = a.cmds; },
+    voice_pause(a) { const v = rc.voice; if (!v.active || v.owner !== rc.curDev) return; v.paused = a.on === true; if (v.paused) { v.pending = null; clearTimeout(voicePendingTimer); } },
+    voice_send() { const v = rc.voice; if (!v.active || !v.pending) return; const p = v.pending; v.pending = null; return rcVoiceRun(p.intent); },
+    voice_dismiss() { rc.voice.pending = null; },
+    voice_undo() { return rcVoiceUndo(); },
+    voice_resend(a) { const v = rc.voice, r = v.recent[parseInt(a.i, 10)]; if (!v.active || !r) return; return rcVoiceRun(r.intent); }
+});
+(function () { // a waiting card goes stale after 90 seconds
+    setInterval(() => { const v = rc.voice; if (v.pending && Date.now() - v.pending.ts > 90000) { v.pending = null; rcTickSoon(); } }, 5000);
+})();
