@@ -4,7 +4,918 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EXPRESS BIBLE PRESENTER V2 - PRODUCTION SUITE</title>
+    <!-- APP ICON — upload the icons/ folder alongside index.html --><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EXPRESS BIBLE PRESENTER V2 - PRODUCTION SUITE</title>
     <!-- APP ICON — upload the icons/ folder alongside index.html -->
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png?v=2">
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?v=2">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#050a14">
+    <!-- WEBRTC PEER CONNECTION CONTEXT LAYER -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <!-- DOCUMENT PARSING: for loading song lyrics from local .docx / .pdf files -->
+    <script src="https://unpkg.com/mammoth@1.7.2/mammoth.browser.min.js"></script>
+    <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <!-- ZIP READING: PowerPoint (.pptx) files are ZIP archives internally — used to pull out slide text/images -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="styles.css?v=10">
+    <!-- SIGN-IN: Firebase passwordless magic-link authentication (see auth.js) -->
+    <script type="module" src="auth.js"></script>
+</head>
+<body>
+
+    <!-- SIGN-IN OVERLAY: covers the whole app until signed in. Skipped entirely for the OBS/output URL
+         (?mode=obs), since that page is a passive capture source with no operator present to log in. -->
+    <div id="authOverlay" class="auth-overlay">
+        <div class="auth-box" id="authBoxDefault">
+            <div class="auth-brand">
+                <svg class="brand-cross" viewBox="0 0 24 24" fill="currentColor" width="28" height="28"><path d="M11 2h2v6h6v2h-6v12h-2v-12h-6v-2h6V2z"/></svg>
+                <h2>Sign in to continue</h2>
+            </div>
+            <p class="auth-subtext">Sign in with your Google account to continue.</p>
+            <button id="authGoogleBtn" class="auth-btn-google" type="button">
+                <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                    <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84c-.21 1.13-.84 2.09-1.8 2.73v2.27h2.91c1.7-1.57 2.69-3.88 2.69-6.64z"/>
+                    <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.91-2.27c-.81.54-1.84.86-3.05.86-2.34 0-4.32-1.58-5.03-3.71H.96v2.34C2.44 15.98 5.48 18 9 18z"/>
+                    <path fill="#FBBC05" d="M3.97 10.7c-.18-.54-.28-1.11-.28-1.7s.1-1.16.28-1.7V4.96H.96A8.996 8.996 0 000 9c0 1.45.35 2.83.96 4.04l3.01-2.34z"/>
+                    <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 5.48 0 2.44 2.02.96 4.96l3.01 2.34C4.68 5.16 6.66 3.58 9 3.58z"/>
+                </svg>
+                <span>Sign in with Google</span>
+            </button>
+            <!-- EMAIL SIGN-IN — TEMPORARILY DISABLED (Firebase free-plan email quota). All the underlying
+                 code in auth.js is untouched and still works. To bring this back, just delete the
+                 "display:none" below and restore the subtext above to mention email as an option. -->
+            <div class="auth-divider" style="display:none"><span>or use email instead</span></div>
+            <input type="email" id="authEmailInput" class="auth-input" placeholder="you@example.com" autocomplete="email" style="display:none">
+            <button id="authContinueBtn" class="btn auth-btn-primary" style="display:none">Continue</button>
+            <p id="authStatusMsg" class="auth-status"></p>
+        </div>
+    </div>
+
+    <!-- CREATE-ACCOUNT CONFIRMATION: shown only the first time a new email is entered -->
+    <div id="createAccountModal" class="auth-modal-overlay">
+        <div class="auth-modal">
+            <h3>Create Login Account</h3>
+            <label for="createAccountEmailInput">Email</label>
+            <input type="email" id="createAccountEmailInput" class="auth-input">
+            <p class="auth-modal-desc">This email will be used to create your login access to this Bible presenter.</p>
+            <div class="auth-modal-actions">
+                <button id="createAccountCancelBtn" class="btn" style="background:#475569; border-color:#64748b;">Cancel</button>
+                <button id="createAccountConfirmBtn" class="btn auth-btn-primary">Create Account</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WELCOME SPLASH ANIMATION: shown once on load, then removed -->
+    <div id="welcomeSplashScreen">
+        <div class="splash-stars" id="splashStars"></div>
+        <div class="splash-content">
+            <h1 class="splash-title">WELCOME TO EXPRESS BIBLE PRESEN<span class="gold-cross-letter">T</span>ER</h1>
+            <p class="splash-subtitle">Making Church Presentation Easy</p>
+        </div>
+    </div>
+
+    <!-- INTERFACE A: MAIN STUDIO PRODUCTION SUITE -->
+    <div class="main-production-suite">
+
+        <!-- FULL-HEIGHT LEFT SIDEBAR: CHAPTERS / WORD SEARCH / SONG LYRICS -->
+        <section class="verse-navigation-panel">
+            <div class="panel-tabs-bar">
+                <button class="panel-tab-btn active" onclick="switchTab('chapters-tab')">Chapters</button>
+                <button class="panel-tab-btn" onclick="switchTab('search-tab')">Word Search</button>
+                <button class="panel-tab-btn" onclick="switchTab('lyrics-tab')" style="color: #a78bfa;">Song Lyrics</button>
+            </div>
+
+            <!-- TAB 1: CHAPTERS INDEX -->
+            <div id="chapters-tab" class="panel-tab-content active">
+                <div class="panel-header" id="panelNavHeader">Verse Directory: Loading...</div>
+                <div class="verse-grid" id="verseGridDeck"></div>
+            </div>
+
+            <!-- TAB 2: INSTANT WORD SEARCH -->
+            <div id="search-tab" class="panel-tab-content">
+                <div class="panel-header">Database Search Lookup</div>
+                <div style="padding: 0.65rem; border-bottom: 1px solid var(--bg-accent); display: flex; flex-direction: column; gap: 0.5rem;">
+                    <input type="text" id="instantWordSearchInput" placeholder="Type to search (e.g., Jesus wept)..." style="width: 100%; padding: 0.5rem;">
+                    <div id="wordSearchResultCount" style="font-size: 0.65rem; color: var(--accent-primary); font-weight: 800;">Type at least 3 characters...</div>
+                </div>
+
+                <div style="padding: 0.65rem; border-bottom: 1px solid var(--bg-accent); display: flex; flex-direction: column; gap: 0.5rem; background: rgba(139,92,246,0.06);">
+                    <label style="font-size: 0.65rem; color: #a78bfa; text-transform: uppercase; font-weight:700;">🎵 Search Song Lyrics Online</label>
+                    <div style="display:flex; gap:0.4rem;">
+                        <input type="text" id="lyricsWebSearchInput" placeholder="e.g. Way Maker Nathaniel Bassey" style="flex:1; padding:0.45rem;">
+                        <button id="lyricsWebSearchBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem; background: #6d28d9; border-color: #7c3aed;">Search</button>
+                    </div>
+                    <div id="lyricsWebSearchResults" style="display:flex; flex-direction:column; gap:0.35rem;"></div>
+                </div>
+
+                <div class="verse-grid" id="wordSearchResultDeck">
+                    <div class="placeholder-text">Query results will render automatically.</div>
+                </div>
+            </div>
+
+            <!-- TAB 3: SONG LYRICS MANAGER -->
+            <div id="lyrics-tab" class="panel-tab-content">
+                <div class="panel-header">Paste & Generate Lyric Slides</div>
+                <div style="padding: 0.9rem; border-bottom: 1px solid var(--bg-accent); display: flex; flex-direction: column; gap: 0.75rem;">
+
+                    <div style="display:flex; flex-direction:column; gap:0.4rem; background: rgba(109,40,217,0.08); border:1px solid rgba(109,40,217,0.25); border-radius:6px; padding:0.6rem;">
+                        <label style="font-size: 0.65rem; color: #a78bfa; text-transform: uppercase; font-weight:700;">Saved Songs Library</label>
+                        <div style="display:flex; gap:0.4rem;">
+                            <select id="savedSongsDropdown" style="flex:1; padding:0.4rem; font-size:0.8rem;">
+                                <option value="">-- Select a Saved Song --</option>
+                            </select>
+                            <button id="loadSavedSongBtn" class="btn" style="padding: 0.4rem 0.6rem; font-size: 0.75rem;">Load</button>
+                            <button id="deleteSavedSongBtn" class="btn" style="padding: 0.4rem 0.6rem; font-size: 0.75rem; background:#7f1d1d; border-color:#991b1b;">Delete</button>
+                        </div>
+                        <button id="saveSongBtn" class="btn" style="padding: 0.4rem 0.6rem; font-size: 0.75rem; background:#166534; border-color:#15803d;">💾 Save Current Lyrics As New Song</button>
+                        <div style="display:flex; gap:0.4rem; align-items:center;">
+                            <input type="file" id="lyricsFilePicker" accept=".pdf,.docx,.doc,.txt" class="hidden-file-input">
+                            <button id="lyricsFileLoadBtn" class="btn" style="padding: 0.4rem 0.6rem; font-size: 0.75rem; background:#1e3a5f; border-color:#2563eb; flex:1;">📄 Load Lyrics From PDF / Word File</button>
+                        </div>
+                        <span id="lyricsFileLoadStatus" style="font-size: 0.65rem; color: var(--text-muted);"></span>
+                    </div>
+
+                    <textarea id="lyricsTextInput" placeholder="Paste your song lyrics here..." rows="5" style="resize: vertical; min-height: 90px; max-height: 220px; width: 100%; font-family: monospace; font-size: 0.85rem; line-height: 1.6; padding: 0.6rem 0.7rem;"></textarea>
+
+                    <div style="display: flex; gap: 0.5rem; align-items: center; position: relative;">
+                        <label for="lyricsSongLabelInput" style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; white-space: nowrap;">Slide Label:</label>
+                        <input type="text" id="lyricsSongLabelInput" placeholder="e.g. How Great Is Our God (defaults to 'Song Lyrics')" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.8rem;" autocomplete="off">
+                        <div id="songTitleSuggestions" class="song-title-suggestions"></div>
+                    </div>
+
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        <label style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; white-space: nowrap;">Group By:</label>
+                        <select id="lyricsSplitSelector" style="padding: 0.4rem; font-size: 0.8rem; flex: 1;">
+                            <option value="1">1 Line per Slide</option>
+                            <option value="2" selected>2 Lines per Slide</option>
+                            <option value="4">4 Lines per Slide</option>
+                            <option value="blank">Double Break / Paragraph</option>
+                        </select>
+                        <button id="processLyricsBtn" class="btn" style="padding: 0.45rem 0.9rem; font-size: 0.8rem; background: #6d28d9; border-color: #7c3aed;">Generate</button>
+                    </div>
+                </div>
+                <div class="verse-grid" id="lyricsSlidesDeck">
+                    <div class="placeholder-text">Click generate to produce lyric slides.</div>
+                </div>
+            </div>
+        </section>
+
+        <div class="content-column">
+        <header>
+            <div class="top-row">
+                <div class="brand-container">
+                    <svg class="brand-cross" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2h2v6h6v2h-6v12h-2v-12h-6v-2h6V2z"/></svg>
+                    <h1>EXPRESS BIBLE PRESENTER <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); margin-left: 0.2rem; vertical-align: baseline; letter-spacing: normal; text-transform: none;">V2</span></h1>
+                </div>
+
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button id="freezeLiveBtn" class="btn" style="background:#0369a1; border-color:#0284c7;" title="Locks the projector/OBS/NDI/remote outputs so your edits stop reaching them, while you keep working on the scene here">❄ Freeze Live</button>
+                    <div style="display:flex; flex-direction:column; align-items:flex-start; gap:0.1rem;">
+                        <button id="sendToProjectorBtn" class="btn" style="background:#7c2d12; border-color:#9a3412;" title="Sends this scene directly to your extended screen/projector via HDMI/wireless-display, fullscreen, no dragging. Click again to disconnect.">📽 Send to Projector</button>
+                        <span id="projectorConnectionStatus" style="font-size: 0.6rem; color: var(--text-muted); padding-left: 0.2rem;">Not connected</span>
+                    </div>
+                    <button id="openSettingsModalBtn" class="btn settings-btn">⚙ Settings</button>
+                    <button id="appSignOutBtn" class="btn" style="background:#475569; border-color:#64748b; display:none;" title="Sign out of this account on this device">⎋ Sign Out</button>
+                    <div class="status-pill"><div id="statusDot" class="status-dot"></div><span id="statusText">Initializing System</span></div>
+                </div>
+            </div>
+
+            <!-- RIBBON TABS (VideoPsalm-style: Text / Background / Message / Edit) -->
+            <div class="ribbon-tabs-bar">
+                <button class="ribbon-tab-btn active" data-ribbon-tab="ribbon-text">📝 Text</button>
+                <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-background">🖼 Background</button>
+                <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-media">🎞 Media</button>
+                <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-message">💬 Message</button>
+                <div class="file-menu-wrapper">
+                    <button class="ribbon-tab-btn" id="fileMenuTabBtn" type="button">📁 File ▾</button>
+                    <div id="fileMenuDropdown" class="file-menu-dropdown">
+                        <button class="file-menu-item" id="fileMenuNewBtn"><span class="file-menu-icon">🆕</span> New Session</button>
+                        <label class="file-menu-item" for="importProfilePicker"><span class="file-menu-icon">📂</span> Open (Load Profile)</label>
+                        <label class="file-menu-item" for="fileMenuLyricsImportPicker"><span class="file-menu-icon">📥</span> Import Lyrics (PDF/Word)</label>
+                        <button class="file-menu-item" id="fileMenuDuplicateBtn"><span class="file-menu-icon">🗂️</span> Make a Copy</button>
+                        <div class="file-menu-divider"></div>
+                        <button class="file-menu-item" id="fileMenuDownloadBtn"><span class="file-menu-icon">⬇️</span> Download (Save Profile)</button>
+                        <div class="file-menu-divider"></div>
+                        <button class="file-menu-item" id="fileMenuRenameBtn"><span class="file-menu-icon">✏️</span> Rename Session</button>
+                        <button class="file-menu-item" id="fileMenuClearBtn" style="color:#f87171;"><span class="file-menu-icon">🗑️</span> Clear All Data</button>
+                        <div class="file-menu-divider"></div>
+                        <button class="file-menu-item" id="fileMenuHistoryToggleBtn"><span class="file-menu-icon">🕐</span> Version History</button>
+                        <div class="file-menu-divider"></div>
+                        <button class="file-menu-item" id="fileMenuDetailsBtn"><span class="file-menu-icon">ℹ️</span> Details</button>
+                        <button class="file-menu-item" id="fileMenuSettingsBtn"><span class="file-menu-icon">⚙️</span> Settings</button>
+                    </div>
+                    <input type="file" id="importProfilePicker" accept=".json" class="hidden-file-input">
+                    <input type="file" id="fileMenuLyricsImportPicker" accept=".pdf,.docx,.doc,.txt" class="hidden-file-input">
+                </div>
+            </div>
+
+            <!-- RIBBON PANEL: TEXT -->
+            <div id="ribbon-text" class="ribbon-panel active">
+                <select id="versionSelector">
+                    <option value="KJV">KJV (King James Version)</option>
+                    <option value="NKJV">NKJV (New King James Version)</option>
+                    <option value="AMP">AMP (Amplified Bible)</option>
+                    <option value="NLT">NLT (New Living Translation)</option>
+                    <option value="MSG">MSG (The Message)</option>
+                    <option value="ESV">ESV (English Standard Version)</option>
+                    <option value="NASB">NASB (New American Standard Bible)</option>
+                    <option value="LSB">LSB (Legacy Standard Bible)</option>
+                    <option value="MEV">MEV (Modern English Version)</option>
+                    <option value="WEB">WEB (World English Bible)</option>
+                    <option value="BSB">BSB (Berean Standard Bible)</option>
+                    <option value="ASV">ASV (American Standard Version)</option>
+                    <option value="YLT">YLT (Young's Literal Translation)</option>
+                    <option value="DRB">DRB (Douay-Rheims Bible)</option>
+                </select>
+                <input type="text" id="manualSearchInput" value="1 Cor 3" placeholder="Search reference... (e.g., Romans 12)">
+                <button id="listeningBtn" class="btn">Enable Live Voice</button>
+
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 0.75rem;">
+                    <label for="layoutSelector">Layout:</label>
+                    <select id="layoutSelector">
+                        <option value="mode-center">Center Display</option>
+                        <option value="mode-lowerthird">Lower Third</option>
+                        <option value="mode-fullscreen">Full Screen</option>
+                        <option value="mode-flieronly">Flier Only</option>
+                    </select>
+                </div>
+
+                <!-- Only shown when Layout = Lower Third -->
+                <div class="control-group" id="lowerThirdPositionGroup" style="display:none;">
+                    <label for="lowerThirdPositionSelector">Position:</label>
+                    <select id="lowerThirdPositionSelector">
+                        <option value="bottom">Bottom (Default)</option>
+                        <option value="center">Centered</option>
+                        <option value="top">Top</option>
+                    </select>
+                </div>
+
+                <!-- Fine nudge — works in any layout, lets you fine-tune after picking a Position above -->
+                <div class="control-group" id="nudgeControlGroup" style="display:none;" title="Fine-tune lower-third position (moves text and reference together)">
+                    <label>Nudge:</label>
+                    <button id="nudgeUpBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▲</button>
+                    <button id="nudgeDownBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▼</button>
+                    <button id="nudgeLeftBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">◀</button>
+                    <button id="nudgeRightBtn" class="btn" style="padding:0.3rem 0.5rem;" type="button">▶</button>
+                    <button id="nudgeResetBtn" class="btn" style="padding:0.3rem 0.5rem; font-size:0.7rem;" type="button" title="Reset to default position">Reset</button>
+                </div>
+
+                <!-- Lower Third templates (verse + name tag) -->
+                <div class="control-group" id="ltTemplateGroup" style="position: relative;">
+                    <button id="ltTemplateToggleBtn" type="button" class="btn" style="background:#0f766e; border-color:#14b8a6; padding: 0.4rem 0.75rem; font-size: 0.75rem;" title="Lower Third templates: ready-made bars you can recolour">LT STYLE ▾</button>
+                    <div id="ltTemplateDropdown" class="bg-text-effect-dropdown"></div>
+                </div>
+
+                <div class="control-group">
+                    <label for="fontSizeInput">Sizing:</label>
+                    <select id="fontSizeInput">
+                        <option value="small">Small</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="large">Large</option>
+                        <option value="xlarge">Extra Large</option>
+                    </select>
+                </div>
+
+                <div class="control-group"><label for="textColorPicker">Text Colour:</label><input type="color" id="textColorPicker" value="#ffffff"></div>
+
+                <div class="control-group"><label for="refColorPicker" title="Colour of the Bible name/version reference shown under the text">Ref. Colour:</label><input type="color" id="refColorPicker" value="#38bdf8"><button id="refEyeToggleBtn" class="btn toggle-active" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" type="button" title="Show/hide the Bible name/version reference (text stays on screen)">👁</button></div>
+
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; position: relative;">
+                    <button id="textStyleToggleBtn" type="button" class="btn" style="background:#4c1d95; border-color:#6d28d9; padding: 0.4rem 0.75rem; font-size: 0.75rem;">TEXT STYLE ▾</button>
+                    <div id="textStyleDropdown" class="bg-text-effect-dropdown">
+                        <div style="display: flex; flex-direction: column; gap: 0.7rem;">
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Display Transition</label>
+                                <select id="displayTransitionSelector" style="width: 100%; padding:0.35rem; font-size:0.75rem;">
+                                    <option value="none" selected>Instant Cut</option>
+                                    <option value="fade">Fade</option>
+                                    <option value="slide">Slide</option>
+                                    <option value="zoom">Zoom</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Font Style Override</label>
+                                <div style="display:flex; gap:0.4rem;">
+                                    <select id="fontStyleOverrideSelector" style="flex:1; padding:0.35rem; font-size:0.75rem;">
+                                        <optgroup label="Sans-Serif">
+                                            <option value="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">Standard Sans-Serif</option>
+                                            <option value="system-ui, sans-serif">System Dynamic UI</option>
+                                            <option value="Arial, 'Helvetica Neue', Helvetica, 'Liberation Sans', sans-serif">Arial</option>
+                                            <option value="'Helvetica Neue', Helvetica, Arial, sans-serif">Helvetica Neue</option>
+                                            <option value="Verdana, Geneva, 'DejaVu Sans', sans-serif">Verdana</option>
+                                            <option value="Tahoma, Geneva, sans-serif">Tahoma</option>
+                                            <option value="'Trebuchet MS', 'Lucida Grande', sans-serif">Trebuchet MS</option>
+                                            <option value="Calibri, Candara, Segoe, 'Segoe UI', sans-serif">Calibri</option>
+                                            <option value="'Segoe UI', Frutiger, 'Frutiger Linotype', sans-serif">Segoe UI</option>
+                                            <option value="'Century Gothic', 'Apple Gothic', sans-serif">Century Gothic</option>
+                                            <option value="'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif">Franklin Gothic Medium</option>
+                                        </optgroup>
+                                        <optgroup label="Bold / Display">
+                                            <option value="'Arial Black', 'Arial Bold', Arial, 'Liberation Sans', sans-serif">Arial Black</option>
+                                            <option value="Impact, Haettenschweiler, 'Franklin Gothic Bold', sans-serif">Impact</option>
+                                            <option value="'Franklin Gothic Heavy', 'Arial Black', sans-serif">Franklin Gothic Heavy</option>
+                                        </optgroup>
+                                        <optgroup label="Serif">
+                                            <option value="Georgia, 'Times New Roman', Times, serif">Georgia</option>
+                                            <option value="'Times New Roman', Times, Georgia, serif">Times New Roman</option>
+                                            <option value="Cambria, Georgia, serif">Cambria</option>
+                                            <option value="Garamond, Baskerville, 'Baskerville Old Face', serif">Garamond</option>
+                                            <option value="'Palatino Linotype', Palatino, 'Book Antiqua', serif">Palatino Linotype</option>
+                                            <option value="'Book Antiqua', Palatino, serif">Book Antiqua</option>
+                                        </optgroup>
+                                        <optgroup label="Monospace">
+                                            <option value="'Courier New', Courier, 'Liberation Mono', monospace">Courier New (Vintage Typewriter)</option>
+                                            <option value="Consolas, 'Lucida Console', Monaco, monospace">Consolas</option>
+                                            <option value="'Lucida Console', Monaco, monospace">Lucida Console</option>
+                                        </optgroup>
+                                        <optgroup label="Script / Decorative">
+                                            <option value="'Segoe Script', 'Brush Script MT', cursive">Segoe Script</option>
+                                            <option value="'Brush Script MT', 'Segoe Script', cursive">Brush Script MT</option>
+                                            <option value="Copperplate, 'Copperplate Gothic Light', fantasy">Copperplate</option>
+                                        </optgroup>
+                                    </select>
+                                    <button id="fontBoldToggleBtn" type="button" class="btn" style="padding: 0.35rem 0.6rem; font-size: 0.8rem; font-weight: 900;" title="Toggle Bold">B</button>
+                                    <button id="fontItalicToggleBtn" type="button" class="btn" style="padding: 0.35rem 0.6rem; font-size: 0.8rem; font-style: italic;" title="Toggle Italic">I</button>
+                                </div>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Text Shadow Intensity</label>
+                                <select id="textShadowSelector" style="width: 100%; padding:0.35rem; font-size:0.75rem;">
+                                    <option value="0 4px 12px rgba(0,0,0,0.98)" selected>High Contrast Shadow</option>
+                                    <option value="0 2px 4px rgba(0,0,0,0.85)">Subtle Shadow</option>
+                                    <option value="none">Flat (No Shadow)</option>
+                                </select>
+                            </div>
+                            <div style="display:flex; flex-direction:column; gap:0.45rem; border-top:1px solid var(--bg-accent); padding-top:0.6rem;">
+                                <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted);"><input type="checkbox" id="textBackingPanelCheckbox"> Dark backing panel behind text</label>
+                                <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted);"><input type="checkbox" id="gradientGlowTextCheckbox"> Gradient + glow text style</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- RIBBON PANEL: BACKGROUND -->
+            <div id="ribbon-background" class="ribbon-panel">
+                <div class="control-group"><label for="bgColorPicker">Solid BG:</label><input type="color" id="bgColorPicker" value="#0f172a"></div>
+
+                <div class="control-group">
+                    <label for="bgPresetSelector">Default Background:</label>
+                    <select id="bgPresetSelector" style="max-width: 170px;">
+                        <option value="">-- None (use Solid BG) --</option>
+                        <option value="ocean">Deep Ocean</option>
+                        <option value="midnight">Midnight Sky</option>
+                        <option value="royal">Royal Purple</option>
+                        <option value="sunset">Sunset Glow</option>
+                        <option value="golden">Golden Hour</option>
+                        <option value="forest">Forest Depth</option>
+                        <option value="crimson">Crimson Dusk</option>
+                        <option value="aurora">Northern Lights</option>
+                        <option value="cosmic">Cosmic Night</option>
+                        <option value="ember">Warm Ember</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; white-space:nowrap; text-transform:none; letter-spacing:0;" title="No background at all behind your text — fully see-through, useful for OBS overlay-style output">
+                        <input type="checkbox" id="bgTransparentCheckbox"> Transparent background (no color)
+                    </label>
+                </div>
+
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <label for="imageAssetAssignmentSelector">Media:</label>
+                    <select id="imageAssetAssignmentSelector" style="max-width: 100px;">
+                        <option value="textBgContainer">Box Fill</option>
+                        <option value="flierOverlay">Full Overlay</option>
+                    </select>
+                    <select id="assetLibraryDropdown"><option value="">-- No Image Asset --</option></select>
+                    <button id="deleteAssetBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected background image">✕</button>
+                    <label for="masterImagePicker" class="file-upload-btn">Upload</label>
+                    <input type="file" id="masterImagePicker" accept="image/*" class="hidden-file-input">
+                </div>
+
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-direction: column; align-items: flex-start; gap:0.2rem;">
+                    <label for="bgOpacitySlider" style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Opacity: <span id="bgOpacityValue">100%</span></label>
+                    <input type="range" id="bgOpacitySlider" min="10" max="100" value="100" style="width:110px;">
+                </div>
+
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <label for="logoPositionSelector">Logo:</label>
+                    <select id="logoPositionSelector" style="max-width: 90px;">
+                        <option value="">-- No Logo --</option>
+                        <option value="logo-top-left">Top L</option>
+                        <option value="logo-top-right">Top R</option>
+                        <option value="logo-bottom-left">Bottom L</option>
+                        <option value="logo-bottom-right">Bottom R</option>
+                    </select>
+                    <label for="logoImagePicker" class="file-upload-btn" style="border-color: var(--accent-success); color: var(--accent-success)">Logo Image</label>
+                    <input type="file" id="logoImagePicker" accept="image/*" class="hidden-file-input">
+                </div>
+
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <label style="color:var(--accent-primary);">Logo Size:</label>
+                    <button id="logoSizeDecBtn" class="btn" style="padding: 0.15rem 0.45rem; font-size: 0.75rem;">-</button>
+                    <input type="range" id="logoSizeSlider" min="2" max="30" value="6" style="width: 70px; height: 4px; cursor: pointer; background: var(--bg-main);">
+                    <button id="logoSizeIncBtn" class="btn" style="padding: 0.15rem 0.45rem; font-size: 0.75rem;">+</button>
+                    <span id="logoSizeValue" style="font-size: 0.75rem; color: var(--accent-success); font-weight: bold; min-width: 25px;">6%</span>
+                </div>
+            </div>
+
+            <!-- RIBBON PANEL: MEDIA — fliers, images & videos shown full-screen, fully separate from backgrounds -->
+            <div id="ribbon-media" class="ribbon-panel">
+                <div class="control-group">
+                    <label for="mediaLibraryDropdown">Media:</label>
+                    <select id="mediaLibraryDropdown" style="max-width: 230px;"><option value="">-- Saved Media (images, videos, PDFs &amp; PPTX) --</option></select>
+                    <button id="mediaDeleteBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected media">✕</button>
+                    <input type="file" id="mediaFilePicker" accept="image/*,video/*,.mp4,.m4v,.mov,.webm,.ogv,.mkv,.avi,application/pdf,.pdf,.pptx" multiple class="hidden-file-input">
+                    <button id="mediaUploadBtn" class="btn" style="padding: 0.4rem 0.75rem; font-size: 0.75rem;">Upload Image / Video / PDF / PPTX</button>
+                </div>
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <button id="mediaShowBtn" class="btn" style="background:#166534; border-color:#15803d;" title="Show the selected media full-screen on the output">▶ Show on Screen</button>
+                    <button id="mediaHideBtn" class="btn" style="background:#475569; border-color:#64748b;" title="Remove the media and go back to the text display">⏹ Hide Media</button>
+                    <label for="mediaFitSelector">Fit:</label>
+                    <select id="mediaFitSelector">
+                        <option value="contain">Fit whole media (no cropping)</option>
+                        <option value="cover">Fill screen (may crop edges)</option>
+                    </select>
+                </div>
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <button id="mediaSkipBackBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Back 10s">⏪10s</button>
+                    <button id="mediaPlayPauseBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Play/Pause">⏯</button>
+                    <button id="mediaSkipFwdBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Forward 10s">10s⏩</button>
+                    <input type="range" id="mediaSeekSlider" min="0" max="100" value="0" step="0.1" style="width:110px;" title="Seek (videos)">
+                    <span id="mediaStatus" style="font-size:0.7rem; color: var(--text-muted); max-width:230px;">Media hidden — text is showing</span>
+                </div>
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem;" id="mediaPdfNavGroup">
+                    <button id="mediaPdfPrevBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Previous PDF page">◀ Prev Page</button>
+                    <span id="mediaPdfPageIndicator" style="font-size:0.7rem; color: var(--text-muted); min-width: 70px; text-align:center; display:inline-block;">Page — / —</span>
+                    <button id="mediaPdfNextBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Next PDF page">Next Page ▶</button>
+                </div>
+                <!-- SLIDES DISPLAY: several images shown one after another with transitions and timing -->
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; position: relative;" id="slidesGroup">
+                    <button id="slidesToggleBtn" type="button" class="btn" style="background:#0e7490; border-color:#0891b2; padding: 0.4rem 0.75rem; font-size: 0.75rem;">🖼 Slides Display ▾</button>
+                    <button id="slidesEyeBtn" type="button" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" title="Show / hide the slides on the output (eye open = slides are on screen)">👁</button>
+                    <span id="slidesStatus" style="font-size:0.7rem; color: var(--text-muted);">No slides yet</span>
+                    <div id="slidesDropdown" class="bg-text-effect-dropdown" style="width: 400px;">
+                        <div style="display:flex; flex-direction:column; gap:0.7rem;">
+                            <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+                                <input type="file" id="slidesFilePicker" accept="image/*" multiple class="hidden-file-input">
+                                <button id="slidesAddBtn" type="button" class="btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;">＋ Add images</button>
+                                <select id="slidesLibrarySelect" style="flex:1; min-width:120px; padding:0.35rem; font-size:0.75rem;"><option value="">Add from saved media…</option></select>
+                                <button id="slidesClearBtn" type="button" class="btn" style="padding:0.35rem 0.6rem; font-size:0.72rem; background:#7f1d1d; border-color:#991b1b;">Clear all</button>
+                            </div>
+                            <div id="slidesList" style="display:flex; flex-direction:column; gap:0.35rem; max-height:220px; overflow-y:auto;"></div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem;">
+                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Transition</label>
+                                    <select id="slidesTransitionSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                                        <option value="cut">Instant Cut</option>
+                                        <option value="fade" selected>Fade</option>
+                                        <option value="left">Slide from Right</option>
+                                        <option value="right">Slide from Left</option>
+                                        <option value="up">Slide Up</option>
+                                        <option value="zoomin">Zoom In</option>
+                                        <option value="zoomout">Zoom Out</option>
+                                        <option value="blur">Blur In</option>
+                                        <option value="flip">Flip</option>
+                                        <option value="wipe">Wipe</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Time per slide (seconds)</label>
+                                    <input type="number" id="slidesIntervalInput" min="1" max="600" step="1" value="6" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Picture fit</label>
+                                    <select id="slidesFitSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                                        <option value="contain">Fit whole picture</option>
+                                        <option value="cover">Fill screen (may crop)</option>
+                                    </select>
+                                </div>
+                                <div style="display:flex; flex-direction:column; gap:0.35rem; justify-content:flex-end;">
+                                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--text-muted);"><input type="checkbox" id="slidesAutoCheck" checked> Auto-advance</label>
+                                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--text-muted);"><input type="checkbox" id="slidesLoopCheck" checked> Loop</label>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:0.4rem; align-items:center; border-top:1px solid var(--bg-accent); padding-top:0.6rem;">
+                                <button id="slidesPrevBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">⏮ Prev</button>
+                                <button id="slidesPlayBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">⏸ Pause</button>
+                                <button id="slidesNextBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">Next ⏭</button>
+                                <span id="slidesCounter" style="font-size:0.72rem; color:var(--text-muted); margin-left:auto;">— / —</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">Everything you upload is kept in the dropdown for next time — PDFs and PowerPoint (.pptx) files display page/slide by page. PowerPoint slides show their text and images, not the exact PowerPoint design — for a pixel-perfect match, export to PDF from PowerPoint first. Double-click any verse, song slide or search result and the screen switches back to text automatically.</span>
+            </div>
+
+            <!-- RIBBON PANEL: MESSAGE -->
+            <div id="ribbon-message" class="ribbon-panel">
+                <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap: wrap; background: rgba(217,119,6,0.1); border:1px solid rgba(217,119,6,0.25); padding: 0.4rem 0.5rem; border-radius:6px;">
+                    <input type="text" id="announcementInput" placeholder="Type announcement text..." style="min-width:160px; padding:0.35rem; border-color:rgba(217,119,6,0.3);">
+                    <select id="announcementEffectSelector" style="padding:0.35rem; font-size:0.75rem;" title="Display effect">
+                        <option value="none">No Effect</option>
+                        <option value="scroll">Scroll</option>
+                        <option value="breathing">Breathing (pulse)</option>
+                        <option value="fade">Fade In/Out</option>
+                    </select>
+                    <select id="announcementPositionSelector" style="padding:0.35rem; font-size:0.75rem;" title="Where the banner appears">
+                        <option value="bottom">Bottom</option>
+                        <option value="top">Top</option>
+                        <option value="center">Center</option>
+                    </select>
+                    <label style="display:flex; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="Banner background colour">🎨<input type="color" id="announcementColorPicker" value="#b45309" style="width:28px; height:28px; padding:0;"></label>
+                    <button id="stageAnnouncementBtn" class="btn announcement-btn">Stage Alert</button>
+                    <button id="announcementEyeToggleBtn" class="btn" style="padding: 0.45rem 0.6rem; font-size: 0.9rem;" title="Show/hide the announcement banner without losing its text">👁</button>
+                    <span style="position:relative; display:inline-flex;">
+                        <button id="annSendBtn" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; border-radius:6px 0 0 6px; padding:0.45rem 0.7rem; font-size:0.78rem; white-space:nowrap;" title="Send the banner on its own as a transparent overlay on top of whatever the screens are showing">▶ Send Banner</button>
+                        <button id="annSendCaret" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; border-left:1px solid #93c5fd; border-radius:0 6px 6px 0; padding:0.45rem 0.5rem;" title="Choose which screens get the banner overlay">▾</button>
+                        <div id="annSendMenu" class="ntu-menu"></div>
+                    </span>
+                    <span id="annStatus" style="font-size:0.65rem; color:#fbbf24;"></span>
+                    <button id="clearAnnouncementBtn" class="btn" style="background-color: #475569; border-color: #64748b; font-size: 0.8rem; padding: 0.45rem 0.85rem;" title="Clear announcement text entirely">Clear Alert</button>
+                </div>
+                <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">"Stage Alert" shows this as a banner over your main text — it never replaces your verse/lyrics. Edit the text any time and click Stage Alert again to update it. Use 👁 to hide/show it without deleting what you typed.</span>
+
+                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; flex-wrap: wrap; flex-basis:100%; max-width:100%; min-width:0;">
+                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Lower Third Name Tag:</label>
+                    <select id="savedNamesDropdown" style="padding:0.4rem; font-size:0.75rem; max-width:140px;">
+                        <option value="">-- Saved Names --</option>
+                    </select>
+                    <button id="deleteSavedNameBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem; background:#7f1d1d; border-color:#991b1b;" title="Delete selected saved name">✕</button>
+                    <input type="text" id="lowerThirdRoleInput" placeholder="Ministering" style="padding:0.4rem; font-size:0.75rem; width:100px;">
+                    <input type="text" id="lowerThirdNameInput" placeholder="Pastor Ade" style="padding:0.4rem; font-size:0.75rem; width:120px;">
+                    <label style="display:none; align-items:center; gap:0.3rem; font-size:0.7rem; white-space:nowrap;" title="Name tag text colour">🎨<input type="color" id="lowerThirdColorPicker" value="#ffffff" style="width:28px; height:28px; padding:0;"></label>
+                    <button id="addSavedNameBtn" class="btn" style="padding: 0.4rem 0.6rem; font-size: 0.75rem; background:#166534; border-color:#15803d;">+ Add</button>
+                    <label style="display:none; align-items:center; gap:0.3rem; font-size:0.75rem; white-space:nowrap;"><input type="checkbox" id="lowerThirdVisibleCheckbox"> Show</label>
+                    <span style="position:relative; display:inline-flex;">
+                        <button id="ntStyleBtn" type="button" class="btn" style="background:#0f766e; border-color:#14b8a6; padding:0.4rem 0.6rem; font-size:0.72rem; white-space:nowrap;" title="Choose the look of the name tag">NAME TAG STYLE ▾</button>
+                        <div id="ntStyleDropdown" class="bg-text-effect-dropdown"></div>
+                    </span>
+                    <select id="ntPosition" title="Where the name tag appears on the screen" style="padding:0.4rem; font-size:0.75rem;">
+                        <option value="bottom">Bottom</option>
+                        <option value="center">Centered</option>
+                        <option value="top">Top</option>
+                    </select>
+                    <span style="display:inline-flex; align-items:center; gap:0.3rem; font-size:0.7rem;">Size
+                        <button id="ntSizeDec" type="button" class="btn" style="padding:0.25rem 0.5rem;">−</button><b id="ntSizeVal">100%</b><button id="ntSizeInc" type="button" class="btn" style="padding:0.25rem 0.5rem;">+</button>
+                    </span>
+                    <span style="position:relative; display:inline-flex;">
+                        <button id="ntSendBtn" type="button" class="btn" style="background:#1d4ed8; border-color:#2563eb; padding:0.4rem 0.7rem; font-size:0.72rem; border-radius:6px 0 0 6px; white-space:nowrap;" title="Show only the name tag as a transparent overlay on the projector">▶ Send Name Tag</button><button id="ntSendCaret" type="button" class="btn" style="background:#1e40af; border-color:#2563eb; padding:0.4rem 0.5rem; font-size:0.72rem; border-radius:0 6px 6px 0; margin-left:-1px;" title="Choose which screens get the name tag">▾</button>
+                        <div id="ntSendMenu" class="ntu-menu"></div>
+                    </span>
+                    <span id="ntStatus" style="font-size:0.68rem; color:var(--text-muted);"></span>
+                </div>
+
+                <div class="control-group" style="display: flex; gap: 0.4rem; flex-wrap: wrap; row-gap: 0.4rem; border-left: 2px solid var(--bg-accent); padding-left: 1rem;">
+                    <label style="color:#f59e0b;">Broadcast Timer:</label>
+                    <input type="number" id="timerMinInput" value="5" min="0" max="99" style="width: 50px; padding: 0.25rem 0.4rem; text-align: center;">
+                    <span style="color:var(--text-muted);">:</span>
+                    <input type="number" id="timerSecInput" value="0" min="0" max="59" style="width: 50px; padding: 0.25rem 0.4rem; text-align: center;">
+                    <button id="timerToggleStartBtn" class="btn" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; background: #0284c7; border-color: #0369a1;">Start</button>
+                    <button id="timerResetBtn" class="btn" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; background: #334155; border-color: #475569;">Reset</button>
+
+                    <button id="timerScaleDecBtn" class="btn" style="padding: 0.15rem 0.45rem; font-size: 0.75rem; background: var(--bg-main); color: var(--text-main); border: 1px solid var(--bg-accent); font-weight: bold;" title="Reduce Timer Size">-</button>
+                    <button id="timerScaleIncBtn" class="btn" style="padding: 0.15rem 0.45rem; font-size: 0.75rem; background: var(--bg-main); color: var(--text-main); border: 1px solid var(--bg-accent); font-weight: bold;" title="Increase Timer Size">+</button>
+                    <span id="timerScaleValue" style="font-size: 0.75rem; color: var(--accent-success); font-weight: bold; min-width: 35px; text-align: center;">100%</span>
+
+                    <select id="timerPosSelector" style="padding: 0.25rem; font-size: 0.75rem; max-width: 150px;">
+                        <option value="timer-top-right">Top Right</option>
+                        <option value="timer-top-left">Top Left</option>
+                        <option value="timer-bottom-right">Bottom Right</option>
+                        <option value="timer-bottom-left">Bottom Left</option>
+                        <option value="timer-center">Center Screen (Solo-Compatible)</option>
+                    </select>
+                    <select id="timerSizeSelector" style="padding: 0.25rem; font-size: 0.75rem; max-width: 130px;">
+                        <option value="timer-size-small">Timer Small</option>
+                        <option value="timer-size-medium" selected>Timer Medium</option>
+                        <option value="timer-size-large">Timer Bold (Max Center)</option>
+                    </select>
+                    <label style="font-size:0.7rem; font-weight:700; color:#fbbf24; display:flex; align-items:center; gap:0.2rem; cursor:pointer; white-space:nowrap;">
+                        <input type="checkbox" id="timerVisibilityCheck"> Visible
+                    </label>
+                    <label style="font-size:0.7rem; font-weight:700; color:#fbbf24; display:flex; align-items:center; gap:0.2rem; cursor:pointer; white-space:nowrap;" title="Hides normal text to show countdown solo over background">
+                        <input type="checkbox" id="timerSoloCheck"> Solo Timer (No Text)
+                    </label>
+                </div>
+            </div>
+
+            <!-- RIBBON PANEL: EDIT (profile / document management) -->
+            <div id="ribbon-history-panel" class="ribbon-panel" style="display:none;">
+                <div class="control-group">
+                    <label for="historyDropdown" style="color:var(--accent-success);">Logs:</label>
+                    <select id="historyDropdown" style="max-width: 260px; padding: 0.25rem; color: var(--accent-success); border-color: rgba(16,185,129,0.3);"><option value="">-- Empty --</option></select>
+                </div>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">Pick a past slide to restage it.</span>
+            </div>
+        </header>
+
+        <main class="studio-floor workspace-grid">
+            <!-- LEFT: Voice Diagnostics (live transcript log + mic signal) -->
+            <div class="ws-slot ws-slot-left" id="wsSlotLeft">
+            <aside class="ws-panel voice-diag-panel" data-panel="voice">
+                <div class="ws-panel-head"><h3>Voice Diagnostics</h3>
+                    <div class="signal-indicator-container">
+                        <div class="signal-label">Mic Signal:</div>
+                        <div class="signal-meter" id="signalMeter">
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        <div class="signal-bar"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="transcriptTrack" class="transcript-track">Microphone tracking pipeline idle.</div>
+            </aside>
+            </div>
+
+            <!-- CENTRE: Scene on top, Scripture Matches / suggestions underneath -->
+            <div class="ws-center">
+            <div id="outputsBar" class="outputs-bar" style="display:none;"></div>
+            <section class="screen-column live-column single-scene-column">
+                <div class="deck-label live-label">Scene (Single Click / Double Click / Enter)</div>
+                <div class="canvas-container">
+                    <div id="liveCanvas" class="display-canvas mode-center size-medium">
+                        <div class="placeholder-text">Awaiting Selection...</div>
+                        <div class="canvas-timer-node" id="liveTimerOverlay">00:00</div>
+                    </div>
+                </div>
+            </section>
+                <div class="ws-slot ws-slot-bottom" id="wsSlotBottom">
+                <section class="ws-panel suggest-panel" data-panel="matches">
+                    <div class="ws-panel-head"><h3>Scripture Matches</h3><label class="ws-hint" style="display:flex; align-items:center; gap:0.3rem; cursor:pointer;" title="AI Scripture Detection (same switch as in Settings)"><input type="checkbox" id="aiQuickToggle"> AI</label><span id="suggestStatus" class="ws-hint">Scripture suggestions appear here as the preacher speaks.</span></div>
+                    <div id="suggestList" class="ws-list"><div class="placeholder-text">Turn on Live Voice and start speaking — matching scriptures will be suggested here.</div></div>
+                </section>
+                </div>
+            </div>
+
+            <!-- RIGHT: Scripture History -->
+            <div class="ws-slot ws-slot-right" id="wsSlotRight">
+            <aside class="ws-panel history-panel" data-panel="history">
+                <div class="ws-panel-head"><h3>Scripture History</h3></div>
+                <div id="historyPanelList" class="ws-list"><div class="placeholder-text">Scriptures you display will be listed here. Click one to bring it back.</div></div>
+            </aside>
+            </div>
+        </main>
+        </div>
+    </div>
+
+    <!-- PREMIUM MODAL FOR SETTINGS, DOCKS, AND CONTACT DETAILS -->
+    <div id="settingsModal" class="settings-modal-overlay">
+        <div class="settings-modal-content">
+            <div class="settings-modal-header">
+                <h3>System Integration & Settings</h3>
+                <button id="closeSettingsModalBtn" class="close-settings-btn">&times;</button>
+            </div>
+            <div class="settings-modal-body">
+
+                <!-- Appearance & Display Transitions Card -->
+                <div class="integration-card">
+                    <h4>Appearance</h4>
+                    <p>Switch the control room between dark and light mode. This only restyles this interface — your live canvas, OBS feed, and projector output keep their own configured text, color, and background exactly as set, no matter which mode you pick.</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Interface Theme</label>
+                            <select id="uiThemeSelector" style="width: 100%; padding:0.35rem; font-size:0.75rem;">
+                                <option value="dark" selected>Dark Mode</option>
+                                <option value="light">Light Mode</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Chapters/Songs Panel Side</label>
+                            <select id="sidebarPositionSelector" style="width: 100%; padding:0.35rem; font-size:0.75rem;">
+                                <option value="left" selected>Left</option>
+                                <option value="right">Right</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p style="margin-top:0.4rem;">Display Transition, Font Style, and Text Shadow now live under the <strong>Text</strong> tab (Text Style dropdown) for quicker access.</p>
+                </div>
+
+                <!-- Workspace panel positions -->
+                <div class="integration-card">
+                    <h4>Workspace Panels</h4>
+                    <p>Choose which panel sits in each position beside the Scene. Picking a panel that is already used elsewhere swaps the two. Your choice is remembered on this device.</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem;">
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Left of Scene</label>
+                            <select id="wsSelectLeft" class="ws-slot-select" data-slot="0" style="width:100%; padding:0.35rem; font-size:0.75rem;"></select>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Under the Scene</label>
+                            <select id="wsSelectBottom" class="ws-slot-select" data-slot="1" style="width:100%; padding:0.35rem; font-size:0.75rem;"></select>
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Right of Scene</label>
+                            <select id="wsSelectRight" class="ws-slot-select" data-slot="2" style="width:100%; padding:0.35rem; font-size:0.75rem;"></select>
+                        </div>
+                    </div>
+                    <button id="wsResetLayoutBtn" type="button" class="btn" style="margin-top:0.6rem; padding:0.3rem 0.7rem; font-size:0.72rem;">Reset to default</button>
+                </div>
+
+<!-- Bible Library -->
+                <div class="integration-card">
+                    <h4>Bible Library</h4>
+                    <p>Choose the Bibles you use. Only the Bibles you add here appear in the Version list on the main screen. Bibles from eBible.org are downloaded once, saved on this device and then work offline.</p>
+                    <label for="blibFilter" style="font-size:.75rem;color:var(--text-muted);">Show</label>
+                    <select id="blibFilter" style="width:100%;padding:.35rem;font-size:.75rem;margin:.2rem 0 .4rem;">
+                        <option value="all">All Bibles</option>
+                        <option value="English">English</option>
+                        <option value="Nigeria">Nigeria</option>
+                        <option value="Imported">Imported</option>
+                    </select>
+                    <div id="blibList"></div>
+                    <div style="margin-top:.7rem;border-top:1px solid rgba(255,255,255,.08);padding-top:.6rem;">
+                        <div style="font-weight:700;font-size:.8rem;color:var(--text-main,#fff);">Import a Bible from a file</div>
+                        <div style="display:flex;gap:.5rem;align-items:center;margin-top:.35rem;flex-wrap:wrap;">
+                            <input type="text" id="blibImportName" placeholder="Name, e.g. My Yoruba Bible" style="flex:1;min-width:10rem;padding:.35rem;font-size:.75rem;">
+                            <button type="button" id="blibImportBtn" class="btn" style="padding:.3rem .7rem;font-size:.72rem;">📁 Import file…</button>
+                        </div>
+                        <div style="font-size:.7rem;color:var(--text-muted);margin-top:.3rem;">Accepts .zip, .json, .txt, .csv, .xml (Zefania or OSIS) and USFM. You can pick several USFM files at once. Imported Bibles appear under “Imported”. If the file includes book names (USFM does), they are shown on screen.</div>
+                    </div>
+                    <p id="blibNote" style="margin-top:.5rem;font-size:.72rem;min-height:1em;"></p>
+                    <p style="margin-top:.2rem;font-size:.7rem;">Each Bible keeps its own copyright. Word search and AI matching for downloaded Bibles may be limited.</p>
+                </div>
+
+                <!-- Voice accent -->
+                <div class="integration-card">
+                    <h4>Voice Accent</h4>
+                    <p>Live Voice listens for English. If it mishears your preacher, try the closest English accent. The default is unchanged.</p>
+                    <select id="voiceAccentSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        <option value="en-US">English (United States) — default</option>
+                        <option value="en-NG">English (Nigeria)</option>
+                        <option value="en-GH">English (Ghana)</option>
+                        <option value="en-KE">English (Kenya)</option>
+                        <option value="en-ZA">English (South Africa)</option>
+                        <option value="en-GB">English (United Kingdom)</option>
+                        <option value="en-AU">English (Australia)</option>
+                    </select>
+                    <p id="voiceAccentNote" style="margin-top:.4rem;font-size:.72rem;">Preaching in Yoruba, Hausa or Igbo is not recognised yet; only English references are detected.</p>
+                </div>
+
+                                <!-- Spoken Bible numbers -->
+                <div class="integration-card">
+                    <h4>Spoken Bible Numbers</h4>
+                    <p>When a preacher says “Genesis one three” quickly, speech engines write it as “Genesis 13”. Choose how a two-digit number with no verse is read.</p>
+                    <select id="refNumberStyleSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        <option value="split">Chapter and verse — 13 = Genesis 1:3, 21 = Genesis 2:1 (recommended)</option>
+                        <option value="chapter">Chapter number — 13 = chapter thirteen, 21 = chapter twenty-one</option>
+                    </select>
+                    <p style="margin-top:0.4rem;">Saying the word “chapter” (“Genesis chapter thirteen”) always means a chapter, and Psalms are always read as chapters. If the engine itself offers a “1 3” reading, that one is used.</p>
+                </div>
+
+                <!-- AI Scripture Detection -->
+                <div class="integration-card">
+                    <h4>AI Scripture Detection</h4>
+                    <p>Listens to the preacher through Live Voice, keeps the last few seconds of speech, and matches it against an offline copy of the Bible. Each match gets a confidence %. Matches at or above 95% are shown automatically; between the auto-display and suggestion thresholds the operator approves them from <strong>Scripture Matches</strong>. Spoken references like “John 3:16” still jump straight to the verse.</p>
+                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;"><input type="checkbox" id="aiEnableCheck"> Enable AI Scripture Detection</label>
+                    <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.6rem;">
+                        <button id="aiBuildBtn" type="button" class="btn" style="padding:0.35rem 0.7rem; font-size:0.75rem;">Build / update offline Bible index</button>
+                        <span id="aiIndexStatus" style="font-size:0.72rem; color:var(--text-muted);"></span>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:0.75rem;">
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Auto-display threshold (%)</label>
+                            <input type="number" id="aiAutoThreshold" min="50" max="100" value="90" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Suggestion threshold (%)</label>
+                            <input type="number" id="aiSuggestThreshold" min="30" max="100" value="70" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        </div>
+                        <div style="display:flex; flex-direction:column; gap:0.25rem;">
+                            <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Context window (seconds)</label>
+                            <input type="number" id="aiWindowSeconds" min="5" max="60" value="20" style="width:100%; padding:0.35rem; font-size:0.75rem;">
+                        </div>
+                    </div>
+                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.8rem; color:var(--text-muted); margin-top:0.6rem;"><input type="checkbox" id="aiAutoCheck"> Auto mode: also display matches between the auto-display threshold and 95%</label>
+                    <p style="margin-top:0.4rem;">Below the suggestion threshold nothing is shown. Wrong scripture on screen is worse than none, so a match must also stay on top for two checks in a row before it is auto-displayed.</p>
+                </div>
+
+                <!-- Microphone Node Mapping Diagnostics Card -->
+                <div class="integration-card">
+                    <h4>Audio Source Configuration</h4>
+                    <p>Map your active system microphone device interface to use real-time vocal tracking overlays and auto-speech scripture projection.</p>
+                    <div class="control-group" style="width: 100%;">
+                        <select id="audioSourceSelector" style="width: 100%; padding: 0.45rem 0.75rem; color: var(--accent-primary); font-weight: bold;"></select>
+                    </div>
+                </div>
+
+                <!-- OBS Custom Dock Card -->
+                <div class="integration-card">
+                    <h4>OBS Custom Dock Link</h4>
+                    <p>Load this exact URL as a Custom Browser Dock inside OBS Studio (View -> Docks -> Custom Browser Docks) to operate the presenter directly inside your video mixer layout.</p>
+                    <div class="link-input-group">
+                        <input type="text" id="obsDockLinkInput" readonly value="Session not initialized...">
+                        <button class="btn-copy" onclick="copyIntegrationLink('obsDockLinkInput')">Copy</button>
+                    </div>
+                </div>
+
+                <!-- OBS Browser Source Card -->
+                <div class="integration-card">
+                    <h4>OBS Browser Source Link</h4>
+                    <p>Paste this URL as a clean Browser Source inside OBS Studio (1920x1080 resolution, make sure 'transparent' is checked) to overlay lower-thirds and lyrics onto live camera feeds instantly. This one link does everything: your verses, plus the Name Tag and Announcement banner when you send them ("Overlay only" shows just the tag/banner on a transparent background; "On top of feed" and "With the scene" show them with the verse).</p>
+                    <div class="link-input-group">
+                        <input type="text" id="obsBrowserSourceInput" readonly value="Session not initialized...">
+                        <button class="btn-copy" onclick="copyIntegrationLink('obsBrowserSourceInput')">Copy</button>
+                    </div>
+                </div>
+
+                <!-- Direct Projector Output Card -->
+                <div class="integration-card">
+                    <h4>Direct Projector Output (HDMI / wireless-extended screen)</h4>
+                    <p>This is different from the OBS window below — it sends Live straight to your extended screen (HDMI-connected projector, or a wirelessly-extended display like a wireless HDMI dongle or Miracast screen), borderless and fullscreen, with nothing dragged manually. Click once here first so the permission is already granted before service — that way the "📽 Send to Projector" button up top works instantly with one click.</p>
+                    <button id="enableExtendedDisplayBtn" class="btn" style="padding: 0.45rem 0.8rem; font-size: 0.8rem; background:#7c2d12; border-color:#9a3412;">🔓 Enable Extended Display Detection</button>
+                    <p style="margin-top:0.4rem; font-size: 0.72rem;">Works in Chrome/Edge. On Firefox/Safari (no screen-detection support), "Send to Projector" still opens the output — just drag it to your second screen and press F11 once; it stays synced automatically after that.</p>
+                </div>
+
+                <!-- Multi-Screen Outputs Card -->
+                <div class="integration-card">
+                    <h4>Multi-Screen Outputs (Stage Screen, Stage Monitor, etc.)</h4>
+                    <p>Send different content to different physical screens at the same time — e.g. your Stage Screen shows the Live scripture while a separate Stage Monitor shows the upcoming Preview slide, both updating independently. Each row below opens its own independent window you can drag onto any monitor (HDMI, wireless-extended display, or captured by NDI Screen Capture).</p>
+                    <div style="display:flex; align-items:center; gap:0.6rem; flex-wrap:wrap; margin-bottom:0.6rem;">
+                        <button id="outputsBarToggleBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem;">Outputs bar on dashboard: ON</button>
+                        <span style="font-size:0.72rem; color:var(--text-muted);">Turn OFF to remove the Outputs bar from the dashboard (your outputs stay saved here). Turn ON to show it again.</span>
+                    </div>
+                    <div id="outputSlotsList" style="display:flex; flex-direction:column; gap:0.5rem;"></div>
+                    <button id="addOutputSlotBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem; background:#166534; border-color:#15803d; margin-top:0.5rem; align-self:flex-start;">+ Add Output</button>
+                    <div id="outputScreenPicker" style="margin-top:0.6rem;"></div>
+                    <button id="detectScreensBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem; margin-top:0.5rem; align-self:flex-start;">🖥 Detect Connected Screens</button>
+                </div>
+
+                <!-- NDI Output Card -->
+                <div class="integration-card">
+                    <h4>NDI Output (to OBS, stage monitors, secondary projection)</h4>
+                    <p>A web page can't broadcast real NDI on its own — NDI requires Vizrt's native SDK, which browsers don't expose to web pages for security reasons. The good news: you don't need HDMI/SDI or any manual IP setup either way — NDI's own network discovery handles that automatically once a real NDI sender is running. Here's the free, standard way to get this presenter onto NDI:</p>
+                    <ol style="margin: 0 0 0.6rem 1.1rem; padding: 0; font-size: 0.78rem; color: var(--text-muted); line-height: 1.6;">
+                        <li>Click <strong>"📽 Send to Projector"</strong> at the top of the screen — this opens a clean, borderless output window titled exactly <strong>"Express Bible Presenter — Projector (fullscreen)"</strong>. (Using an Extra Output Slot below instead? That window is titled "Express Bible Presenter — " followed by whatever name you gave that slot.)</li>
+                        <li>Install the free <strong>NDI Tools</strong> from ndi.video (one-time, official Vizrt download) and run <strong>NDI Screen Capture</strong> (Windows/Mac).</li>
+                        <li>In NDI Screen Capture's window list, choose the window with that exact title and start it. If you don't see it listed, make sure the projector/output window is still open (not minimized or closed) and click NDI Screen Capture's refresh/window-list button.</li>
+                        <li>That's it — any NDI receiver on your network (OBS Studio's NDI source, ProPresenter, vMix, a stage-monitor NDI decoder, another PC) will now see it appear automatically, no cables, no IP addresses to type in.</li>
+                    </ol>
+                    <p>If you'd rather go straight through OBS: install the free <strong>obs-ndi</strong> plugin in OBS Studio, add this app as a Browser Source (link above) or Window Capture of the output window, then enable "Output NDI Source" in OBS — OBS itself becomes the NDI sender for your whole scene.</p>
+
+                    <div id="desktopNdiSection" style="display:none; border-top: 1px solid var(--bg-accent); margin-top: 0.6rem; padding-top: 0.6rem;">
+                        <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Desktop App: Native NDI Sender (Experimental)</label>
+                        <p style="font-size: 0.72rem; margin-top: 0.3rem;">You're running the desktop companion app, so a true native NDI sender is available — but it depends on an experimental community library, so it may not work on every machine. If it fails, the HDMI/extended-display output above keeps working regardless.</p>
+                        <div style="display:flex; gap:0.4rem; align-items:center; margin-top:0.4rem;">
+                            <button id="startDesktopNdiBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem; background:#166534; border-color:#15803d;">Start NDI Sender</button>
+                            <button id="stopDesktopNdiBtn" class="btn" style="padding: 0.4rem 0.7rem; font-size: 0.75rem; background:#7f1d1d; border-color:#991b1b;">Stop</button>
+                            <span id="desktopNdiStatus" style="font-size: 0.7rem; color: var(--text-muted);">Not running</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Custom Aesthetic Variables Block relocated to the Text ribbon tab's "Text Style" dropdown -->
+
+                <!-- Hotkeys Card -->
+                <div class="integration-card">
+                    <h4>Hotkeys</h4>
+                    <p>Assign an optional keyboard key to any feature below, just like hotkeys in OBS. Click "Set", then press the key you want — it's entirely optional per feature and only applies when you're not typing in a text field.</p>
+                    <div id="hotkeysList" style="display:flex; flex-direction:column; gap:0.5rem;"></div>
+                </div>
+
+            </div>
+            
+            <!-- CONTACT DETAILS AND DEV SUPPORT SECTION -->
+            <div class="settings-modal-footer">
+                <span class="contact-info-title">Need Help? Contact Express Consult Support</span>
+                <div class="contact-details-row">
+                    <a href="mailto:xpressconsult.info@gmail.com">
+                        <svg style="width:14px; height:14px;" fill="currentColor" viewBox="0 0 20 20"><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"></path><path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"></path></svg>
+                        xpressconsult.info@gmail.com
+                    </a>
+                    <a href="https://wa.me/2348162465923" target="_blank">
+                        <svg style="width:14px; height:14px;" fill="currentColor" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-32.6-16.3-54-29.1-75.5-66-5.7-9.8 5.7-9.1 16.3-30.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 35.2 15.2 49 16.5 66.6 13.9 10.7-1.6 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>
+                        08162465923
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- INTERFACE B: DECOUPLED INDEPENDENT OBS STANDALONE CLEAN VIEWPORT -->
+    <div class="obs-standalone-view">
+        <div id="obsCanvas" class="display-canvas mode-center size-medium" style="border: none; border-radius: 0; box-shadow: none;">
+            <div class="canvas-timer-node" id="obsTimerOverlay">00:00</div>
+        </div>
+    </div>
+
+    <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
+    <script src="script.js?v=31"></script>
+</body>
+</html>
     <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png?v=2">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2">
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png?v=2">
