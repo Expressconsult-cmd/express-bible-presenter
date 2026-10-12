@@ -903,6 +903,10 @@
                     </a>
                 </div>
             </div>
+            <div class="lgl-strip">
+                <span>&copy; 2026 Express Consult Ltd. Express Bible Presenter. All rights reserved. &nbsp;&middot;&nbsp; Version 2</span>
+                <span><a data-lgl="bible">Legal &amp; Copyright</a> &nbsp;&middot;&nbsp; <a data-lgl="privacy">Privacy</a> &nbsp;&middot;&nbsp; <a data-lgl="terms">Terms of Use</a></span>
+            </div>
         </div>
     </div>
 
@@ -914,7 +918,38 @@
     </div>
 
     <!-- CORE SYSTEM INFRASTRUCTURE SCRIPT -->
-    <script src="qr.js?v=1"></script>
-    <script src="script.js?v=34"></script>
+    <style>
+/* Legal & Copyright (added) */
+.lgl-strip{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.4rem .8rem;align-items:center;padding:.55rem 1rem;border-top:1px solid rgba(255,255,255,.08);font-size:.7rem;color:#8a9bb0}
+.lgl-strip a{color:#6cb2ff;cursor:pointer;text-decoration:none;font-weight:600}
+.lgl-strip a:hover{text-decoration:underline}
+#lglOverlay{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:100000}
+#lglOverlay.open{display:flex}
+#lglBox{width:min(640px,94vw);max-height:84vh;display:flex;flex-direction:column;background:#101822;border:1px solid #2b3848;border-radius:14px;color:#e8edf3;overflow:hidden}
+.lgl-head{display:flex;justify-content:space-between;align-items:center;padding:.9rem 1.1rem;border-bottom:1px solid #2b3848}
+.lgl-head h3{margin:0;font-size:1rem;color:#e8edf3}
+.lgl-x{background:none;border:0;color:#9fb0c3;font-size:1.5rem;line-height:1;cursor:pointer;padding:0 .2rem}
+#lglTabs{display:flex;gap:.4rem;padding:.6rem 1rem 0;flex-wrap:wrap}
+#lglTabs button{padding:.4rem .8rem;border-radius:999px;border:1px solid #2b3848;background:#1b2430;color:#9fb0c3;font-size:.75rem;font-weight:600;cursor:pointer}
+#lglTabs button.on{background:#2a2312;border-color:#f5b942;color:#f5b942}
+#lglBody{padding:1rem 1.1rem;overflow:auto;font-size:.8rem;line-height:1.55;color:#c7d2de}
+#lglBody h5{margin:.9rem 0 .25rem;font-size:.8rem;color:#f5b942;text-transform:uppercase;letter-spacing:.06em}
+#lglBody h5:first-child{margin-top:0}
+#lglBody p{margin:0 0 .4rem}
+#lglBody a{color:#6cb2ff}
+.lgl-note{margin-top:.8rem;padding:.6rem .75rem;border-radius:10px;background:#122a1c;border:1px solid #1f6b3e;color:#bfe9d0;font-size:.74rem}
+.lgl-foot{padding:.7rem 1.1rem;border-top:1px solid #2b3848;display:flex;justify-content:space-between;align-items:center;font-size:.7rem;color:#8a9bb0}
+.lgl-foot button{padding:.5rem 1.1rem;border-radius:9px;border:0;background:#2f7de1;color:#fff;font-weight:700;cursor:pointer}
+</style>
+<div id="lglOverlay"><div id="lglBox" role="dialog" aria-modal="true" aria-labelledby="lglTitle">
+    <div class="lgl-head"><h3 id="lglTitle">Legal &amp; Copyright</h3><button class="lgl-x" id="lglX" aria-label="Close">&times;</button></div>
+    <div id="lglTabs">
+        <button data-t="bible">Bible texts</button><button data-t="songs">Songs &amp; lyrics</button><button data-t="media">Your media</button><button data-t="privacy">Voice &amp; privacy</button><button data-t="terms">Terms of use</button>
+    </div>
+    <div id="lglBody"></div>
+    <div class="lgl-foot"><span>Last updated: October 2026</span><button id="lglClose">Close</button></div>
+</div></div>
+<script src="qr.js?v=1"></script>
+    <script src="script.js?v=35"></script>
 </body>
 </html>
