@@ -363,19 +363,28 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
   function vStartPhone() {
     if (!SR) { $('vErr').textContent = 'This browser cannot listen. Use Chrome on Android, or switch to PC mic.'; return false; }
     var r = new SR(); r.continuous = true; r.interimResults = true; r.maxAlternatives = 3; r.lang = $('vLang').value || 'en-US';
-    r.onstart = function () { cmd('voice_session'); };
+    r.onstart = function () { V.utt = 0; V.last = null; clearTimeout(V.settle); cmd('voice_session'); };
+    // Some phones (Android Chrome) report every growing word as a finished sentence ("open", "open to", "open to the book..."). So only the NEWEST
+    // phrase is sent, as a live (not final) update, and it is finalised once, after a short quiet moment. One spoken sentence = one result.
     r.onresult = function (e) {
-      var list = []; for (var k = e.resultIndex; k < e.results.length; k++) { var res = e.results[k], al = []; for (var n = 0; n < res.length && n < 3; n++) al.push(res[n].transcript); list.push({ f: !!res.isFinal, a: al }); }
-      if (conn && conn.open && authed) { try { conn.send({ t: 'cmd', c: 'voice_text', a: { i: e.resultIndex, r: list } }); } catch (x) {} }
-      var last = list[list.length - 1]; if (last && last.a[0]) $('vHeard').textContent = last.a[0];
+      var k = e.results.length - 1; if (k < 0) return;
+      var res = e.results[k], al = []; for (var n = 0; n < res.length && n < 3; n++) { if (res[n].transcript) al.push(res[n].transcript); }
+      if (!al.length) return;
+      var t = al[0].trim().toLowerCase();
+      if (V.done && V.done.t === t && Date.now() - V.done.ts < 6000) return;   // the same sentence being re-sent after it was already handled
+      V.last = { a: al, t: t }; sendUtt(false);
+      $('vHeard').textContent = al[0];
+      clearTimeout(V.settle);
+      V.settle = setTimeout(function () { if (!V.last) return; sendUtt(true); V.done = { t: V.last.t, ts: Date.now() }; V.last = null; V.utt++; if (V.utt > 480) { V.utt = 0; cmd('voice_session'); } }, res.isFinal ? 600 : 2200);
     };
+    function sendUtt(fin) { if (conn && conn.open && authed && V.last) { try { conn.send({ t: 'cmd', c: 'voice_text', a: { i: V.utt, r: [{ f: fin, a: V.last.a }] } }); } catch (x) {} } }
     r.onerror = function (e) { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { V.want = false; $('vErr').textContent = 'Microphone blocked. Allow the microphone for this page in the browser settings.'; vStopLocal(); cmd('voice_stop'); } };
     r.onend = function () { if (V.want && V.on) { setTimeout(function () { if (V.want && V.on) { try { r.start(); } catch (x) {} } }, 250); } };
     V.rec = r; V.want = true;
     try { r.start(); } catch (x) { $('vErr').textContent = 'Could not start the microphone.'; return false; }
     return true;
   }
-  function vStopLocal() { V.want = false; try { if (V.rec) { V.rec.onend = null; V.rec.abort(); } } catch (x) {} V.rec = null; V.on = false; }
+  function vStopLocal() { clearTimeout(V.settle); V.last = null; V.want = false; try { if (V.rec) { V.rec.onend = null; V.rec.abort(); } } catch (x) {} V.rec = null; V.on = false; }
   function vToggle() {
     $('vErr').textContent = '';
     if (V.on || (st && st.voice && st.voice.active && st.voice.owner === myName)) { vStopLocal(); cmd('voice_stop'); renderVoice(); return; }
