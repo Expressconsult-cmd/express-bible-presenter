@@ -2056,6 +2056,7 @@ async function initMediaEngine() {
 
             recognition.onstart = () => {
                 voiceCommitted = { utterance: -1, sig: '' }; // fresh recognition session -> fresh utterance numbering
+                voiceLastFinalIdx = -1;
                 if (typeof aiState !== 'undefined') aiState.results = {};
                 isListening = true; 
                 const btn = document.getElementById('listeningBtn');
@@ -2112,6 +2113,8 @@ async function initMediaEngine() {
 
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
+                        if (i <= voiceLastFinalIdx) continue; // the browser sometimes re-sends a finished sentence: list it once
+                        voiceLastFinalIdx = i;
                         finalTranscriptText += event.results[i][0].transcript;
                     } else {
                         interimTranscriptText += event.results[i][0].transcript;
@@ -2278,6 +2281,7 @@ function renderScriptureHistoryPanel() {
 let voiceCommitted = { utterance: -1, sig: '' };
 let voicePendingTimer = null;
 let voiceBusy = false;
+let voiceLastFinalIdx = -1;
 
 const VOICE_NUM = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, eleven:11, twelve:12,
     thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19,
@@ -2458,8 +2462,9 @@ async function voiceGoToChapterVerse(bookCode, bookName, chapter, verse) {
     return true;
 }
 
+let voiceQueued = null; // a newer, fuller command that arrived while the previous one was still loading: it runs next instead of being dropped
 async function executeVoiceIntent(intent) {
-    if (voiceBusy) return;
+    if (voiceBusy) { voiceQueued = intent; return; }
     voiceBusy = true;
     try {
         switch (intent.type) {
@@ -2520,8 +2525,10 @@ async function executeVoiceIntent(intent) {
         console.warn('Voice command failed:', err);
     } finally {
         voiceBusy = false;
+        if (voiceQueued) { const q = voiceQueued; voiceQueued = null; voiceExecCore(q); }
     }
 }
+const voiceExecCore = executeVoiceIntent; // the original, used to run the queued command (before the remote-voice gate wraps it)
 
 // "Genesis one three" said quickly sounds exactly like "Genesis thirteen", and the speech engine delivers it as "Genesis 13"
 // ("two one" -> 21, "three one" -> 31 …). Sound alone cannot separate them, so:
