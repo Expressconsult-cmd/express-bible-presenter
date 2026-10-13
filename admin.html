@@ -171,6 +171,8 @@
                     <option value="offline">Offline</option>
                     <option value="blocked">Blocked</option>
                 </select>
+                <button id="refreshUsersBtn" class="btn" type="button">Refresh list</button>
+                <span id="loadedAt" class="muted small" style="align-self:center">Not loaded yet</span>
                 <button id="exportCsvBtn" class="btn" type="button">Export CSV</button>
             </div>
             <div class="table-wrap">
@@ -182,7 +184,7 @@
                 </table>
             </div>
             <p class="muted small" style="margin:.8rem 0 0">
-                <b>Active now</b> = signed in and the presenter is open (seen within the last 2½ minutes).
+                <b>Active now</b> = signed in and the presenter was used within the last 20 minutes. The list is loaded when you open this page; press <b>Refresh list</b> to update it (this saves your free database limit).
                 <b>Idle</b> = still signed in on a device, but the presenter hasn't been open recently.
                 People appear here after they open the presenter once.
             </p>
