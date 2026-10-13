@@ -1,3 +1,4 @@
+/* (c) 2026 Express Consult Ltd. Express Bible Presenter. Build XC-EBP-7Q4M-2026. */
 /* Tiny self-contained QR code generator (byte mode, error-correction level M, versions 1-6). No external dependencies.
    ebpQrSvg(text, pixelSize) -> '<svg …>' string, or '' when the text is too long. */
 (function () {
