@@ -35,7 +35,8 @@ import {
 const APP_URL = window.location.origin + window.location.pathname;
 
 const DEFAULT_MAX_SESSIONS = 2;      // used until an admin changes it in the dashboard
-const HEARTBEAT_MS = 60000;          // how often "last seen" is refreshed while the presenter is open
+const HEARTBEAT_MS = 900000;         // how often "last seen" is refreshed while the presenter is in use (15 min: protects your free Firebase write quota)
+const CACHE_TTL_MS = 600000;         // admin-status / device-limit answers are re-used for 10 min within one browser tab (saves database reads)
 const LOCAL_EMAIL_KEY = 'ebp_auth_pending_email';
 const LOCAL_SESSION_KEY = 'ebp_auth_session_id';
 const BROADCAST_DISMISSED_KEY = 'ebp_broadcast_dismissed';
@@ -98,6 +99,7 @@ function runAuthModule(firebaseConfig) {
 
     let watchers = [];          // live Firestore listeners, torn down on sign-out
     let heartbeatTimer = null;
+    let heartbeatCleanup = null;
     let currentIsAdmin = false; // admins are exempt from the maintenance lock
     let forcedOut = false;      // prevents double sign-out messages
     let shownBroadcastId = '';
@@ -262,9 +264,17 @@ function runAuthModule(firebaseConfig) {
     }
 
     // ---------- Access checks + profile (what the admin dashboard lists) ----------
+    function cacheGet(key) {
+        try { const o = JSON.parse(sessionStorage.getItem(key)); if (o && Date.now() - o.t < CACHE_TTL_MS) return o.v; } catch (e) { /* ignore */ }
+        return undefined;
+    }
+    function cacheSet(key, value) { try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), v: value })); } catch (e) { /* ignore */ } }
+
     async function checkIsAdmin(user) {
         if (!user.email) return false;
-        try { return (await getDoc(doc(db, 'admins', user.email.toLowerCase()))).exists(); }
+        const key = 'ebp_cache_admin_' + user.uid, hit = cacheGet(key);
+        if (typeof hit === 'boolean') return hit;
+        try { const r = (await getDoc(doc(db, 'admins', user.email.toLowerCase()))).exists(); cacheSet(key, r); return r; }
         catch (err) { return false; }
     }
 
@@ -308,10 +318,14 @@ function runAuthModule(firebaseConfig) {
     }
 
     async function readMaxSessions() {
+        const hit = cacheGet('ebp_cache_maxsessions');
+        if (typeof hit === 'number') return hit;
         try {
             const snap = await getDoc(doc(db, 'settings', 'app'));
             const n = parseInt(snap.exists() ? snap.data().maxSessions : DEFAULT_MAX_SESSIONS, 10);
-            return Math.min(10, Math.max(1, n || DEFAULT_MAX_SESSIONS));
+            const v = Math.min(10, Math.max(1, n || DEFAULT_MAX_SESSIONS));
+            cacheSet('ebp_cache_maxsessions', v);
+            return v;
         } catch (err) { return DEFAULT_MAX_SESSIONS; }
     }
 
@@ -362,7 +376,10 @@ function runAuthModule(firebaseConfig) {
         watchers.forEach(unsub => { try { unsub(); } catch (err) { /* ignore */ } });
         watchers = [];
     }
-    function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } }
+    function stopHeartbeat() {
+        if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        if (heartbeatCleanup) { heartbeatCleanup(); heartbeatCleanup = null; }
+    }
 
     function startWatchers(user, sessionId) {
         stopWatchers();
@@ -388,7 +405,16 @@ function runAuthModule(firebaseConfig) {
     function startHeartbeat(uid) {
         stopHeartbeat();
         const userRef = doc(db, 'users', uid);
+        // "Last seen" is only written when the person actually used the page since the last write, and never while the tab is hidden.
+        // (Signing in already wrote it once.) This is what keeps a busy Sunday inside the free Firebase limits.
+        let lastActivity = Date.now(), lastWrite = Date.now();
+        const mark = () => { lastActivity = Date.now(); };
+        const events = ['pointerdown', 'keydown', 'touchstart', 'wheel', 'mousemove'];
+        events.forEach((ev) => window.addEventListener(ev, mark, { passive: true }));
+        heartbeatCleanup = () => events.forEach((ev) => window.removeEventListener(ev, mark));
         heartbeatTimer = setInterval(() => {
+            if (document.hidden || lastActivity <= lastWrite) return;
+            lastWrite = Date.now();
             updateDoc(userRef, { lastSeen: serverTimestamp() }).catch(() => { /* offline or removed — ignore */ });
         }, HEARTBEAT_MS);
     }
