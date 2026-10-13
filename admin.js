@@ -13,13 +13,13 @@ import {
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
-    getFirestore, collection, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch
+    getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 const $ = (id) => document.getElementById(id);
 
 // <helpers>
-const ACTIVE_WINDOW_MS = 150000; // heartbeat is every 60s, so 2.5 min tolerates one missed beat
+const ACTIVE_WINDOW_MS = 1200000; // the presenter reports in every 15 min while in use, so 20 min counts as "active"
 
 function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -156,7 +156,7 @@ function startDashboard(config) {
         unsubs.forEach((u) => { try { u(); } catch (e) { /* ignore */ } });
         unsubs = [];
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-        usersById.clear(); sessionsById.clear(); settings = {}; adminUser = null;
+        usersById.clear(); sessionsById.clear(); settings = {}; adminUser = null; loadedAt = 0;
         diagState = {};
         renderDiag();
     }
@@ -186,18 +186,9 @@ function startDashboard(config) {
         };
     }
     function startListeners() {
-        unsubs.push(onSnapshot(collection(db, 'users'), (snap) => {
-            usersById.clear();
-            snap.forEach((d) => usersById.set(d.id, { id: d.id, ...d.data() }));
-            setDiag('users', 'ok', `${snap.size} document${snap.size === 1 ? '' : 's'} loaded.`);
-            renderUsers();
-        }, listenerError('users')));
-        unsubs.push(onSnapshot(collection(db, 'sessions'), (snap) => {
-            sessionsById.clear();
-            snap.forEach((d) => sessionsById.set(d.id, d.data()));
-            setDiag('sessions', 'ok', `${snap.size} document${snap.size === 1 ? '' : 's'} loaded.`);
-            renderUsers();
-        }, listenerError('sessions')));
+        // People and sessions are loaded ONCE (and again when you press Refresh) instead of listening live all day:
+        // a live list re-reads a record every time anyone's "last seen" changes, which uses up the free Firebase read limit.
+        loadPeople();
         unsubs.push(onSnapshot(doc(db, 'settings', 'app'), (snap) => {
             settings = snap.data() || {};
             setDiag('settings', 'ok', snap.exists() ? 'Loaded.' : 'No document yet — using defaults (this is normal until you save a setting).');
@@ -205,7 +196,36 @@ function startDashboard(config) {
             renderUsers();
         }, listenerError('settings')));
         // keep "3 min ago" and Active/Idle fresh even when no data changes
-        refreshTimer = setInterval(renderUsers, 20000);
+        refreshTimer = setInterval(() => { renderUsers(); renderLoaded(); }, 20000);
+    }
+
+    let loadedAt = 0;
+    function renderLoaded() {
+        const el = $('loadedAt'); if (!el) return;
+        if (!loadedAt) { el.textContent = 'Not loaded yet'; return; }
+        const mins = Math.floor((Date.now() - loadedAt) / 60000);
+        el.textContent = 'Loaded ' + new Date(loadedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + (mins >= 1 ? ' (' + mins + ' min ago)' : '');
+    }
+    async function loadPeople() {
+        const btn = $('refreshUsersBtn'); if (btn) btn.disabled = true;
+        try {
+            const [us, ss] = await Promise.all([getDocs(collection(db, 'users')), getDocs(collection(db, 'sessions'))]);
+            usersById.clear(); us.forEach((d) => usersById.set(d.id, { id: d.id, ...d.data() }));
+            sessionsById.clear(); ss.forEach((d) => sessionsById.set(d.id, d.data()));
+            setDiag('users', 'ok', `${us.size} document${us.size === 1 ? '' : 's'} loaded (press Refresh to update).`);
+            setDiag('sessions', 'ok', `${ss.size} document${ss.size === 1 ? '' : 's'} loaded (press Refresh to update).`);
+            loadedAt = Date.now(); renderUsers(); renderLoaded();
+        } catch (err) { listenerError('users')(err); }
+        finally { if (btn) btn.disabled = false; }
+    }
+    // after an admin action, re-read just that one person (2 reads) instead of the whole list
+    async function refreshOne(uid) {
+        try {
+            const [u, s] = await Promise.all([getDoc(doc(db, 'users', uid)), getDoc(doc(db, 'sessions', uid))]);
+            if (u.exists()) usersById.set(uid, { id: uid, ...u.data() }); else usersById.delete(uid);
+            if (s.exists()) sessionsById.set(uid, s.data()); else sessionsById.delete(uid);
+            renderUsers();
+        } catch (err) { /* the Refresh button still works */ }
     }
 
     // ---------- people table ----------
@@ -260,6 +280,7 @@ function startDashboard(config) {
             ? shown.map((r) => rowHtml(r, maxDevices)).join('')
             : `<tr><td colspan="7"><div class="empty">${rows.length ? 'No one matches this search or filter.' : 'No users yet — people appear here after they open the presenter once.'}</div></td></tr>`;
     }
+    $('refreshUsersBtn').addEventListener('click', loadPeople);
     $('userSearch').addEventListener('input', renderUsers);
     $('userFilter').addEventListener('change', renderUsers);
 
@@ -275,20 +296,20 @@ function startDashboard(config) {
             if (action === 'signout') {
                 if (!confirm(`Sign ${label} out of all their devices?`)) return;
                 await clearSessions(uid, 'admin');
-                toast(`${label} was signed out.`);
+                toast(`${label} was signed out.`); await refreshOne(uid);
             } else if (action === 'block') {
                 if (!confirm(`Block ${label}? They will be signed out now and can't sign back in until you unblock them.`)) return;
                 await updateDoc(doc(db, 'users', uid), { blocked: true, blockedAt: serverTimestamp(), blockedBy: adminUser.email });
                 await clearSessions(uid, 'blocked');
-                toast(`${label} is blocked.`);
+                toast(`${label} is blocked.`); await refreshOne(uid);
             } else if (action === 'unblock') {
                 await updateDoc(doc(db, 'users', uid), { blocked: false });
-                toast(`${label} is unblocked.`);
+                toast(`${label} is unblocked.`); await refreshOne(uid);
             } else if (action === 'remove') {
                 if (!confirm(`Remove ${label} from this list and sign them out?\n\nTheir login account stays in Firebase Authentication. If sign-ups are open they can register again; if sign-ups are closed they cannot get back in.`)) return;
                 await clearSessions(uid, 'admin');
                 await deleteDoc(doc(db, 'users', uid));
-                toast(`${label} was removed.`);
+                toast(`${label} was removed.`); await refreshOne(uid);
             }
         } catch (err) {
             toast("Couldn't do that — " + (err.message || err), true);
@@ -354,7 +375,7 @@ function startDashboard(config) {
                 ids.slice(i, i + 400).forEach((id) => batch.set(doc(db, 'sessions', id), { activeSessions: [], kickedReason: 'admin', kickedAt: Date.now() }, { merge: true }));
                 await batch.commit();
             }
-            toast(`Signed out ${ids.length} account${ids.length === 1 ? '' : 's'}.`);
+            toast(`Signed out ${ids.length} account${ids.length === 1 ? '' : 's'}.`); loadPeople();
         } catch (err) {
             toast("Couldn't sign everyone out — " + (err.message || err), true);
         }
