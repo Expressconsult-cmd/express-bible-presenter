@@ -1,6 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+/* (c) 2026 Express Consult Ltd. Express Bible Presenter. All rights reserved. Build XC-EBP-7Q4M-2026. Unauthorised copying or hosting is prohibited. */
+(function () {
+    try {
+        var h = String(location.hostname || '').toLowerCase();
+        var ok = h === '' || h === 'localhost' || h === '127.0.0.1' || h === 'expressbiblepresenter.com.ng' || h === 'www.expressbiblepresenter.com.ng' ||
+                 h === 'expressconsult-cmd.github.io' || /^eb-test\.[a-z0-9-]+\.workers\.dev$/.test(h);
+        document.documentElement.setAttribute('data-ebp-build', 'XC-EBP-7Q4M-2026');
+        if (!ok) {
+            if (window.stop) window.stop();
+            document.documentElement.innerHTML = '<head><meta charset="utf-8"><title>Not authorised</title></head><body style="margin:0;background:#0e1217;color:#e8edf3;font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center;padding:24px"><div><h2>This copy is not authorised</h2><p style="color:#9fb0c3">This is not the official Express Bible Presenter. Please use the official site: <a style="color:#6cb2ff" href="https://expressbiblepresenter.com.ng">expressbiblepresenter.com.ng</a></p></div></body>';
+        }
+    } catch (e) {}
+})();
+</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EXPRESS BIBLE PRESENTER V2 - PRODUCTION SUITE</title>
@@ -950,6 +965,6 @@
     <div class="lgl-foot"><span>Last updated: October 2026</span><button id="lglClose">Close</button></div>
 </div></div>
 <script src="qr.js?v=1"></script>
-    <script src="script.js?v=35"></script>
+    <script src="script.js?v=37"></script>
 </body>
 </html>
