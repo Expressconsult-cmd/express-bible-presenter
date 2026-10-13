@@ -1,6 +1,21 @@
 <!doctype html>
 <html lang="en">
 <head>
+<script>
+/* (c) 2026 Express Consult Ltd. Express Bible Presenter. All rights reserved. Build XC-EBP-7Q4M-2026. Unauthorised copying or hosting is prohibited. */
+(function () {
+    try {
+        var h = String(location.hostname || '').toLowerCase();
+        var ok = h === '' || h === 'localhost' || h === '127.0.0.1' || h === 'expressbiblepresenter.com.ng' || h === 'www.expressbiblepresenter.com.ng' ||
+                 h === 'expressconsult-cmd.github.io' || /^eb-test\.[a-z0-9-]+\.workers\.dev$/.test(h);
+        document.documentElement.setAttribute('data-ebp-build', 'XC-EBP-7Q4M-2026');
+        if (!ok) {
+            if (window.stop) window.stop();
+            document.documentElement.innerHTML = '<head><meta charset="utf-8"><title>Not authorised</title></head><body style="margin:0;background:#0e1217;color:#e8edf3;font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;text-align:center;padding:24px"><div><h2>This copy is not authorised</h2><p style="color:#9fb0c3">This is not the official Express Bible Presenter. Please use the official site: <a style="color:#6cb2ff" href="https://expressbiblepresenter.com.ng">expressbiblepresenter.com.ng</a></p></div></body>';
+        }
+    } catch (e) {}
+})();
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0e1217">
@@ -82,6 +97,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
   <input id="devName" class="inp" placeholder="Name this device (e.g. Pastor's phone)" maxlength="24" autocomplete="off">
   <input id="pin" class="inp pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="----" autocomplete="off">
   <div class="err" id="cerr"></div>
+  <div class="sub" id="cstat" style="min-height:20px"></div>
   <button id="goBtn" class="btn pri" style="min-height:54px">Connect</button>
 </section>
 
@@ -204,15 +220,50 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
   }
 
   // ---------- connection ----------
-  function cleanup() { try { if (conn) conn.close(); } catch (e) {} try { if (peer) peer.destroy(); } catch (e) {} conn = null; peer = null; authed = false; }
+  // Extra relay servers help phones on mobile data (many carriers block direct phone-to-PC links).
+  var ICE = { iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' },
+    { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+    { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' }
+  ] };
+  var timers = [];
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+  function step(msg) { $('cstat').textContent = msg; $('hstat').textContent = msg; }
+  function after(ms, fn) { timers.push(setTimeout(fn, ms)); }
+  function cleanup() { clearTimers(); try { if (conn) conn.close(); } catch (e) {} try { if (peer) peer.destroy(); } catch (e) {} conn = null; peer = null; authed = false; }
+  // If the connection library did not load (blocked or slow network), try other sources before giving up.
+  function ensurePeerLib(cb) {
+    if (window.Peer) { cb(true); return; }
+    var urls = ['https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js', 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js'];
+    var i = 0;
+    (function next() {
+      if (window.Peer) { cb(true); return; }
+      if (i >= urls.length) { cb(false); return; }
+      var s = document.createElement('script'), done = false;
+      function fin() { if (done) return; done = true; next(); }
+      s.src = urls[i++]; s.onload = fin; s.onerror = fin; setTimeout(fin, 8000);
+      document.head.appendChild(s);
+    })();
+  }
   function connect() {
     cleanup(); stopped = false;
     if (!token) { show('nolink'); return; }
-    $('hstat').textContent = 'Connecting…';
-    peer = new Peer();
+    step('Step 1 of 3: loading…');
+    ensurePeerLib(function (ok) {
+      if (stopped || authed) return;
+      if (!ok) { problem('Could not load the connection files. Check this phone\'s internet, turn off any data saver, ad blocker or VPN, then try again.'); return; }
+      startPeer();
+    });
+  }
+  function startPeer() {
+    step('Step 1 of 3: reaching the connection service…');
+    after(15000, function () { if (!conn) problem('Could not reach the connection service. Check the phone\'s internet, and turn off any VPN, data saver or private DNS.'); });
+    peer = new Peer(undefined, { config: ICE });
     peer.on('open', function () {
+      clearTimers(); step('Step 2 of 3: finding the dashboard…');
+      after(25000, function () { if (!authed) problem('Could not link to the dashboard. Make sure the dashboard is open on the PC. If this phone is on mobile data, try the same Wi-Fi as the PC.'); });
       conn = peer.connect(token, { metadata: { rc: 1 }, reliable: true });
-      conn.on('open', function () { conn.send({ t: 'hello', pin: pin, name: devName || 'Device' }); });
+      conn.on('open', function () { step('Step 3 of 3: checking the PIN…'); conn.send({ t: 'hello', pin: pin, name: devName || 'Device' }); });
       conn.on('data', onData);
       conn.on('close', onClose);
       conn.on('error', onClose);
@@ -221,11 +272,13 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
     peer.on('error', function (e) {
       if (e && e.type === 'peer-unavailable') { problem('Can\'t find the dashboard. Make sure it is open on the main PC. If it was reloaded, scan the new QR code.'); }
       else if (e && e.type === 'network') { problem('No internet connection.'); }
+      else if (e) { problem('Connection problem (' + (e.type || 'error') + '). Check the phone\'s internet and try again.'); }
     });
   }
   function problem(msg) {
+    clearTimers();
     if (wasAuthed) { $('banner').hidden = false; $('banner').textContent = msg + ' Retrying…'; $('dot').classList.add('bad'); }
-    else { show('connect'); $('cerr').textContent = msg; $('goBtn').disabled = false; }
+    else { show('connect'); $('cerr').textContent = msg; $('cstat').textContent = ''; $('goBtn').disabled = false; }
     scheduleRetry();
   }
   function scheduleRetry() { if (stopped) return; clearTimeout(retry); retry = setTimeout(function () { if (!authed) connect(); }, 4000); }
@@ -238,7 +291,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold)}
   function onData(m) {
     if (!m || !m.t) return;
     if (m.t === 'welcome') {
-      myName = m.name || devName; authed = true; wasAuthed = true; perms = m.perms || []; store.set('ebpRemotePin', pin); store.set('ebpRemoteName', devName);
+      clearTimers(); $('cstat').textContent = ''; myName = m.name || devName; authed = true; wasAuthed = true; perms = m.perms || []; store.set('ebpRemotePin', pin); store.set('ebpRemoteName', devName);
       $('banner').hidden = true; $('dot').classList.remove('bad'); $('hstat').textContent = 'Connected to ' + 'dashboard'; show('main');
       buildNav(); keepAwake();
     } else if (m.t === 'denied') {
