@@ -1,3 +1,4 @@
+/* (c) 2026 Express Consult Ltd. Express Bible Presenter. All rights reserved. Build XC-EBP-7Q4M-2026. Unauthorised copying, hosting or resale is prohibited. */
 // Apply saved interface theme immediately (before first paint) so there's no flash on load.
         // This only ever touches document.documentElement — it never touches the display-canvas output.
         (function () {
@@ -336,8 +337,14 @@
         }
 
         function initializeHostNetworkingMatrix() {
-            const hostId = 'ebp-' + Math.floor(100000 + Math.random() * 900000);
-            hostPeerNode = new Peer(hostId);
+            // Long random id (36^14 combinations): the old 6-digit id could be guessed. Every link/QR is built from this id, so nothing else changes.
+            const hostId = 'ebp-' + (function () { const a = 'abcdefghijklmnopqrstuvwxyz0123456789'; let r = ''; try { const b = new Uint8Array(14); crypto.getRandomValues(b); b.forEach(n => { r += a[n % 36]; }); } catch (e) { for (let i = 0; i < 14; i++) r += a[Math.floor(Math.random() * 36)]; } return r; })();
+            // Relay servers (TURN) let phones on mobile data reach this dashboard; direct links are often blocked by carriers.
+            hostPeerNode = new Peer(hostId, { config: { iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' },
+                { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+                { urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turn:openrelay.metered.ca:443?transport=tcp'], username: 'openrelayproject', credential: 'openrelayproject' }
+            ] } });
 
             hostPeerNode.on('open', (id) => {
                 const baseHref = window.location.origin + window.location.pathname;
@@ -363,6 +370,9 @@
 
         function handleIncomingRemoteDataPayload(packet) {
             if (!packet || !packet.type) return;
+            // The old unauthenticated REMOTE_* commands are switched off: nothing in the app uses them any more (the phone remote has its own PIN-protected link).
+            // To bring them back for an old custom remote, run localStorage.setItem('ebpLegacyRemote','1') in the browser console.
+            try { if (localStorage.getItem('ebpLegacyRemote') !== '1') return; } catch (e) { return; }
             switch (packet.type) {
                 case "REMOTE_NAVIGATE_OFFSET":
                     navigateSequentialOffsetVerses(packet.offsetValue);
