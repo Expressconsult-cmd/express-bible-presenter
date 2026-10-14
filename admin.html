@@ -161,7 +161,7 @@
         <div class="stat ok"><div class="n" id="statActive">0</div><div class="l">Active now</div><div class="cap">used in the last 40 min</div></div>
         <div class="stat ok"><div class="n" id="statToday">0</div><div class="l">Active today</div><div class="cap" id="capToday">last 7 days: 0</div></div>
         <div class="stat accent"><div class="n" id="statNewWeek">0</div><div class="l">New this week</div><div class="cap" id="capNewWeek">new today: 0</div></div>
-        <div class="stat"><div class="n" id="statDevices">0</div><div class="l">Devices signed in</div><div class="cap">grows as people sign in again</div></div>
+        <div class="stat"><div class="n" id="statDevices">0</div><div class="l">Devices signed in</div><div class="cap" id="capDevices">0 people signed in</div></div>
         <div class="stat bad"><div class="n" id="statBlocked">0</div><div class="l">Blocked</div><div class="cap">cannot sign in</div></div>
     </section>
 
@@ -188,6 +188,7 @@
                 <button id="refreshUsersBtn" class="btn" type="button">Refresh</button>
                 <span id="loadedAt" class="muted small" style="align-self:center">Not loaded yet</span>
                 <span id="readsMeter" class="meter">This page has used about <b>0 reads</b> so far</span>
+                <button id="recountBtn" class="btn" type="button" title="Fills in or corrects every person's device count from the sessions list. Run once after the update.">Recount devices</button>
                 <button id="exportCsvBtn" class="btn" type="button">Export CSV</button>
             </div>
             <div class="table-wrap">
@@ -201,7 +202,7 @@
             <div class="pager"><span id="pagerInfo"></span><button id="loadMoreBtn" class="btn" type="button" hidden>Load 50 more</button></div>
             <p class="muted small" style="margin:.8rem 0 0">
                 The totals at the top are counted by the database, so they always cover everyone and cost very little. The list starts with people who are <b>Active now</b> (used the presenter in the last 40 minutes); choose <b>All people</b> to browse everyone, 50 at a time. <b>Seen today</b> = used it earlier today.
-                Press <b>Refresh</b> to update the numbers. The reads counter shows what this page has used from your free daily limit. <b>Devices</b> shows "—" for people who haven't signed in since the device count was added.
+                Press <b>Refresh</b> to update the numbers. The reads counter shows what this page has used from your free daily limit. <b>Devices signed in</b> counts every device that is still signed in (as before), so it includes people who signed in earlier and haven't signed out. After the update, press <b>Recount devices</b> once to fill in everyone right away; otherwise a person's count appears the next time they sign in (their Devices column shows "—" until then).
             </p>
         </section>
 
