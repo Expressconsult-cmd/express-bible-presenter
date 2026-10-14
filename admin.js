@@ -250,12 +250,14 @@ function startDashboard(config) {
                 getCountFromServer(query(usersCol(), where('lastSeen', '>=', ts(week)))),
                 getCountFromServer(query(usersCol(), where('createdAt', '>=', sod))),
                 getCountFromServer(query(usersCol(), where('createdAt', '>=', week))),
-                getAggregateFromServer(usersCol(), { devices: sum('deviceCount') })
+                getAggregateFromServer(usersCol(), { devices: sum('deviceCount') }),
+                getCountFromServer(query(usersCol(), where('deviceCount', '>', 0)))
             ]);
             const c = r.slice(0, 7).map((x) => x.data().count);
-            counts = { total: c[0], blocked: c[1], activeNow: c[2], activeToday: c[3], active7: c[4], newToday: c[5], newWeek: c[6], devices: Number(r[7].data().devices) || 0 };
-            addReads(c.reduce((sum2, n) => sum2 + costOf(n), 0) + costOf(counts.total));
-            setDiag('counts', 'ok', `Counted: ${counts.total} users, ${counts.activeNow} active now (about ${c.reduce((s2, n) => s2 + costOf(n), 0) + costOf(counts.total)} reads).`);
+            counts = { total: c[0], blocked: c[1], activeNow: c[2], activeToday: c[3], active7: c[4], newToday: c[5], newWeek: c[6], devices: Number(r[7].data().devices) || 0, signedIn: r[8].data().count };
+            const cost = c.reduce((sum2, n) => sum2 + costOf(n), 0) + costOf(counts.total) + costOf(counts.signedIn);
+            addReads(cost);
+            setDiag('counts', 'ok', `Counted: ${counts.total} users, ${counts.activeNow} active now, ${counts.signedIn} signed in on ${counts.devices} device${counts.devices === 1 ? '' : 's'} (about ${cost} reads).`);
             renderCounts();
             return true;
         } catch (err) { listenerError('counts')(err); return false; }
@@ -267,6 +269,7 @@ function startDashboard(config) {
         $('statToday').textContent = counts.activeToday;
         $('statNewWeek').textContent = counts.newWeek;
         $('statDevices').textContent = counts.devices;
+        $('capDevices').textContent = counts.signedIn + (counts.signedIn === 1 ? ' person' : ' people') + ' signed in · active now: ' + counts.activeNow;
         $('statBlocked').textContent = counts.blocked;
         $('capToday').textContent = 'last 7 days: ' + counts.active7;
         $('capNewWeek').textContent = 'new today: ' + counts.newToday;
@@ -517,11 +520,37 @@ function startDashboard(config) {
                 ids.slice(i, i + 400).forEach((id) => batch.set(doc(db, 'sessions', id), { activeSessions: [], kickedReason: 'admin', kickedAt: Date.now() }, { merge: true }));
                 await batch.commit();
             }
-            toast(`Signed out ${ids.length} account${ids.length === 1 ? '' : 's'}. Device counts update as people sign back in.`); refreshAll();
+            toast(`Signed out ${ids.length} account${ids.length === 1 ? '' : 's'}.`); await recountDevices(true);
         } catch (err) {
             toast("Couldn't sign everyone out — " + (err.message || err), true);
         }
     });
+
+    // ---------- recount devices: fills in / corrects each person's device count from the sessions list ----------
+    // Reads every person and every session once, writes only the people whose stored count is different. Run it once after the update,
+    // and again after "Sign out everyone" (or whenever the Devices total looks off).
+    async function recountDevices(silent) {
+        if (!silent && !confirm(`Recount devices?\n\nThis reads every person and every session once (about ${counts ? counts.total * 2 : 'two reads per person, '} reads) and writes only the people whose device count is out of date.\nRun it once after the update, not repeatedly.`)) return;
+        const btn = $('recountBtn'); if (btn) btn.disabled = true;
+        try {
+            const [us, ss] = await Promise.all([getDocs(usersCol()), getDocs(collection(db, 'sessions'))]);
+            addReads(Math.max(1, us.size) + Math.max(1, ss.size));
+            const sessionCount = new Map();
+            ss.forEach((d) => { const a = d.data().activeSessions; sessionCount.set(d.id, Array.isArray(a) ? a.length : 0); });
+            const changes = [];
+            us.forEach((d) => { const n = sessionCount.get(d.id) || 0; if (d.data().deviceCount !== n) changes.push([d.id, n]); });
+            for (let i = 0; i < changes.length; i += 400) {
+                const batch = writeBatch(db);
+                changes.slice(i, i + 400).forEach(([id, n]) => batch.update(doc(db, 'users', id), { deviceCount: n }));
+                await batch.commit();
+            }
+            toast(changes.length ? `Device counts updated for ${changes.length} ${changes.length === 1 ? 'person' : 'people'}.` : 'Device counts were already correct.');
+            await refreshAll();
+        } catch (err) {
+            toast("Couldn't recount — " + (err.message || err), true);
+        } finally { if (btn) btn.disabled = false; }
+    }
+    $('recountBtn').addEventListener('click', () => recountDevices(false));
 
     // ---------- export (reads every person once) ----------
     $('exportCsvBtn').addEventListener('click', async () => {
