@@ -175,6 +175,8 @@ function startDashboard(config) {
         unsubs.forEach((u) => { try { u(); } catch (e) { /* ignore */ } });
         unsubs = [];
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+        if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+        activeAt = 0;
         usersById.clear(); settings = {}; adminUser = null; loadedAt = 0; readsUsed = 0; counts = null; listState = { cursor: null, hasMore: false, mode: 'filter' };
         diagState = {};
         renderDiag();
@@ -228,8 +230,33 @@ function startDashboard(config) {
             renderUsers();
         }, listenerError('settings')));
         // keep "3 min ago" and Active/Idle fresh even when no data changes
-        refreshTimer = setInterval(() => { renderUsers(); renderLoaded(); }, 20000);
+        refreshTimer = setInterval(() => { renderUsers(); renderLoaded(); renderActiveAgo(); }, 20000);
+        // "Active now" re-counts itself every minute (one cheap count, ~1 read) while this tab is open and visible
+        activeTimer = setInterval(refreshActive, 60000);
     }
+
+    let activeTimer = null, activeAt = 0, activeBusy = false;
+    async function refreshActive() {
+        if (document.hidden || !counts || activeBusy) return;
+        activeBusy = true;
+        try {
+            const r = await getCountFromServer(query(usersCol(), where('lastSeen', '>', ts(Date.now() - ACTIVE_WINDOW_MS))));
+            addReads(1);
+            counts.activeNow = r.data().count;
+            activeAt = Date.now();
+            $('statActive').textContent = counts.activeNow;
+            $('capDevices').textContent = counts.signedIn + (counts.signedIn === 1 ? ' person' : ' people') + ' signed in · active now: ' + counts.activeNow;
+            renderActiveAgo();
+        } catch (e) { /* keep the last number; the next minute tries again */ }
+        activeBusy = false;
+    }
+    function renderActiveAgo() {
+        const el = $('activeAgo'); if (!el) return;
+        if (!activeAt) { el.textContent = 'live'; return; }
+        const s = Math.round((Date.now() - activeAt) / 1000);
+        el.textContent = 'updated ' + (s < 10 ? 'just now' : s < 60 ? s + 's ago' : Math.floor(s / 60) + ' min ago');
+    }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && activeTimer && activeAt && Date.now() - activeAt > 60000) refreshActive(); });
 
     function renderLoaded() {
         const el = $('loadedAt'); if (!el) return;
@@ -258,7 +285,9 @@ function startDashboard(config) {
             const cost = c.reduce((sum2, n) => sum2 + costOf(n), 0) + costOf(counts.total) + costOf(counts.signedIn);
             addReads(cost);
             setDiag('counts', 'ok', `Counted: ${counts.total} users, ${counts.activeNow} active now, ${counts.signedIn} signed in on ${counts.devices} device${counts.devices === 1 ? '' : 's'} (about ${cost} reads).`);
+            activeAt = Date.now();
             renderCounts();
+            renderActiveAgo();
             return true;
         } catch (err) { listenerError('counts')(err); return false; }
     }
