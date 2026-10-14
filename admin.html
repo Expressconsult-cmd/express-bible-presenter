@@ -50,6 +50,11 @@
     .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
     .stat .n { font-size: 1.9rem; font-weight: 800; line-height: 1.1; }
     .stat .l { font-size: .72rem; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-top: .25rem; }
+    .stat .cap { font-size: .66rem; color: var(--muted); margin-top: .3rem; }
+    .meter { display: inline-flex; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .6rem; font-size: .72rem; color: var(--muted); }
+    .meter b { color: var(--ok); margin: 0 .25rem; }
+    .pager { display: flex; justify-content: space-between; align-items: center; gap: .6rem; margin-top: .8rem; font-size: .78rem; color: var(--muted); flex-wrap: wrap; }
+    #progressPanel { margin-bottom: 1.25rem; }
     .stat.ok .n { color: var(--ok); } .stat.bad .n { color: var(--bad); } .stat.accent .n { color: var(--accent-2); }
     .grid { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(300px, 1fr); gap: 1.25rem; align-items: start; }
     @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
@@ -152,10 +157,20 @@
     </section>
 
     <section class="stats">
-        <div class="stat accent"><div class="n" id="statTotal">0</div><div class="l">Total users</div></div>
-        <div class="stat ok"><div class="n" id="statActive">0</div><div class="l">Active now</div></div>
-        <div class="stat"><div class="n" id="statDevices">0</div><div class="l">Devices signed in</div></div>
-        <div class="stat bad"><div class="n" id="statBlocked">0</div><div class="l">Blocked</div></div>
+        <div class="stat accent"><div class="n" id="statTotal">0</div><div class="l">Total users</div><div class="cap">everyone who has signed in</div></div>
+        <div class="stat ok"><div class="n" id="statActive">0</div><div class="l">Active now</div><div class="cap">used in the last 40 min</div></div>
+        <div class="stat ok"><div class="n" id="statToday">0</div><div class="l">Active today</div><div class="cap" id="capToday">last 7 days: 0</div></div>
+        <div class="stat accent"><div class="n" id="statNewWeek">0</div><div class="l">New this week</div><div class="cap" id="capNewWeek">new today: 0</div></div>
+        <div class="stat"><div class="n" id="statDevices">0</div><div class="l">Devices signed in</div><div class="cap">grows as people sign in again</div></div>
+        <div class="stat bad"><div class="n" id="statBlocked">0</div><div class="l">Blocked</div><div class="cap">cannot sign in</div></div>
+    </section>
+
+    <section class="panel" id="progressPanel">
+        <h2>Progress <span class="muted small" style="font-weight:400">— saved once a day when you open this page (last 14 days)</span></h2>
+        <div class="table-wrap"><table>
+            <thead><tr><th>Day</th><th>Total users</th><th>New that day</th><th>Active that day</th><th>Peak active at once</th></tr></thead>
+            <tbody id="progressBody"></tbody>
+        </table></div>
     </section>
 
     <div class="grid">
@@ -163,16 +178,16 @@
         <section class="panel">
             <h2>People</h2>
             <div class="toolbar">
-                <input type="search" id="userSearch" placeholder="Search name or email…">
+                <input type="search" id="userSearch" placeholder="Search: email or name starts with…">
                 <select id="userFilter">
-                    <option value="all">All users</option>
-                    <option value="active">Active now</option>
-                    <option value="idle">Signed in · idle</option>
-                    <option value="offline">Offline</option>
+                    <option value="active" selected>Active now</option>
+                    <option value="today">Seen today</option>
+                    <option value="all">All people</option>
                     <option value="blocked">Blocked</option>
                 </select>
-                <button id="refreshUsersBtn" class="btn" type="button">Refresh list</button>
+                <button id="refreshUsersBtn" class="btn" type="button">Refresh</button>
                 <span id="loadedAt" class="muted small" style="align-self:center">Not loaded yet</span>
+                <span id="readsMeter" class="meter">This page has used about <b>0 reads</b> so far</span>
                 <button id="exportCsvBtn" class="btn" type="button">Export CSV</button>
             </div>
             <div class="table-wrap">
@@ -183,10 +198,10 @@
                     <tbody id="usersBody"></tbody>
                 </table>
             </div>
+            <div class="pager"><span id="pagerInfo"></span><button id="loadMoreBtn" class="btn" type="button" hidden>Load 50 more</button></div>
             <p class="muted small" style="margin:.8rem 0 0">
-                <b>Active now</b> = signed in and the presenter was used within the last 20 minutes. The list is loaded when you open this page; press <b>Refresh list</b> to update it (this saves your free database limit).
-                <b>Idle</b> = still signed in on a device, but the presenter hasn't been open recently.
-                People appear here after they open the presenter once.
+                The totals at the top are counted by the database, so they always cover everyone and cost very little. The list starts with people who are <b>Active now</b> (used the presenter in the last 40 minutes); choose <b>All people</b> to browse everyone, 50 at a time. <b>Seen today</b> = used it earlier today.
+                Press <b>Refresh</b> to update the numbers. The reads counter shows what this page has used from your free daily limit. <b>Devices</b> shows "—" for people who haven't signed in since the device count was added.
             </p>
         </section>
 
