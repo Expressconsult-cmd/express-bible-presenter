@@ -3,23 +3,25 @@
 // (firestore.rules): only accounts that have a document in the "admins" collection can read the user list
 // or change settings. Anyone else who finds this URL just sees "Access denied".
 //
-// It reads three live feeds:
-//   users/{uid}     profile + "last seen" heartbeat written by the presenter (auth.js)
-//   sessions/{uid}  the devices currently signed in for that person
-//   settings/app    presenter-wide controls (maintenance lock, broadcast, device limit, sign-ups)
+// What it reads (kept small on purpose, to protect the free Firebase daily limit):
+//   COUNTS         total / active / new / blocked / devices are counted by the database (about 1 read per 1,000 people)
+//   users/{uid}    the people list is loaded 50 at a time (default: only people active now)
+//   stats/{day}    one small progress record per day, saved when an admin opens this page
+//   settings/app   presenter-wide controls (maintenance lock, broadcast, device limit, sign-ups)
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
 import {
     getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 import {
-    getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch
+    getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch,
+    query, where, orderBy, limit, startAfter, getCountFromServer, getAggregateFromServer, sum, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
 
 const $ = (id) => document.getElementById(id);
 
 // <helpers>
-const ACTIVE_WINDOW_MS = 1200000; // the presenter reports in every 15 min while in use, so 20 min counts as "active"
+const ACTIVE_WINDOW_MS = 2400000; // the presenter reports in every 30 min while in use, so 40 min counts as "active"
 
 function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -53,15 +55,16 @@ function initials(u) {
     const parts = base.split(/[\s@._-]+/).filter(Boolean);
     return ((parts[0] || '?')[0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
 }
-// status: blocked | active (signed in + open recently) | idle (signed in, not open recently) | offline
-function computeRow(u, sessionDoc, now) {
+// status (from last usage only): blocked | active (used in the last 40 min) | idle (used earlier today) | offline
+function startOfDay(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function computeRow(u, now) {
     now = now || Date.now();
-    const devices = Array.isArray(sessionDoc && sessionDoc.activeSessions) ? sessionDoc.activeSessions : [];
     const lastSeen = toMs(u.lastSeen);
     let status = 'offline';
     if (u.blocked === true) status = 'blocked';
-    else if (devices.length) status = (now - lastSeen < ACTIVE_WINDOW_MS) ? 'active' : 'idle';
-    return { u, devices, lastSeen, status };
+    else if (lastSeen && now - lastSeen < ACTIVE_WINDOW_MS) status = 'active';
+    else if (lastSeen && lastSeen >= startOfDay(now)) status = 'idle';
+    return { u, lastSeen, status };
 }
 function csvCell(value) {
     let s = String(value == null ? '' : value);
@@ -70,7 +73,7 @@ function csvCell(value) {
 }
 // </helpers>
 
-const STATUS_LABEL = { active: 'Active now', idle: 'Signed in · idle', offline: 'Offline', blocked: 'Blocked' };
+const STATUS_LABEL = { active: 'Active now', idle: 'Seen today', offline: 'Offline', blocked: 'Blocked' };
 const STATUS_ORDER = { active: 0, idle: 1, offline: 2, blocked: 3 };
 
 function showScreen(name) {
@@ -97,7 +100,23 @@ if (firebaseConfig && JSON.stringify(firebaseConfig).includes('REPLACE_WITH')) {
     $('loginMsg').textContent = 'Setup incomplete: paste your Firebase config into firebase-config.js.';
     firebaseConfig = null;
 }
-if (firebaseConfig) startDashboard(firebaseConfig);
+if (firebaseConfig) {
+    try { await enableAppCheck(initializeApp(firebaseConfig)); } catch (err) { /* App Check is optional */ }
+    startDashboard(firebaseConfig);
+}
+
+// ---- Firebase App Check (optional): proves requests come from the real site, not a copy or a script. Does nothing until a site key is set in firebase-config.js.
+async function enableAppCheck(app) {
+    try {
+        const mod = await import('./firebase-config.js');
+        const siteKey = mod.appCheckSiteKey;
+        if (!siteKey) return;
+        if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') self.FIREBASE_APPCHECK_DEBUG_TOKEN = true; // local testing only: prints a debug token in the console
+        const ac = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check.js');
+        ac.initializeAppCheck(app, { provider: new ac.ReCaptchaV3Provider(siteKey), isTokenAutoRefreshEnabled: true });
+    } catch (err) { console.warn('App Check could not start:', err); }
+}
+
 
 function startDashboard(config) {
     const app = initializeApp(config);
@@ -108,7 +127,7 @@ function startDashboard(config) {
     let unsubs = [];
     let refreshTimer = null;
     const usersById = new Map();
-    const sessionsById = new Map();
+    const PAGE = 50;
     let settings = {};
 
     // ---------- sign-in ----------
@@ -156,20 +175,20 @@ function startDashboard(config) {
         unsubs.forEach((u) => { try { u(); } catch (e) { /* ignore */ } });
         unsubs = [];
         if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-        usersById.clear(); sessionsById.clear(); settings = {}; adminUser = null; loadedAt = 0;
+        usersById.clear(); settings = {}; adminUser = null; loadedAt = 0; readsUsed = 0; counts = null; listState = { cursor: null, hasMore: false, mode: 'filter' };
         diagState = {};
         renderDiag();
     }
 
     // ---------- diagnostics: shows exactly what each live data source is doing, so nothing fails silently ----------
     let diagState = {};
-    const DIAG_LABEL = { you: 'Your admin session', users: 'users collection', sessions: 'sessions collection', settings: 'settings/app document' };
+    const DIAG_LABEL = { you: 'Your admin session', counts: 'Totals (counted)', users: 'People list', progress: 'Daily progress', settings: 'settings/app document' };
     function setDiag(key, status, details) {
         diagState[key] = { status, details: details || '' };
         renderDiag();
     }
     function renderDiag() {
-        const order = ['you', 'users', 'sessions', 'settings'];
+        const order = ['you', 'counts', 'users', 'progress', 'settings'];
         $('diagBody').innerHTML = order.map((key) => {
             const d = diagState[key] || { status: 'pending', details: 'Waiting…' };
             const cls = d.status === 'ok' ? 'diag-ok' : d.status === 'error' ? 'diag-err' : 'diag-pending';
@@ -185,10 +204,23 @@ function startDashboard(config) {
             toast(`Couldn't load ${DIAG_LABEL[sourceKey] || sourceKey} — ${err.message || err}`, true);
         };
     }
+    // ---------- loading data (every step is counted so you can see what the page costs) ----------
+    let readsUsed = 0;
+    let counts = null;
+    let listState = { cursor: null, hasMore: false, mode: 'filter' };
+    let loadedAt = 0;
+    const costOf = (n) => Math.max(1, Math.ceil((n || 0) / 1000));
+    function addReads(n) {
+        readsUsed += n;
+        const el = $('readsMeter'); if (el) el.innerHTML = 'This page has used about <b>' + readsUsed + ' reads</b> so far';
+    }
+    const usersCol = () => collection(db, 'users');
+    const ts = (ms) => Timestamp.fromMillis(ms);
+
     function startListeners() {
-        // People and sessions are loaded ONCE (and again when you press Refresh) instead of listening live all day:
-        // a live list re-reads a record every time anyone's "last seen" changes, which uses up the free Firebase read limit.
-        loadPeople();
+        // Nothing here listens live all day: a live list re-reads a record every time anyone's "last seen" changes,
+        // which would use up the free Firebase read limit. Totals, the list and progress load once, and again on Refresh.
+        refreshAll();
         unsubs.push(onSnapshot(doc(db, 'settings', 'app'), (snap) => {
             settings = snap.data() || {};
             setDiag('settings', 'ok', snap.exists() ? 'Loaded.' : 'No document yet — using defaults (this is normal until you save a setting).');
@@ -199,32 +231,131 @@ function startDashboard(config) {
         refreshTimer = setInterval(() => { renderUsers(); renderLoaded(); }, 20000);
     }
 
-    let loadedAt = 0;
     function renderLoaded() {
         const el = $('loadedAt'); if (!el) return;
         if (!loadedAt) { el.textContent = 'Not loaded yet'; return; }
         const mins = Math.floor((Date.now() - loadedAt) / 60000);
         el.textContent = 'Loaded ' + new Date(loadedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + (mins >= 1 ? ' (' + mins + ' min ago)' : '');
     }
-    async function loadPeople() {
-        const btn = $('refreshUsersBtn'); if (btn) btn.disabled = true;
+
+    // ----- totals: counted by the database, not by downloading people -----
+    async function loadCounts() {
+        const now = Date.now(), sod = startOfDay(now), week = now - 7 * 86400000;
         try {
-            const [us, ss] = await Promise.all([getDocs(collection(db, 'users')), getDocs(collection(db, 'sessions'))]);
-            usersById.clear(); us.forEach((d) => usersById.set(d.id, { id: d.id, ...d.data() }));
-            sessionsById.clear(); ss.forEach((d) => sessionsById.set(d.id, d.data()));
-            setDiag('users', 'ok', `${us.size} document${us.size === 1 ? '' : 's'} loaded (press Refresh to update).`);
-            setDiag('sessions', 'ok', `${ss.size} document${ss.size === 1 ? '' : 's'} loaded (press Refresh to update).`);
-            loadedAt = Date.now(); renderUsers(); renderLoaded();
+            const r = await Promise.all([
+                getCountFromServer(usersCol()),
+                getCountFromServer(query(usersCol(), where('blocked', '==', true))),
+                getCountFromServer(query(usersCol(), where('lastSeen', '>', ts(now - ACTIVE_WINDOW_MS)))),
+                getCountFromServer(query(usersCol(), where('lastSeen', '>=', ts(sod)))),
+                getCountFromServer(query(usersCol(), where('lastSeen', '>=', ts(week)))),
+                getCountFromServer(query(usersCol(), where('createdAt', '>=', sod))),
+                getCountFromServer(query(usersCol(), where('createdAt', '>=', week))),
+                getAggregateFromServer(usersCol(), { devices: sum('deviceCount') })
+            ]);
+            const c = r.slice(0, 7).map((x) => x.data().count);
+            counts = { total: c[0], blocked: c[1], activeNow: c[2], activeToday: c[3], active7: c[4], newToday: c[5], newWeek: c[6], devices: Number(r[7].data().devices) || 0 };
+            addReads(c.reduce((sum2, n) => sum2 + costOf(n), 0) + costOf(counts.total));
+            setDiag('counts', 'ok', `Counted: ${counts.total} users, ${counts.activeNow} active now (about ${c.reduce((s2, n) => s2 + costOf(n), 0) + costOf(counts.total)} reads).`);
+            renderCounts();
+            return true;
+        } catch (err) { listenerError('counts')(err); return false; }
+    }
+    function renderCounts() {
+        if (!counts) return;
+        $('statTotal').textContent = counts.total;
+        $('statActive').textContent = counts.activeNow;
+        $('statToday').textContent = counts.activeToday;
+        $('statNewWeek').textContent = counts.newWeek;
+        $('statDevices').textContent = counts.devices;
+        $('statBlocked').textContent = counts.blocked;
+        $('capToday').textContent = 'last 7 days: ' + counts.active7;
+        $('capNewWeek').textContent = 'new today: ' + counts.newToday;
+        renderPager();
+    }
+
+    // ----- people list: 50 at a time -----
+    function listQuery(filter, cursor, now) {
+        const c = [];
+        if (filter === 'active') c.push(where('lastSeen', '>', ts(now - ACTIVE_WINDOW_MS)), orderBy('lastSeen', 'desc'));
+        else if (filter === 'today') c.push(where('lastSeen', '>=', ts(startOfDay(now))), orderBy('lastSeen', 'desc'));
+        else if (filter === 'blocked') c.push(where('blocked', '==', true));
+        else c.push(orderBy('lastSeen', 'desc'));
+        if (cursor) c.push(startAfter(cursor));
+        c.push(limit(PAGE));
+        return query(usersCol(), ...c);
+    }
+    async function loadList(reset) {
+        const q = $('userSearch').value.trim();
+        if (q.length >= 2) return runSearch(q);
+        const btn = $('loadMoreBtn'); if (btn) btn.disabled = true;
+        try {
+            if (reset) { usersById.clear(); listState = { cursor: null, hasMore: false, mode: 'filter' }; }
+            const snap = await getDocs(listQuery($('userFilter').value, listState.cursor, Date.now()));
+            addReads(Math.max(1, snap.size));
+            snap.forEach((d) => usersById.set(d.id, { id: d.id, ...d.data() }));
+            listState.mode = 'filter';
+            listState.cursor = snap.docs.length ? snap.docs[snap.docs.length - 1] : listState.cursor;
+            listState.hasMore = snap.size === PAGE;
+            setDiag('users', 'ok', `${usersById.size} ${usersById.size === 1 ? 'person' : 'people'} shown (50 at a time).`);
+            renderUsers();
         } catch (err) { listenerError('users')(err); }
         finally { if (btn) btn.disabled = false; }
     }
-    // after an admin action, re-read just that one person (2 reads) instead of the whole list
+    // search: starts-with on email (lower case) or on the name as typed — at most 25 per query
+    async function runSearch(q) {
+        try {
+            const lower = q.toLowerCase(), title = q.charAt(0).toUpperCase() + q.slice(1);
+            const mk = (field, val) => query(usersCol(), where(field, '>=', val), where(field, '<=', val + ''), orderBy(field), limit(25));
+            const qs = [mk('email', lower), mk('displayName', q)];
+            if (title !== q) qs.push(mk('displayName', title));
+            const res = await Promise.all(qs.map((x) => getDocs(x)));
+            usersById.clear();
+            res.forEach((snap) => { addReads(Math.max(1, snap.size)); snap.forEach((d) => usersById.set(d.id, { id: d.id, ...d.data() })); });
+            listState = { cursor: null, hasMore: false, mode: 'search' };
+            setDiag('users', 'ok', `Search "${q}": ${usersById.size} found.`);
+            renderUsers();
+        } catch (err) { listenerError('users')(err); }
+    }
+
+    // ----- progress: one small record per day -----
+    const dayKey = (ms) => new Date(ms).toLocaleDateString('en-CA'); // YYYY-MM-DD in your own time zone
+    async function saveProgress() {
+        if (!counts) return;
+        const key = dayKey(Date.now()), ref = doc(db, 'stats', key);
+        const snap = await getDoc(ref); addReads(1);
+        const prev = snap.exists() ? snap.data() : {};
+        const next = { date: key, total: counts.total, newToday: counts.newToday, activeToday: counts.activeToday, peakActive: Math.max(Number(prev.peakActive) || 0, counts.activeNow) };
+        const changed = !snap.exists() || ['total', 'newToday', 'activeToday', 'peakActive'].some((k) => prev[k] !== next[k]);
+        if (changed) await setDoc(ref, { ...next, updatedAt: serverTimestamp() }, { merge: true });
+    }
+    async function loadProgress() {
+        try {
+            await saveProgress();
+            const snap = await getDocs(query(collection(db, 'stats'), orderBy('date', 'desc'), limit(14)));
+            addReads(Math.max(1, snap.size));
+            const rows = snap.docs.map((d) => d.data());
+            $('progressBody').innerHTML = rows.length ? rows.map((r) =>
+                `<tr><td>${esc(r.date)}</td><td>${esc(r.total)}</td><td>${esc(r.newToday)}</td><td>${esc(r.activeToday)}</td><td>${esc(r.peakActive)}</td></tr>`).join('')
+                : '<tr><td colspan="5"><div class="empty">The first day is saved when you open this page.</div></td></tr>';
+            setDiag('progress', 'ok', `${rows.length} day${rows.length === 1 ? '' : 's'} of history shown.`);
+        } catch (err) { listenerError('progress')(err); }
+    }
+
+    async function refreshAll() {
+        const btn = $('refreshUsersBtn'); if (btn) btn.disabled = true;
+        try {
+            await loadCounts();
+            await Promise.all([loadList(true), loadProgress()]);
+            loadedAt = Date.now(); renderLoaded();
+        } finally { if (btn) btn.disabled = false; }
+    }
+    // after an admin action, re-read just that one person (1 read) and the totals (a few reads)
     async function refreshOne(uid) {
         try {
-            const [u, s] = await Promise.all([getDoc(doc(db, 'users', uid)), getDoc(doc(db, 'sessions', uid))]);
+            const u = await getDoc(doc(db, 'users', uid)); addReads(1);
             if (u.exists()) usersById.set(uid, { id: uid, ...u.data() }); else usersById.delete(uid);
-            if (s.exists()) sessionsById.set(uid, s.data()); else sessionsById.delete(uid);
             renderUsers();
+            loadCounts();
         } catch (err) { /* the Refresh button still works */ }
     }
 
@@ -236,10 +367,10 @@ function startDashboard(config) {
         const avatar = u.photoURL
             ? `<img class="avatar" src="${esc(u.photoURL)}" alt="" referrerpolicy="no-referrer">`
             : `<span class="avatar avatar-fallback">${esc(initials(u))}</span>`;
-        const deviceTip = r.devices.map((d) => `${d.device || 'Device'} — signed in ${fullDate(d.createdAt)}`).join('\n');
+        const dc = Number.isInteger(u.deviceCount) ? u.deviceCount : null; // null = this person hasn't signed in since the device count was added
         const uid = esc(u.id);
         const actions = [];
-        if (r.devices.length) actions.push(`<button class="btn btn-sm" data-action="signout" data-uid="${uid}">Sign out</button>`);
+        if (dc === null || dc > 0) actions.push(`<button class="btn btn-sm" data-action="signout" data-uid="${uid}">Sign out</button>`);
         actions.push(u.blocked === true
             ? `<button class="btn btn-sm" data-action="unblock" data-uid="${uid}">Unblock</button>`
             : `<button class="btn btn-sm btn-danger" data-action="block" data-uid="${uid}" ${isMe ? 'disabled title="You cannot block yourself"' : ''}>Block</button>`);
@@ -247,7 +378,7 @@ function startDashboard(config) {
         return `<tr>
             <td><div class="user-cell">${avatar}<div><div class="uname">${esc(name)}${isMe ? '<span class="you">YOU</span>' : ''}</div><div class="uemail">${esc(u.email || '')}</div></div></div></td>
             <td><span class="pill pill-${r.status}">${STATUS_LABEL[r.status]}</span></td>
-            <td title="${esc(deviceTip)}">${r.devices.length} / ${maxDevices}<div class="muted small">${esc(providerLabel(u.providers))}</div></td>
+            <td title="${dc === null ? 'Shown after this person next signs in' : ''}">${dc === null ? '—' : dc} / ${maxDevices}<div class="muted small">${esc(providerLabel(u.providers))}</div></td>
             <td title="${esc(fullDate(r.lastSeen))}">${esc(ago(r.lastSeen))}</td>
             <td title="${esc(fullDate(toMs(u.lastSignIn)))}">${esc(ago(toMs(u.lastSignIn)))}</td>
             <td title="${esc(fullDate(toMs(u.createdAt)))}">${esc(toMs(u.createdAt) ? new Date(toMs(u.createdAt)).toLocaleDateString() : '—')}</td>
@@ -257,32 +388,41 @@ function startDashboard(config) {
 
     function allRows() {
         const now = Date.now();
-        return Array.from(usersById.values()).map((u) => computeRow(u, sessionsById.get(u.id), now));
+        return Array.from(usersById.values()).map((u) => computeRow(u, now));
+    }
+
+    const FILTER_WORD = { active: 'active people', today: 'people seen today', all: 'people', blocked: 'blocked people' };
+    function renderPager() {
+        const info = $('pagerInfo'), more = $('loadMoreBtn'); if (!info || !more) return;
+        const n = usersById.size;
+        if (listState.mode === 'search') {
+            info.textContent = `${n} match${n === 1 ? '' : 'es'} for "${$('userSearch').value.trim()}" (email or name starts with these letters)`;
+            more.hidden = true; return;
+        }
+        const f = $('userFilter').value;
+        const total = counts ? ({ active: counts.activeNow, today: counts.activeToday, all: counts.total, blocked: counts.blocked })[f] : null;
+        info.textContent = `Showing ${n}${total != null ? ' of ' + total : ''} ${FILTER_WORD[f] || 'people'}`;
+        more.hidden = !listState.hasMore;
     }
 
     function renderUsers() {
         if ($('screenApp').hidden) return;
-        const rows = allRows();
-        $('statTotal').textContent = rows.length;
-        $('statActive').textContent = rows.filter((r) => r.status === 'active').length;
-        $('statBlocked').textContent = rows.filter((r) => r.status === 'blocked').length;
-        $('statDevices').textContent = rows.reduce((sum, r) => sum + r.devices.length, 0);
-
-        const q = $('userSearch').value.trim().toLowerCase();
-        const f = $('userFilter').value;
         const maxDevices = parseInt(settings.maxSessions, 10) || 2;
-        const shown = rows
-            .filter((r) => (f === 'all' || r.status === f))
-            .filter((r) => !q || (r.u.email || '').toLowerCase().includes(q) || (r.u.displayName || '').toLowerCase().includes(q))
-            .sort((a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (b.lastSeen - a.lastSeen));
-
-        $('usersBody').innerHTML = shown.length
-            ? shown.map((r) => rowHtml(r, maxDevices)).join('')
-            : `<tr><td colspan="7"><div class="empty">${rows.length ? 'No one matches this search or filter.' : 'No users yet — people appear here after they open the presenter once.'}</div></td></tr>`;
+        let rows = allRows();
+        if (listState.mode === 'search') rows = rows.sort((a, b) => b.lastSeen - a.lastSeen);
+        $('usersBody').innerHTML = rows.length
+            ? rows.map((r) => rowHtml(r, maxDevices)).join('')
+            : `<tr><td colspan="7"><div class="empty">${listState.mode === 'search' ? 'No one found. Search matches the START of an email or name.' : ($('userFilter').value === 'active' ? 'Nobody has used the presenter in the last 40 minutes. Choose "All people" to see everyone.' : 'Nobody here yet.')}</div></td></tr>`;
+        renderPager();
     }
-    $('refreshUsersBtn').addEventListener('click', loadPeople);
-    $('userSearch').addEventListener('input', renderUsers);
-    $('userFilter').addEventListener('change', renderUsers);
+    $('refreshUsersBtn').addEventListener('click', refreshAll);
+    $('loadMoreBtn').addEventListener('click', () => loadList(false));
+    $('userFilter').addEventListener('change', () => { $('userSearch').value = ''; loadList(true); });
+    let searchTimer = null;
+    $('userSearch').addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => loadList(true), 600);
+    });
 
     // ---------- per-person actions ----------
     async function clearSessions(uid, reason) {
@@ -296,10 +436,11 @@ function startDashboard(config) {
             if (action === 'signout') {
                 if (!confirm(`Sign ${label} out of all their devices?`)) return;
                 await clearSessions(uid, 'admin');
+                await updateDoc(doc(db, 'users', uid), { deviceCount: 0 });
                 toast(`${label} was signed out.`); await refreshOne(uid);
             } else if (action === 'block') {
                 if (!confirm(`Block ${label}? They will be signed out now and can't sign back in until you unblock them.`)) return;
-                await updateDoc(doc(db, 'users', uid), { blocked: true, blockedAt: serverTimestamp(), blockedBy: adminUser.email });
+                await updateDoc(doc(db, 'users', uid), { blocked: true, blockedAt: serverTimestamp(), blockedBy: adminUser.email, deviceCount: 0 });
                 await clearSessions(uid, 'blocked');
                 toast(`${label} is blocked.`); await refreshOne(uid);
             } else if (action === 'unblock') {
@@ -367,27 +508,34 @@ function startDashboard(config) {
     $('clearBroadcastBtn').addEventListener('click', () => saveSettings({ broadcast: null }, 'Message cleared.'));
 
     $('signOutAllBtn').addEventListener('click', async () => {
-        if (!confirm('Sign EVERYONE out on every device?\n\nThis includes you if you have the presenter open. People can sign straight back in.')) return;
+        if (!confirm('Sign EVERYONE out on every device?\n\nThis includes you if you have the presenter open. People can sign straight back in. It reads and writes one record per person who has ever signed in.')) return;
         try {
-            const ids = Array.from(new Set([...usersById.keys(), ...sessionsById.keys()]));
+            const ss = await getDocs(collection(db, 'sessions')); addReads(Math.max(1, ss.size));
+            const ids = ss.docs.map((d) => d.id);
             for (let i = 0; i < ids.length; i += 400) {
                 const batch = writeBatch(db);
                 ids.slice(i, i + 400).forEach((id) => batch.set(doc(db, 'sessions', id), { activeSessions: [], kickedReason: 'admin', kickedAt: Date.now() }, { merge: true }));
                 await batch.commit();
             }
-            toast(`Signed out ${ids.length} account${ids.length === 1 ? '' : 's'}.`); loadPeople();
+            toast(`Signed out ${ids.length} account${ids.length === 1 ? '' : 's'}. Device counts update as people sign back in.`); refreshAll();
         } catch (err) {
             toast("Couldn't sign everyone out — " + (err.message || err), true);
         }
     });
 
-    // ---------- export ----------
-    $('exportCsvBtn').addEventListener('click', () => {
-        const rows = allRows().sort((a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (b.lastSeen - a.lastSeen));
+    // ---------- export (reads every person once) ----------
+    $('exportCsvBtn').addEventListener('click', async () => {
+        const approx = counts ? counts.total : 'every';
+        if (!confirm(`Export reads every person once (about ${approx} reads of your free daily limit). Continue?`)) return;
+        let all;
+        try { const snap = await getDocs(usersCol()); addReads(Math.max(1, snap.size)); all = snap.docs.map((d) => ({ id: d.id, ...d.data() })); }
+        catch (err) { toast("Couldn't export — " + (err.message || err), true); return; }
+        const now = Date.now();
+        const rows = all.map((u) => computeRow(u, now)).sort((a, b) => (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (b.lastSeen - a.lastSeen));
         if (!rows.length) { toast('No users to export yet.', true); return; }
         const header = ['Name', 'Email', 'Sign-in method', 'Status', 'Devices signed in', 'Last usage', 'Last sign-in', 'Joined'];
         const lines = [header.map(csvCell).join(',')].concat(rows.map((r) => [
-            r.u.displayName || '', r.u.email || '', providerLabel(r.u.providers), STATUS_LABEL[r.status], r.devices.length,
+            r.u.displayName || '', r.u.email || '', providerLabel(r.u.providers), STATUS_LABEL[r.status], Number.isInteger(r.u.deviceCount) ? r.u.deviceCount : '',
             r.lastSeen ? new Date(r.lastSeen).toISOString() : '', toMs(r.u.lastSignIn) ? new Date(toMs(r.u.lastSignIn)).toISOString() : '',
             toMs(r.u.createdAt) ? new Date(toMs(r.u.createdAt)).toISOString() : ''
         ].map(csvCell).join(',')));
