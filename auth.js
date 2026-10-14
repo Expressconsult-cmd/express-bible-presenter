@@ -35,7 +35,8 @@ import {
 const APP_URL = window.location.origin + window.location.pathname;
 
 const DEFAULT_MAX_SESSIONS = 2;      // used until an admin changes it in the dashboard
-const HEARTBEAT_MS = 900000;         // how often "last seen" is refreshed while the presenter is in use (15 min: protects your free Firebase write quota)
+const HEARTBEAT_MS = 1800000;        // how often "last seen" is refreshed while the presenter is in use (30 min: protects your free Firebase write quota)
+const GRACE_MS = 7 * 24 * 3600 * 1000; // if the free daily database limit is used up, someone approved on this browser within 7 days can still open the presenter
 const CACHE_TTL_MS = 600000;         // admin-status / device-limit answers are re-used for 10 min within one browser tab (saves database reads)
 const LOCAL_EMAIL_KEY = 'ebp_auth_pending_email';
 const LOCAL_SESSION_KEY = 'ebp_auth_session_id';
@@ -86,7 +87,20 @@ async function startAuth() {
         setAuthStatus('Setup incomplete: paste your Firebase config into firebase-config.js.', true);
         return;
     }
+    try { await enableAppCheck(initializeApp(firebaseConfig)); } catch (err) { /* App Check is optional */ }
     runAuthModule(firebaseConfig);
+}
+
+// ---- Firebase App Check (optional): proves requests come from the real site, not a copy or a script. Does nothing until a site key is set in firebase-config.js.
+async function enableAppCheck(app) {
+    try {
+        const mod = await import('./firebase-config.js');
+        const siteKey = mod.appCheckSiteKey;
+        if (!siteKey) return;
+        if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') self.FIREBASE_APPCHECK_DEBUG_TOKEN = true; // local testing only: prints a debug token in the console
+        const ac = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-app-check.js');
+        ac.initializeAppCheck(app, { provider: new ac.ReCaptchaV3Provider(siteKey), isTokenAutoRefreshEnabled: true });
+    } catch (err) { console.warn('App Check could not start:', err); }
 }
 
 function runAuthModule(firebaseConfig) {
@@ -270,6 +284,16 @@ function runAuthModule(firebaseConfig) {
     }
     function cacheSet(key, value) { try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), v: value })); } catch (e) { /* ignore */ } }
 
+    // ---- Grace mode: only used when Firebase says the free daily limit is used up ("resource-exhausted").
+    // A person who was fully approved on this browser in the last 7 days is let in instead of being locked out until the limit resets.
+    const GRACE_KEY = 'ebp_grace';
+    function graceSave(uid) { try { localStorage.setItem(GRACE_KEY, JSON.stringify({ uid, t: Date.now() })); } catch (e) { /* ignore */ } }
+    function graceClear() { try { localStorage.removeItem(GRACE_KEY); } catch (e) { /* ignore */ } }
+    function graceOk(uid) {
+        try { const o = JSON.parse(localStorage.getItem(GRACE_KEY)); return !!(o && o.uid === uid && Date.now() - o.t < GRACE_MS); } catch (e) { return false; }
+    }
+    function isQuotaErr(err) { return !!err && (err.code === 'resource-exhausted' || /quota/i.test(String(err.message || ''))); }
+
     async function checkIsAdmin(user) {
         if (!user.email) return false;
         const key = 'ebp_cache_admin_' + user.uid, hit = cacheGet(key);
@@ -295,26 +319,42 @@ function runAuthModule(firebaseConfig) {
             snap = await getDoc(userRef);
         } catch (err) {
             console.error('Reading users/' + user.uid + ' failed:', err);
-            return { ok: false, message: `Couldn't read your profile — [${err.code || 'error'}] ${err.message || err}` };
+            return { ok: false, quota: isQuotaErr(err), message: `Couldn't read your profile — [${err.code || 'error'}] ${err.message || err}` };
         }
         if (snap.exists()) {
             if (snap.data().blocked === true) return { ok: false, message: 'This account has been blocked by the administrator.' };
-            try {
-                await updateDoc(userRef, profile);
-            } catch (err) {
-                console.error('Updating users/' + user.uid + ' failed:', err);
-                return { ok: false, message: `Couldn't update your profile — [${err.code || 'error'}] ${err.message || err}` };
-            }
+            // The profile itself is refreshed later (finishProfile), together with the device count, in ONE write.
+            return { ok: true, existing: snap.data(), profile };
         } else {
             try {
-                await setDoc(userRef, { ...profile, createdAt: Date.parse(meta.creationTime) || Date.now(), blocked: false });
+                await setDoc(userRef, { ...profile, createdAt: Date.parse(meta.creationTime) || Date.now(), blocked: false, deviceCount: 0 });
             } catch (err) {
                 console.error('Creating users/' + user.uid + ' failed:', err);
                 if (err.code === 'permission-denied') return { ok: false, message: 'New sign-ups are currently closed. Please contact the administrator.' };
-                return { ok: false, message: `Couldn't create your profile — [${err.code || 'error'}] ${err.message || err}` };
+                return { ok: false, quota: isQuotaErr(err), message: `Couldn't create your profile — [${err.code || 'error'}] ${err.message || err}` };
             }
         }
-        return { ok: true };
+        return { ok: true, existing: null, profile };
+    }
+
+    // Saves the profile + "last seen" + how many devices this person has signed in, in one write.
+    // Skipped when nothing changed and they were seen in the last 10 minutes (a quick page reload), which saves a write.
+    async function finishProfile(user, access, deviceCount) {
+        const userRef = doc(db, 'users', user.uid);
+        const p = access.profile, ex = access.existing;
+        if (ex) {
+            const seen = ex.lastSeen && typeof ex.lastSeen.toMillis === 'function' ? ex.lastSeen.toMillis() : 0;
+            const same = ex.deviceCount === deviceCount && ex.email === p.email && ex.displayName === p.displayName
+                && ex.photoURL === p.photoURL && JSON.stringify(ex.providers || []) === JSON.stringify(p.providers);
+            if (same && seen && Date.now() - seen < 600000) return { ok: true };
+        }
+        try {
+            await updateDoc(userRef, { ...p, deviceCount });
+            return { ok: true };
+        } catch (err) {
+            console.error('Updating users/' + user.uid + ' failed:', err);
+            return { ok: false, quota: isQuotaErr(err), message: `Couldn't update your profile — [${err.code || 'error'}] ${err.message || err}` };
+        }
     }
 
     async function readMaxSessions() {
@@ -338,6 +378,7 @@ function runAuthModule(firebaseConfig) {
             window.localStorage.setItem(LOCAL_SESSION_KEY, sessionId);
         }
         const sessionRef = doc(db, 'sessions', uid);
+        let count = 1;
         await runTransaction(db, async (tx) => {
             const snap = await tx.get(sessionRef);
             let sessions = (snap.exists() && snap.data().activeSessions) || [];
@@ -345,21 +386,25 @@ function runAuthModule(firebaseConfig) {
             sessions.push({ sessionId, createdAt: Date.now(), device: describeDevice() });
             sessions.sort((a, b) => b.createdAt - a.createdAt); // newest first
             sessions = sessions.slice(0, maxSessions);          // evict anything older than the limit
+            count = sessions.length;
             tx.set(sessionRef, { activeSessions: sessions, kickedReason: '' }, { merge: true });
         });
-        return sessionId;
+        return { sessionId, count };
     }
 
     async function releaseSession(uid, sessionId) {
         if (!uid || !sessionId) return;
         try {
             const sessionRef = doc(db, 'sessions', uid);
+            let remaining = null;
             await runTransaction(db, async (tx) => {
                 const snap = await tx.get(sessionRef);
                 if (!snap.exists()) return;
                 const sessions = (snap.data().activeSessions || []).filter(s => s.sessionId !== sessionId);
+                remaining = sessions.length;
                 tx.set(sessionRef, { activeSessions: sessions }, { merge: true });
             });
+            if (remaining !== null) updateDoc(doc(db, 'users', uid), { deviceCount: remaining }).catch(() => { /* best-effort */ });
         } catch (err) { /* best-effort cleanup only */ }
     }
 
@@ -367,6 +412,7 @@ function runAuthModule(firebaseConfig) {
     async function forceSignOut(message) {
         if (forcedOut) return;
         forcedOut = true;
+        graceClear();
         setAuthStatus(message, true);
         showAuthOverlay();
         try { await signOut(auth); } catch (err) { /* ignore */ }
@@ -422,9 +468,18 @@ function runAuthModule(firebaseConfig) {
     async function doSignOut() {
         const user = auth.currentUser;
         const sessionId = window.localStorage.getItem(LOCAL_SESSION_KEY);
+        graceClear();
         if (user) await releaseSession(user.uid, sessionId);
         window.localStorage.removeItem(LOCAL_SESSION_KEY);
         await signOut(auth);
+    }
+
+    // Opens the presenter without the database (limit used up). No listeners or heartbeat are started, so nothing keeps failing.
+    function enterGrace() {
+        setAuthStatus('');
+        hideAuthOverlay();
+        const b = $('appSignOutBtn'); if (b) b.style.display = '';
+        console.warn('Free database limit reached: opened in grace mode (device limit and live block checks resume after the daily reset).');
     }
 
     onAuthStateChanged(auth, async (user) => {
@@ -444,15 +499,26 @@ function runAuthModule(firebaseConfig) {
         try {
             currentIsAdmin = await checkIsAdmin(user);
             const access = await syncProfileAndCheckAccess(user);
-            if (!access.ok) { await forceSignOut(access.message); return; }
+            if (!access.ok) {
+                if (access.quota && graceOk(user.uid)) { enterGrace(); return; }
+                await forceSignOut(access.message); return;
+            }
             const maxSessions = await readMaxSessions();
-            const sessionId = await registerSession(user.uid, maxSessions);
+            const reg = await registerSession(user.uid, maxSessions);
+            const sessionId = reg.sessionId;
+            const fin = await finishProfile(user, access, reg.count);
+            if (!fin.ok) {
+                if (fin.quota && graceOk(user.uid)) { enterGrace(); return; }
+                await forceSignOut(fin.message); return;
+            }
             startWatchers(user, sessionId);
             startHeartbeat(user.uid);
+            graceSave(user.uid);
             setAuthStatus('');
             hideAuthOverlay();
             if (signOutBtn) signOutBtn.style.display = '';
         } catch (err) {
+            if (isQuotaErr(err) && graceOk(user.uid)) { enterGrace(); return; }
             setAuthStatus(`Signed in, but couldn't finish setting up this session — [${err.code || 'error'}] ${err.message || err}`, true);
         }
     });
