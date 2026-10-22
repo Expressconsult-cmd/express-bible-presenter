@@ -546,9 +546,9 @@
         @keyframes ebpTransFade { from { opacity: 0; } to { opacity: 1; } }
         @keyframes ebpTransSlide { from { opacity: 0; transform: translateX(18%); } to { opacity: 1; transform: translateX(0); } }
         @keyframes ebpTransZoom { from { opacity: 0; transform: scale(0.72); } to { opacity: 1; transform: scale(1); } }
-        .ebp-transition-fade { animation: ebpTransFade 0.85s ease both; }
-        .ebp-transition-slide { animation: ebpTransSlide 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; }
-        .ebp-transition-zoom { animation: ebpTransZoom 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+        .ebp-transition-fade { animation: ebpTransFade 0.85s ease both; animation-duration: var(--ebp-tms, 0.85s); }
+        .ebp-transition-slide { animation: ebpTransSlide 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; animation-duration: var(--ebp-tms, 0.75s); }
+        .ebp-transition-zoom { animation: ebpTransZoom 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; animation-duration: var(--ebp-tms, 0.7s); }
 
         .flier-graphic-layer {
             position: absolute;
@@ -1281,15 +1281,15 @@
 @keyframes ebpSlBlur { from { opacity: 0; filter: blur(28px); } to { opacity: 1; filter: blur(0); } }
 @keyframes ebpSlFlip { from { opacity: 0; transform: perspective(1400px) rotateY(88deg); } to { opacity: 1; transform: perspective(1400px) rotateY(0); } }
 @keyframes ebpSlWipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
-.ebp-sl-fade { animation: ebpSlFade 0.9s ease both; }
-.ebp-sl-left { animation: ebpSlLeft 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-.ebp-sl-right { animation: ebpSlRight 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-.ebp-sl-up { animation: ebpSlUp 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-.ebp-sl-zoomin { animation: ebpSlZoomIn 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-.ebp-sl-zoomout { animation: ebpSlZoomOut 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-.ebp-sl-blur { animation: ebpSlBlur 0.9s ease both; }
-.ebp-sl-flip { animation: ebpSlFlip 0.9s ease both; }
-.ebp-sl-wipe { animation: ebpSlWipe 0.8s ease both; }
+.ebp-sl-fade { animation: ebpSlFade 0.9s ease both; animation-duration: var(--ebp-tms, 0.9s); }
+.ebp-sl-left { animation: ebpSlLeft 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+.ebp-sl-right { animation: ebpSlRight 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+.ebp-sl-up { animation: ebpSlUp 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+.ebp-sl-zoomin { animation: ebpSlZoomIn 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+.ebp-sl-zoomout { animation: ebpSlZoomOut 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+.ebp-sl-blur { animation: ebpSlBlur 0.9s ease both; animation-duration: var(--ebp-tms, 0.9s); }
+.ebp-sl-flip { animation: ebpSlFlip 0.9s ease both; animation-duration: var(--ebp-tms, 0.9s); }
+.ebp-sl-wipe { animation: ebpSlWipe 0.8s ease both; animation-duration: var(--ebp-tms, 0.8s); }
 .slide-row { display:flex; align-items:center; gap:0.45rem; padding:0.25rem 0.4rem; border:1px solid var(--bg-accent); border-radius:6px; background: var(--bg-main); cursor:pointer; }
 .slide-row.is-current { border-color: var(--accent-primary); background: rgba(56,189,248,0.12); }
 .slide-row img { width:54px; height:32px; object-fit:cover; border-radius:3px; flex-shrink:0; background:#000; }
