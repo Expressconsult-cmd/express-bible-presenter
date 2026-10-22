@@ -363,7 +363,7 @@ function startDashboard(config) {
     async function loadProgress() {
         try {
             await saveProgress();
-            const snap = await getDocs(query(collection(db, 'stats'), orderBy('date', 'desc'), limit(14)));
+            const snap = await getDocs(query(collection(db, 'stats'), orderBy('date', 'desc'), limit(30)));
             addReads(Math.max(1, snap.size));
             const rows = snap.docs.map((d) => d.data());
             $('progressBody').innerHTML = rows.length ? rows.map((r) =>
@@ -514,11 +514,13 @@ function startDashboard(config) {
         $('ctlMaintenance').checked = maintenance;
         setIfIdle($('ctlMaxDevices'), maxDevices);
         setIfIdle($('ctlMaintenanceMsg'), settings.maintenanceMessage || '');
+        setIfIdle($('ctlTelegramUrl'), settings.telegramUrl || '');
         $('settingsSummary').innerHTML =
             `<span class="chip ${maintenance ? 'on' : ''}">Maintenance: <b>${maintenance ? 'LOCKED' : 'off'}</b></span>` +
             `<span class="chip ${signups ? '' : 'on'}">Sign-ups: <b>${signups ? 'open' : 'CLOSED'}</b></span>` +
             `<span class="chip">Devices per account: <b>${maxDevices}</b></span>` +
-            `<span class="chip">Message: <b>${b && b.text ? 'showing' : 'none'}</b></span>`;
+            `<span class="chip">Message: <b>${b && b.text ? 'showing' : 'none'}</b></span>` +
+            `<span class="chip ${settings.telegramUrl ? '' : 'on'}">Telegram button: <b>${settings.telegramUrl ? 'showing' : 'hidden'}</b></span>`;
         const now = $('broadcastNow');
         if (b && b.text) { now.hidden = false; now.textContent = 'Currently showing: ' + b.text; } else { now.hidden = true; now.textContent = ''; }
     }
@@ -531,6 +533,15 @@ function startDashboard(config) {
         if (!(n >= 1 && n <= 10)) { toast('Enter a number from 1 to 10.', true); return; }
         saveSettings({ maxSessions: n }, `Each account can now be signed in on ${n} device${n > 1 ? 's' : ''}. Applies from each person's next sign-in.`);
     });
+    const tgOk = (u) => /^https:\/\/(t\.me|telegram\.me)\/\S+$/i.test(u);
+    $('saveTelegramBtn').addEventListener('click', () => {
+        const u = $('ctlTelegramUrl').value.trim();
+        if (!u) { saveSettings({ telegramUrl: '' }, 'Telegram button hidden.'); return; }
+        if (!tgOk(u)) { toast('Use a Telegram link that starts with https://t.me/ or https://telegram.me/', true); return; }
+        saveSettings({ telegramUrl: u }, 'Telegram link saved. It shows in the presenter for everyone signed in.');
+    });
+    $('clearTelegramBtn').addEventListener('click', () => { $('ctlTelegramUrl').value = ''; saveSettings({ telegramUrl: '' }, 'Telegram button hidden.'); });
+    $('testTelegramBtn').addEventListener('click', () => { const u = $('ctlTelegramUrl').value.trim(); if (!tgOk(u)) { toast('Type a valid https://t.me/… link first.', true); return; } window.open(u, '_blank', 'noopener'); });
     $('sendBroadcastBtn').addEventListener('click', async () => {
         const text = $('ctlBroadcast').value.trim();
         if (!text) { toast('Type a message first.', true); return; }
