@@ -55,6 +55,8 @@
     .meter b { color: var(--ok); margin: 0 .25rem; }
     .pager { display: flex; justify-content: space-between; align-items: center; gap: .6rem; margin-top: .8rem; font-size: .78rem; color: var(--muted); flex-wrap: wrap; }
     #progressPanel { margin-bottom: 1.25rem; }
+    #progressPanel .table-wrap { max-height: 285px; overflow-y: auto; }   /* about 5 days tall; older days scroll */
+    #progressPanel thead th { position: sticky; top: 0; z-index: 1; background: var(--panel, #0f172a); }
     .stat.ok .n { color: var(--ok); } .stat.bad .n { color: var(--bad); } .stat.accent .n { color: var(--accent-2); }
     .grid { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(300px, 1fr); gap: 1.25rem; align-items: start; }
     @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
@@ -166,7 +168,7 @@
     </section>
 
     <section class="panel" id="progressPanel">
-        <h2>Progress <span class="muted small" style="font-weight:400">— saved once a day when you open this page (last 14 days)</span></h2>
+        <h2>Progress <span class="muted small" style="font-weight:400">— saved once a day when you open this page (last 30 days — scroll to see older days)</span></h2>
         <div class="table-wrap"><table>
             <thead><tr><th>Day</th><th>Total users</th><th>New that day</th><th>Active that day</th><th>Peak active at once</th></tr></thead>
             <tbody id="progressBody"></tbody>
@@ -243,6 +245,17 @@
             </div>
 
             <div class="ctl">
+                <h3>Telegram community link</h3>
+                <p>Shows a blue "Join" Telegram button at the top of the presenter for everyone signed in. Paste your group or channel link (it must start with https://t.me/ or https://telegram.me/). Leave empty and save to hide the button. You can change it any time.</p>
+                <div class="row"><input type="url" id="ctlTelegramUrl" placeholder="https://t.me/yourgroup" style="flex:1; min-width:0"></div>
+                <div class="row" style="margin-top:.5rem">
+                    <button id="saveTelegramBtn" class="btn btn-primary" type="button">Save link</button>
+                    <button id="testTelegramBtn" class="btn" type="button">Test link</button>
+                    <button id="clearTelegramBtn" class="btn" type="button">Remove button</button>
+                </div>
+            </div>
+
+            <div class="ctl">
                 <h3>Sign out everyone</h3>
                 <p>Immediately signs every person out on every device. They can sign straight back in. This also signs you out of the presenter if you have it open.</p>
                 <button id="signOutAllBtn" class="btn btn-danger" type="button">Sign out all users</button>
@@ -253,6 +266,6 @@
 </div>
 
 <div id="toast"></div>
-<script type="module" src="admin.js"></script>
+<script type="module" src="admin.js?v=3"></script>
 </body>
 </html>
