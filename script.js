@@ -100,6 +100,21 @@
         let activeRemoteDataConnections = [];
         let peerClientConnection = null;
         const obsBroadcastChannel = new BroadcastChannel('obs_presenter_live');
+        // OBS feed: lets the OBS browser source show a lower third while the projector shows full screen. Only the OBS page acts on it.
+        let obsFeedCfg = { mode: 'same', pos: 'bottom', nx: 0, ny: 0, tpl: 'dash', fs: 'medium' };
+        try { const c = JSON.parse(localStorage.getItem('ebp_obs_feed') || 'null'); if (c && typeof c === 'object') obsFeedCfg = Object.assign(obsFeedCfg, c); } catch (e) {}
+        function obsFeedPayload() {
+            const c = obsFeedCfg; let tpl = 'none', style = {};
+            try {
+                if (c.mode === 'lt' && c.tpl && c.tpl !== 'dash') {   // the template chosen for OBS in the OBS feed box
+                    if (c.tpl !== 'none' && LTT[c.tpl]) { tpl = c.tpl; style = Object.assign({}, LTT[c.tpl].d, lttCustom[c.tpl] || {}); }
+                } else if (c.mode === 'lt') {
+                    if (lttActive(effLive())) { tpl = effLive().ltTemplate; style = effLive().ltStyle || {}; }
+                    else { const last = lttLoad('ebpLtLast', 'none'); if (last && last !== 'plain' && LTT[last]) { tpl = last; style = Object.assign({}, LTT[last].d, lttCustom[last] || {}); } }
+                }
+            } catch (e) {}
+            return { mode: c.mode, pos: c.pos, nx: +c.nx || 0, ny: +c.ny || 0, fs: c.fs || 'medium', tpl, style };
+        }
 
         // Dynamic State Engine Setup
         let isListening = false;
@@ -107,6 +122,8 @@
         let activeChapterVerses = []; 
         let generatedLyricSlides = [];
         let obsWindowRef = null;
+        let frozenLiveSnap = null; // copy of the live scene taken when Freeze is switched on; OBS / remote keep receiving this while frozen
+        const effLive = () => (isLiveFrozen && frozenLiveSnap) ? frozenLiveSnap : liveState;
         let isLiveFrozen = false; // FREEZE: when true, Live/OBS/Projector output is locked and ignores Send Live
 
         // CUSTOM HOTKEYS: optional, per-feature, user-assignable — like OBS hotkeys
@@ -234,6 +251,8 @@
 
         // DISPLAY TRANSITION STYLE (interface-only setting; the projected canvas colors are never affected)
         let displayTransitionStyle = "none";
+        let displayTransitionMs = 0; // 0 = each transition's own default speed
+        try { displayTransitionMs = parseInt(localStorage.getItem('ebp_display_transition_ms') || '0', 10) || 0; } catch (e) {}
         try {
             const savedTransitionStyle = localStorage.getItem('ebp_display_transition');
             if (savedTransitionStyle) displayTransitionStyle = savedTransitionStyle;
@@ -350,7 +369,7 @@
                 const baseHref = window.location.origin + window.location.pathname;
                 
                 document.getElementById('obsDockLinkInput').value = `${baseHref}?sessionToken=${id}`;
-                document.getElementById('obsBrowserSourceInput').value = `${baseHref}?mode=obs&sessionToken=${id}`;
+                document.getElementById('obsBrowserSourceInput').value = `${baseHref}?mode=obs&sessionToken=${id}&v=45`; // &v= makes OBS fetch the newest page instead of its cached copy
 
                 document.getElementById('statusText').innerText = "System Ready";
                 document.getElementById('statusDot').className = "status-dot active";
@@ -396,9 +415,10 @@
                 chapter: currentChapter,
                 verse: currentVerse,
                 previewState: previewState,
-                liveState: liveState,
+                liveState: effLive(),
                 importedAssetsLibrary: importedAssetsLibrary, 
                 cachedLogoDataUrl: cachedLogoDataUrl,
+                obsFeed: obsFeedPayload(),
                 overlay: (typeof ovPayload === 'function') ? ovPayload() : undefined
             };
             activeRemoteDataConnections.forEach(conn => {
@@ -967,7 +987,11 @@ function updateMediaPdfNavUI() {
     if (!wrap || !indicator) return;
     const showingPaged = previewState.displayMode === 'media' && (previewState.mediaKind === 'pdf' || previewState.mediaKind === 'pptx') && previewState.mediaPdfPageCount > 0;
     wrap.style.display = showingPaged ? '' : 'none';
-    if (showingPaged) indicator.innerText = `${previewState.mediaKind === 'pptx' ? 'Slide' : 'Page'} ${previewState.mediaPdfPage} / ${previewState.mediaPdfPageCount}`;
+    if (showingPaged) {
+        let t = `${previewState.mediaKind === 'pptx' ? 'Slide' : 'Page'} ${previewState.mediaPdfPage} / ${previewState.mediaPdfPageCount}`;
+        if (pagedRange) { const i = pagedRange.indexOf(previewState.mediaPdfPage); t += ` · ${i + 1 || '–'} of ${pagedRange.length} chosen`; }
+        indicator.innerText = t;
+    }
 }
 
 // Text is chosen (double-click / arrows / Enter) -> media steps aside automatically instead of overlaying.
@@ -1004,8 +1028,12 @@ function showMedia(id) {
     if (!m) return;
     if (typeof slidesNoteExternalChange === 'function') slidesNoteExternalChange();
     previewState.slideTransition = ''; previewState.slidePrevUrl = '';
-    if (m.kind === 'pdf') { showPdfMediaPage(m, 1); return; }
-    if (m.kind === 'pptx') { showPptxMediaPage(m, 1); return; }
+    if (m.kind === 'pdf' || m.kind === 'pptx') {
+        if (previewState.mediaPdfId !== m.id) { pagedRange = null; const ri = document.getElementById('mediaPageRange'); if (ri) ri.value = ''; }
+        const p = applyPageRange(m, (document.getElementById('mediaPageRange') || {}).value);
+        if (m.kind === 'pdf') showPdfMediaPage(m, p); else showPptxMediaPage(m, p);
+        return;
+    }
     pauseAllMasterVideosExcept(m.kind === 'video' ? m.url : null);
     Object.assign(previewState, { mediaUrl: m.url, mediaKind: m.kind, mediaName: m.name, displayMode: 'media', mediaPdfId: '', mediaPdfPage: 1, mediaPdfPageCount: 0 });
     const entry = masterVideoRegistry.get(m.url);
@@ -1070,8 +1098,45 @@ function navigatePagedMedia(direction) {
     if (!previewState.mediaPdfId) return;
     const m = mediaLibrary.find(x => x.id === previewState.mediaPdfId);
     if (!m) return;
-    if (m.kind === 'pdf') showPdfMediaPage(m, previewState.mediaPdfPage + direction);
-    else if (m.kind === 'pptx') showPptxMediaPage(m, previewState.mediaPdfPage + direction);
+    let target = previewState.mediaPdfPage + direction;
+    if (pagedRange && pagedRange.length) {   // only the chosen pages
+        const cur = previewState.mediaPdfPage;
+        const cand = direction > 0 ? pagedRange.filter(p => p > cur) : pagedRange.filter(p => p < cur);
+        if (!cand.length) return;
+        target = direction > 0 ? cand[0] : cand[cand.length - 1];
+    }
+    if (m.kind === 'pdf') showPdfMediaPage(m, target);
+    else if (m.kind === 'pptx') showPptxMediaPage(m, target);
+}
+
+// Page picker: "3" = start from page 3 and carry on; "1,3,5-9" = show only those pages (Next/Prev skip the rest).
+let pagedRange = null;
+function parsePageRange(str, max) {
+    str = (str || '').trim(); if (!str) return { all: true };
+    if (/^\d+$/.test(str)) return { start: Math.max(1, Math.min(+str, max || 9999)) };
+    const set = new Set();
+    str.split(/[\s,;]+/).filter(Boolean).forEach(tok => {
+        const mm = tok.match(/^(\d+)\s*[-–:]\s*(\d+)$/);
+        if (mm) { let a = +mm[1], b = +mm[2]; if (a > b) [a, b] = [b, a]; for (let p = a; p <= b && p - a < 2000; p++) set.add(p); }
+        else if (/^\d+$/.test(tok)) set.add(+tok);
+    });
+    let list = [...set].sort((x, y) => x - y); if (max) list = list.filter(p => p <= max);
+    return list.length ? { list } : { bad: true };
+}
+function applyPageRange(m, text) {   // returns the page to open first
+    const max = (previewState.mediaPdfId === m.id && previewState.mediaPdfPageCount) || 0;
+    const r = parsePageRange(text, max);
+    pagedRange = null;
+    if (r.bad) { const st = document.getElementById('mediaStatus'); if (st) st.innerText = 'Pages: use a number (3) or a list like 1,3,5-9'; return 1; }
+    if (r.start) return r.start;
+    if (r.list) { pagedRange = r.list.length > 1 ? r.list : null; return r.list[0]; }
+    return 1;
+}
+function goPageRange() {
+    const m = mediaLibrary.find(x => x.id === (previewState.mediaPdfId || document.getElementById('mediaLibraryDropdown').value));
+    if (!m || (m.kind !== 'pdf' && m.kind !== 'pptx')) return;
+    const p = applyPageRange(m, document.getElementById('mediaPageRange').value);
+    if (m.kind === 'pdf') showPdfMediaPage(m, p); else showPptxMediaPage(m, p);
 }
 
 // ===================== PPTX MEDIA (PowerPoint files — shown slide by slide) =====================
@@ -1235,11 +1300,20 @@ function computeSceneContentSig(st) {
 }
 
 // Detaches layers worth keeping BEFORE the canvas is rewritten, so they can be put back as-is.
+// Replaces a canvas's contents but leaves the running overlays (banner / name tag / dashboard monitor) attached in place.
+// Detaching and re-attaching a node restarts its CSS animation, which made a scrolling banner start over on every verse change.
+function ovSetCanvasHtml(el, html) {
+    const keep = Array.from(el.querySelectorAll(':scope > .ov-monitor, :scope > .ov-scene, :scope > .canvas-announcement-banner'));
+    if (!keep.length) { el.innerHTML = html; return; }
+    Array.from(el.childNodes).forEach(n => { if (!keep.includes(n)) n.remove(); });
+    const t = document.createElement('div'); t.innerHTML = html;
+    while (t.firstChild) el.insertBefore(t.firstChild, keep[0]);
+}
 function takeReusableLayers(container) {
     const kept = new Map();
     container.querySelectorAll(':scope > [data-layer-key]').forEach(node => { kept.set(node.dataset.layerKey, node); node.remove(); });
     const banner = container.querySelector(':scope > .canvas-announcement-banner');
-    if (banner) { kept.set('__banner__', banner); banner.remove(); }
+    if (banner) kept.set('__banner__', banner);   // stays attached (see ovSetCanvasHtml) so its animation keeps running
     return kept;
 }
 
@@ -1253,11 +1327,12 @@ function layerFromCache(reusable, key, create) {
 
 // Keeps the running announcement animation (scroll / breathing / fade) alive when its content is unchanged.
 function restoreAnnouncementBanner(container, reusable, annSig) {
-    const fresh = container.querySelector(':scope > .canvas-announcement-banner');
-    if (!fresh) return;
-    const old = reusable && reusable.get('__banner__');
-    if (old && old.dataset.annSig === annSig) fresh.replaceWith(old);
-    else fresh.dataset.annSig = annSig;
+    const all = Array.from(container.querySelectorAll(':scope > .canvas-announcement-banner'));
+    if (!all.length) return;
+    const fresh = all[0], old = all[1];
+    if (!old) { fresh.dataset.annSig = annSig; return; }
+    if (old.dataset.annSig === annSig) fresh.remove();           // unchanged: the running banner stays exactly as it is
+    else { old.remove(); fresh.dataset.annSig = annSig; }
 }
 
 function attachMediaLayer(container, ownerDoc, state, existingMediaEl, reusable) {
@@ -1318,6 +1393,9 @@ async function initMediaEngine() {
     $('mediaHideBtn').addEventListener('click', () => { switchToTextDisplay(); renderPreview(); });
     $('mediaPdfPrevBtn').addEventListener('click', () => navigatePagedMedia(-1));
     $('mediaPdfNextBtn').addEventListener('click', () => navigatePagedMedia(1));
+    $('mediaPageGoBtn').addEventListener('click', goPageRange);
+    $('mediaPageRange').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); goPageRange(); } e.stopPropagation(); });
+    $('mediaPageClearBtn').addEventListener('click', () => { $('mediaPageRange').value = ''; pagedRange = null; updateMediaPdfNavUI(); });
     $('mediaFitSelector').addEventListener('change', (e) => { previewState.mediaFit = e.target.value; renderPreview(); });
     $('mediaDeleteBtn').addEventListener('click', async () => {
         const id = $('mediaLibraryDropdown').value;
@@ -1381,7 +1459,32 @@ async function initMediaEngine() {
                 }
             });
 
+            // TIME'S UP settings (on/off, text, background colour) — remembered on this device
+            try {
+                const tu = JSON.parse(localStorage.getItem('ebp_timeup') || '{}');
+                previewState.timeUpOn = tu.on !== false;
+                previewState.timeUpText = tu.text || "TIME'S UP";
+                previewState.timeUpBg = tu.bg || '#dc2626';
+            } catch (e) { previewState.timeUpOn = true; previewState.timeUpText = "TIME'S UP"; previewState.timeUpBg = '#dc2626'; }
+            const tuOn = document.getElementById('timeUpOnCheck'), tuText = document.getElementById('timeUpTextInput'),
+                  tuPreset = document.getElementById('timeUpBgPreset'), tuColor = document.getElementById('timeUpBgColor'),
+                  tuTest = document.getElementById('timeUpTestBtn');
+            if (tuOn && tuText && tuPreset && tuColor) {
+                tuOn.checked = previewState.timeUpOn; tuText.value = previewState.timeUpText; tuColor.value = /^#[0-9a-f]{6}$/i.test(previewState.timeUpBg) ? previewState.timeUpBg : '#dc2626';
+                const saveTu = () => {
+                    previewState.timeUpOn = tuOn.checked; previewState.timeUpText = tuText.value.trim() || "TIME'S UP";
+                    try { localStorage.setItem('ebp_timeup', JSON.stringify({ on: previewState.timeUpOn, text: previewState.timeUpText, bg: previewState.timeUpBg })); } catch (e) {}
+                    if (previewState.timeUpShown) { renderPreview(); transmitStatePacketToRemoteClients(); }
+                };
+                tuOn.addEventListener('change', saveTu);
+                tuText.addEventListener('input', saveTu);
+                tuPreset.addEventListener('change', () => { if (tuPreset.value) { previewState.timeUpBg = tuPreset.value; if (/^#[0-9a-f]{6}$/i.test(tuPreset.value)) tuColor.value = tuPreset.value; saveTu(); } });
+                tuColor.addEventListener('input', () => { previewState.timeUpBg = tuColor.value; tuPreset.value = ''; saveTu(); });
+                tuTest.addEventListener('click', () => setTimeUpShown(!previewState.timeUpShown));
+            }
+
             resetBtn.addEventListener('click', () => {
+                setTimeUpShown(false);
                 pauseTimer();
                 const m = parseInt(minInput.value) || 0;
                 const s = parseInt(secInput.value) || 0;
@@ -1421,8 +1524,36 @@ async function initMediaEngine() {
             updateTimerDisplays();
         }
 
+        // ---- TIME'S UP screen: a bold full-screen message shown on every output when the countdown reaches 00:00 ----
+        // Settings live in previewState (timeUpOn / timeUpText / timeUpBg); timeUpShown is true only while the message is up.
+        function applyTimeUpLayer(root, st) {
+            if (!root) return;
+            let layer = root.querySelector(':scope > .ebp-timeup');
+            if (!st || !st.timeUpShown) { if (layer) layer.remove(); return; }
+            const txt = String(st.timeUpText || "TIME'S UP");
+            if (!layer) {
+                layer = document.createElement('div');
+                layer.className = 'ebp-timeup';
+                layer.style.cssText = 'position:absolute; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; container-type:inline-size; overflow:hidden; text-align:center;';
+                layer.innerHTML = '<span style="color:#fff; font:900 16cqw/1.05 Impact, \'Arial Black\', system-ui, sans-serif; letter-spacing:0.02em; text-shadow:0 0.6cqw 2cqw rgba(0,0,0,0.55); padding:0 3cqw; text-transform:uppercase;"></span>';
+                root.appendChild(layer);
+            }
+            layer.style.background = st.timeUpBg || '#dc2626';
+            const span = layer.firstChild;
+            if (span.textContent !== txt) span.textContent = txt;
+            span.style.fontSize = Math.max(5, Math.min(16, 150 / Math.max(txt.length, 1))) + 'cqw';
+        }
+
+        function setTimeUpShown(on) {
+            if (!!previewState.timeUpShown === !!on) return;
+            previewState.timeUpShown = !!on;
+            renderPreview();
+            transmitStatePacketToRemoteClients();
+        }
+
         function startTimer() {
             const toggleStartBtn = document.getElementById('timerToggleStartBtn');
+            if (countdownValueSeconds > 0) setTimeUpShown(false);
             isTimerActive = true;
             toggleStartBtn.innerText = "Pause";
             toggleStartBtn.style.backgroundColor = "var(--accent-live)";
@@ -1433,6 +1564,7 @@ async function initMediaEngine() {
                     countdownValueSeconds--;
                     updateTimerDisplays();
                     transmitStatePacketToRemoteClients();
+                    if (countdownValueSeconds === 0 && previewState.timeUpOn !== false) setTimeUpShown(true);
                 } else {
                     pauseTimer();
                 }
@@ -1469,8 +1601,8 @@ async function initMediaEngine() {
                 liveOverlay.style.transform = `${liveState.timerPosition === 'timer-center' ? 'translate(-50%, -50%)' : ''} scale(${liveState.timerScale || 1.0})`;
             }
 
-            // Target the projector output window directly
-            if (projectorWindowRef && !projectorWindowRef.closed) {
+            // Target the projector output window directly (not while Freeze is on)
+            if (!isLiveFrozen && projectorWindowRef && !projectorWindowRef.closed) {
                 const projectorOverlay = projectorWindowRef.document.getElementById('directProjectorCanvasOverlayTimer') || projectorWindowRef.document.querySelector('.canvas-timer-node');
                 if (projectorOverlay) {
                     projectorOverlay.className = `canvas-timer-node ${liveState.timerPosition} ${liveState.timerSize} ${liveState.timerVisible ? 'timer-visible' : ''}`;
@@ -1483,7 +1615,7 @@ async function initMediaEngine() {
             }
 
             // Keep the timer on every multi-screen output window ticking too
-            try { updateOutputSlotTimers(); } catch (e) {}
+            if (!isLiveFrozen) { try { updateOutputSlotTimers(); } catch (e) {} }
         }
 
         // LOGO MICRO-SIZING ADJUSTMENT ENGINE
@@ -1816,13 +1948,37 @@ async function initMediaEngine() {
             crimson:  { angle: 135, stops: ['#c94b4b', '#4b134f'] },
             aurora:   { angle: 135, stops: ['#43cea2', '#185a9d'] },
             cosmic:   { angle: 135, stops: ['#1a1a2e', '#16213e', '#0f3460'] },
-            ember:    { angle: 135, stops: ['#8e0e00', '#1f1c18'] }
+            ember:    { angle: 135, stops: ['#8e0e00', '#1f1c18'] },
+            // ---- Rich layered designs (bokeh, smoke, light, 3D-style). [#hex,alpha] tokens get the Opacity slider baked in ----
+            bokehPurple: { label: 'Bokeh · Purple', css: 'radial-gradient(circle at 18% 28%,[#d9a7ff,.55] 0,[#d9a7ff,.25] 5%,[#d9a7ff,0] 6.5%),radial-gradient(circle at 78% 22%,[#ff9ee6,.5] 0,[#ff9ee6,.22] 7%,[#ff9ee6,0] 8.5%),radial-gradient(circle at 62% 68%,[#b69cff,.5] 0,[#b69cff,.2] 9%,[#b69cff,0] 10.5%),radial-gradient(circle at 30% 78%,[#ff7ad9,.4] 0,[#ff7ad9,.18] 6%,[#ff7ad9,0] 7.5%),radial-gradient(circle at 90% 80%,[#e0b0ff,.45] 0,[#e0b0ff,.2] 5%,[#e0b0ff,0] 6.5%),radial-gradient(circle at 8% 70%,[#9b6bff,.4] 0,[#9b6bff,.15] 7%,[#9b6bff,0] 8.5%),radial-gradient(circle at 45% 12%,[#c58bff,.35] 0,[#c58bff,.12] 6%,[#c58bff,0] 7.5%),radial-gradient(ellipse at 50% 55%,[#7a2fc9,.75] 0,[#4a1a7a,.55] 40%,[#1b0833,1] 100%)' },
+            bokehGold: { label: 'Bokeh · Gold', css: 'radial-gradient(circle at 15% 30%,[#ffd27a,.55] 0,[#ffd27a,.22] 5%,[#ffd27a,0] 6.5%),radial-gradient(circle at 75% 25%,[#ffb347,.5] 0,[#ffb347,.2] 7%,[#ffb347,0] 8.5%),radial-gradient(circle at 60% 72%,[#fff0b3,.45] 0,[#fff0b3,.2] 9%,[#fff0b3,0] 10.5%),radial-gradient(circle at 32% 80%,[#ff9a3c,.4] 0,[#ff9a3c,.16] 6%,[#ff9a3c,0] 7.5%),radial-gradient(circle at 92% 70%,[#ffd27a,.4] 0,[#ffd27a,.16] 5%,[#ffd27a,0] 6.5%),radial-gradient(ellipse at 50% 50%,[#8a4b0f,.7] 0,[#4a2406,.7] 45%,[#150a02,1] 100%)' },
+            bokehBlue: { label: 'Bokeh · Blue', css: 'radial-gradient(circle at 20% 30%,[#8fd3ff,.55] 0,[#8fd3ff,.22] 5%,[#8fd3ff,0] 6.5%),radial-gradient(circle at 80% 20%,[#6fa8ff,.5] 0,[#6fa8ff,.2] 7%,[#6fa8ff,0] 8.5%),radial-gradient(circle at 58% 70%,[#a8f0ff,.45] 0,[#a8f0ff,.2] 9%,[#a8f0ff,0] 10.5%),radial-gradient(circle at 28% 80%,[#5a8cff,.4] 0,[#5a8cff,.16] 6%,[#5a8cff,0] 7.5%),radial-gradient(circle at 90% 78%,[#8fd3ff,.4] 0,[#8fd3ff,.16] 5%,[#8fd3ff,0] 6.5%),radial-gradient(ellipse at 50% 50%,[#1f5fb8,.7] 0,[#0d2f66,.7] 45%,[#030b1f,1] 100%)' },
+            bokehRose: { label: 'Bokeh · Rose', css: 'radial-gradient(circle at 18% 32%,[#ffb3c7,.55] 0,[#ffb3c7,.22] 5%,[#ffb3c7,0] 6.5%),radial-gradient(circle at 78% 24%,[#ff7aa2,.5] 0,[#ff7aa2,.2] 7%,[#ff7aa2,0] 8.5%),radial-gradient(circle at 60% 70%,[#ffd0dc,.45] 0,[#ffd0dc,.2] 9%,[#ffd0dc,0] 10.5%),radial-gradient(circle at 30% 80%,[#ff5c8a,.4] 0,[#ff5c8a,.16] 6%,[#ff5c8a,0] 7.5%),radial-gradient(ellipse at 50% 50%,[#a3234f,.7] 0,[#5c1030,.7] 45%,[#1d0510,1] 100%)' },
+            smokePurple: { label: 'Smoke · Purple', css: 'radial-gradient(ellipse 60% 45% at 25% 35%,[#c07bff,.55] 0,[#c07bff,0] 70%),radial-gradient(ellipse 55% 50% at 75% 60%,[#ff6ec7,.4] 0,[#ff6ec7,0] 70%),radial-gradient(ellipse 70% 40% at 50% 85%,[#6a3dff,.5] 0,[#6a3dff,0] 70%),radial-gradient(ellipse 40% 35% at 60% 15%,[#e3b4ff,.35] 0,[#e3b4ff,0] 70%),linear-gradient(160deg,[#2a0b4d,1],[#0d0420,1])' },
+            smokeTeal: { label: 'Smoke · Teal', css: 'radial-gradient(ellipse 60% 45% at 25% 40%,[#2ee6c5,.5] 0,[#2ee6c5,0] 70%),radial-gradient(ellipse 55% 50% at 78% 62%,[#3b8bff,.45] 0,[#3b8bff,0] 70%),radial-gradient(ellipse 60% 40% at 50% 90%,[#00c2a8,.4] 0,[#00c2a8,0] 70%),linear-gradient(160deg,[#06323a,1],[#020f14,1])' },
+            smokeFire: { label: 'Smoke · Fire', css: 'radial-gradient(ellipse 60% 45% at 30% 75%,[#ff7a1a,.6] 0,[#ff7a1a,0] 70%),radial-gradient(ellipse 55% 50% at 75% 60%,[#ff2e63,.45] 0,[#ff2e63,0] 70%),radial-gradient(ellipse 50% 40% at 55% 20%,[#ffb347,.3] 0,[#ffb347,0] 70%),linear-gradient(180deg,[#2b0a0a,1],[#0c0202,1])' },
+            lightRays: { label: 'Light Rays', css: 'conic-gradient(from 200deg at 50% -10%,[#ffffff,0],[#fff3c4,.35],[#ffffff,0] 8%,[#fff3c4,.25] 14%,[#ffffff,0] 20%,[#fff3c4,.3] 27%,[#ffffff,0] 34%,[#fff3c4,.22] 40%,[#ffffff,0] 46%),radial-gradient(ellipse at 50% 0%,[#ffe9a8,.5] 0,[#ffe9a8,0] 55%),linear-gradient(180deg,[#27407a,1],[#0a1330,1])' },
+            heaven: { label: 'Heavenly Glow', css: 'radial-gradient(ellipse 70% 55% at 50% 30%,[#ffffff,.75] 0,[#cfe4ff,.35] 45%,[#cfe4ff,0] 80%),radial-gradient(ellipse 80% 40% at 50% 100%,[#ffd9a0,.5] 0,[#ffd9a0,0] 70%),linear-gradient(180deg,[#4f7fd6,1],[#1c3a7a,1])' },
+            neonGrid: { label: 'Neon Grid', css: 'repeating-linear-gradient(0deg,[#ff3df2,.28] 0,[#ff3df2,.28] 2px,[#ff3df2,0] 2px,[#ff3df2,0] 56px),repeating-linear-gradient(90deg,[#35e0ff,.22] 0,[#35e0ff,.22] 2px,[#35e0ff,0] 2px,[#35e0ff,0] 56px),radial-gradient(ellipse at 50% 100%,[#ff3df2,.5] 0,[#ff3df2,0] 60%),linear-gradient(180deg,[#0a0524,1],[#1a0a48,1])' },
+            orbs3d: { label: '3D · Glass Orbs', css: 'radial-gradient(circle at 24% 36%,[#ffffff,.9] 0,[#ffffff,0] 1.6%),radial-gradient(circle at 22% 34%,[#ffd0ff,.95] 0,[#b05cff,.85] 7%,[#4a1a99,.9] 12%,[#4a1a99,0] 12.6%),radial-gradient(circle at 76% 62%,[#ffffff,.9] 0,[#ffffff,0] 2.4%),radial-gradient(circle at 74% 59%,[#bfe6ff,.95] 0,[#3c8cff,.85] 11%,[#0e2f7a,.9] 18%,[#0e2f7a,0] 18.7%),radial-gradient(circle at 52% 84%,[#ffffff,.85] 0,[#ffffff,0] 1.2%),radial-gradient(circle at 51% 83%,[#ffd6e8,.95] 0,[#ff5fa8,.85] 5%,[#7a1450,.9] 8%,[#7a1450,0] 8.4%),radial-gradient(ellipse at 50% 40%,[#2b1470,1] 0,[#0a0524,1] 100%)' },
+            sphere3d: { label: '3D · Gold Sphere', css: 'radial-gradient(circle at 42% 38%,[#fff6cf,1] 0,[#ffd45c,1] 9%,[#c98a12,1] 19%,[#6b4206,1] 28%,[#6b4206,0] 28.6%),radial-gradient(ellipse 32% 6% at 50% 78%,[#000000,.55] 0,[#000000,0] 100%),radial-gradient(ellipse at 50% 30%,[#3a3a4d,1] 0,[#0d0d14,1] 100%)' },
+            crystal3d: { label: '3D · Crystal', css: 'linear-gradient(115deg,[#ffffff,.16] 0,[#ffffff,0] 28%),linear-gradient(65deg,[#7fe0ff,.28] 20%,[#7fe0ff,0] 45%),linear-gradient(160deg,[#b57cff,0] 40%,[#b57cff,.35] 62%,[#b57cff,0] 82%),linear-gradient(25deg,[#ff7ad9,0] 55%,[#ff7ad9,.28] 78%,[#ff7ad9,0] 92%),linear-gradient(135deg,[#1b2a6b,1],[#0a0f2e,1])' },
+            tunnel3d: { label: '3D · Tunnel', css: 'repeating-radial-gradient(circle at 50% 50%,[#8a5bff,0] 0,[#8a5bff,0] 5%,[#b58cff,.55] 5.6%,[#8a5bff,0] 6.6%,[#8a5bff,0] 9%),radial-gradient(circle at 50% 50%,[#000000,0] 0,[#000000,0] 20%,[#000000,.55] 100%),radial-gradient(circle at 50% 50%,[#6a2bff,.8] 0,[#1d0a52,1] 60%,[#05010f,1] 100%)' },
+            waves3d: { label: '3D · Silk Waves', css: 'linear-gradient(172deg,[#ffffff,0] 28%,[#ffffff,.16] 36%,[#ffffff,0] 46%),linear-gradient(168deg,[#ffffff,0] 46%,[#ffffff,.12] 54%,[#ffffff,0] 66%),linear-gradient(175deg,[#ffffff,0] 62%,[#ffffff,.14] 72%,[#ffffff,0] 84%),linear-gradient(160deg,[#6a2bd9,1],[#c2308f,1] 55%,[#2a0a5c,1])' },
+            carbon: { label: 'Carbon Dark', css: 'radial-gradient(ellipse at 50% 0%,[#ffffff,.12] 0,[#ffffff,0] 60%),repeating-linear-gradient(45deg,[#000000,.25] 0,[#000000,.25] 4px,[#000000,0] 4px,[#000000,0] 8px),linear-gradient(180deg,[#23252b,1],[#0b0c0f,1])' }
         };
         // Builds the gradient CSS for a preset, baking the Opacity slider into each color stop —
         // same visual effect the slider already has on Solid BG and Box Fill.
         function buildPresetBackgroundCss(presetId, opacityPct) {
             const preset = DEFAULT_BG_PRESETS[presetId];
             if (!preset) return '';
+            if (preset.css) {
+                const k = (opacityPct == null ? 100 : Math.max(0, Math.min(100, opacityPct))) / 100;
+                return preset.css.replace(/\[(#[0-9a-fA-F]{6}),([\d.]+)\]/g, (m, hex, a) => {
+                    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+                    return `rgba(${r}, ${g}, ${b}, ${(parseFloat(a) * k).toFixed(3)})`;
+                });
+            }
             const stops = preset.stops.map(hex => hexToRgbaWithOpacity(hex, opacityPct)).join(', ');
             return `linear-gradient(${preset.angle}deg, ${stops})`;
         }
@@ -1861,6 +2017,15 @@ async function initMediaEngine() {
             }
         }
 
+        // Where the reference (e.g. "John 3:16") sits: above/below the text, left/centre/right. Default = below, centred.
+        function refPosStyle(st) {
+            const p = (st && st.refPos) || 'below-center'; const [v, h] = p.split('-');
+            let css = '';
+            if (v === 'above') css += 'order:-1; margin-top:0; margin-bottom:0.8%;';
+            css += h === 'left' ? 'align-self:flex-start; text-align:left;' : h === 'right' ? 'align-self:flex-end; text-align:right;' : 'align-self:center; text-align:center;';
+            return css;
+        }
+
         function buildCanvasDOM(canvasElement, stateObject, assetLibraryContext = importedAssetsLibrary, logoBlobContext = cachedLogoDataUrl, withTransition = false) {
             // Capture any existing background video BEFORE anything rebuilds this canvas's DOM,
             // so playback (position, paused/playing state) survives unrelated text/style changes
@@ -1872,8 +2037,10 @@ async function initMediaEngine() {
             const contentSig = computeSceneContentSig(stateObject);
             const contentChanged = canvasElement.dataset.contentSig !== contentSig;
             canvasElement.dataset.contentSig = contentSig;
-            const transitionClass = (withTransition && contentChanged) ? getDisplayTransitionClass() : '';
+            if (withTransition && contentChanged) canvasElement.dataset.transUntil = String(Date.now() + 1000); // see note in output renderer: hotkeys render twice
+            const transitionClass = (withTransition && (contentChanged || Date.now() < Number(canvasElement.dataset.transUntil || 0))) ? getDisplayTransitionClass() : '';
             const reusableLayers = takeReusableLayers(canvasElement);
+            if (stateObject.transitionMs) canvasElement.style.setProperty('--ebp-tms', stateObject.transitionMs + 'ms'); else canvasElement.style.removeProperty('--ebp-tms');
             canvasElement.style.transition = transitionClass ? 'background-color 0.5s ease' : 'none';
 
             const bgOpacity = stateObject.bgOpacity == null ? 100 : stateObject.bgOpacity;
@@ -1894,7 +2061,7 @@ async function initMediaEngine() {
             const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
             // Nudge only applies in Lower Third. Uses the CSS "translate" property in canvas-width units (cqw), applied
             // identically to the text AND the reference so they always move together, with no limit on distance.
-            const nudgeIsActive = stateObject.layout === 'mode-lowerthird' && (stateObject.textNudgeX || stateObject.textNudgeY);
+            const nudgeIsActive = (stateObject.layout === 'mode-lowerthird' || stateObject.nudgeAny) && (stateObject.textNudgeX || stateObject.textNudgeY);
             const nudgeTransformStyle = nudgeIsActive ? `translate: ${stateObject.textNudgeX || 0}cqw ${stateObject.textNudgeY || 0}cqw;` : '';
             const customFontFamily = stateObject.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
             const customShadow = stateObject.textShadowStyle != null ? stateObject.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)";
@@ -1946,19 +2113,20 @@ async function initMediaEngine() {
                 <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''} ${announcementPosClass} ${announcementEffectClass}" style="${videoAloneHide} background: ${stateObject.announcementBgColor || '#b45309'};">${announcementInner}</div>
             `;
 
-            canvasElement.innerHTML = `
+            ovSetCanvasHtml(canvasElement, `
                 <div class="text-display-box-container ${transitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${nudgeTransformStyle} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
-                <div class="ref-out ${transitionClass}" style="${nudgeTransformStyle} ${stateObject.refVisible === false ? 'display: none !important;' : ''} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
+                <div class="ref-out ${transitionClass}" style="${nudgeTransformStyle} ${refPosStyle(stateObject)} ${stateObject.refVisible === false ? 'display: none !important;' : ''} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
                 <div class="canvas-timer-node ${stateObject.timerPosition || 'timer-top-right'} ${stateObject.timerSize || 'timer-size-medium'} ${stateObject.timerVisible ? 'timer-visible' : ''}" id="${canvasElement.id}OverlayTimer">${stateObject.timerText || '00:00'}</div>
                 ${nameBarHtml}
                 ${announcementHtml}
-            `;
+            `);
 
             restoreAnnouncementBanner(canvasElement, reusableLayers, announcementHtml.trim());
             try { lttApply(canvasElement, stateObject, logoBlobContext, transitionClass); } catch (e) { console.warn('Lower third template:', e); }
             try { ovSceneApply(canvasElement, stateObject); } catch (e) {}
+            try { applyTimeUpLayer(canvasElement, stateObject); } catch (e) {}
 
             // Text stays at the selected size and wraps; this only steps in if wrapped text would actually overflow the frame
             autoFitVerseText(canvasElement);
@@ -2008,6 +2176,7 @@ async function initMediaEngine() {
         // out to the projector, OBS/NDI capture, remote viewers, or any multi-screen output slots
         // until you unfreeze — so a live congregation/stage screen can't be disrupted mid-edit.
         function renderPreview() {
+            previewState.transitionMs = displayTransitionMs;
             const liveCanvas = document.getElementById('liveCanvas');
             if (!liveState.text && !liveState.flierId && !liveState.textBgUrl && !(liveState.displayMode === 'media' && liveState.mediaUrl)) {
                 delete liveCanvas.dataset.contentSig;
@@ -2015,6 +2184,7 @@ async function initMediaEngine() {
                     <div class="placeholder-text">Awaiting Selection...</div>
                     <div class="canvas-timer-node" id="liveTimerOverlay">00:00</div>
                 `;
+                try { applyTimeUpLayer(liveCanvas, liveState); } catch (e) {}
                 updateTimerDisplays();
                 if (!isLiveFrozen) {
                     syncLiveStateToRemoteChannels();
@@ -2646,11 +2816,13 @@ function songTabIsActive() {
             listeningBtn.addEventListener('click', toggleListening);
             document.getElementById('freezeLiveBtn').addEventListener('click', () => {
                 isLiveFrozen = !isLiveFrozen;
+                try { frozenLiveSnap = isLiveFrozen ? JSON.parse(JSON.stringify(liveState)) : null; } catch (e) { frozenLiveSnap = null; }
+                try { ovFrozenOv = isLiveFrozen ? ovPayloadLive() : null; } catch (e) { ovFrozenOv = null; }
                 const btn = document.getElementById('freezeLiveBtn');
                 btn.classList.toggle('toggle-active', isLiveFrozen);
                 btn.innerHTML = isLiveFrozen ? '🔒 Frozen (click to unfreeze)' : '❄ Freeze Live';
                 document.body.classList.toggle('live-is-frozen', isLiveFrozen);
-                if (!isLiveFrozen) renderPreview(); // flush whatever changed while frozen out to every output now
+                if (!isLiveFrozen) { renderPreview(); try { ovRefreshAll(); } catch (e) {} try { updateTimerDisplays(); } catch (e) {} } // flush whatever changed while frozen out to every output now
             });
             document.getElementById('sendToProjectorBtn').addEventListener('click', sendToProjectorAutoDetect);
             document.getElementById('enableExtendedDisplayBtn').addEventListener('click', enableExtendedDisplayDetection);
@@ -2666,6 +2838,88 @@ function songTabIsActive() {
             document.getElementById('nudgeDownBtn').addEventListener('click', () => { previewState.textNudgeY = clampNudge((previewState.textNudgeY || 0) + NUDGE_STEP); renderPreview(); });
             document.getElementById('nudgeLeftBtn').addEventListener('click', () => { previewState.textNudgeX = clampNudge((previewState.textNudgeX || 0) - NUDGE_STEP); renderPreview(); });
             document.getElementById('nudgeRightBtn').addEventListener('click', () => { previewState.textNudgeX = clampNudge((previewState.textNudgeX || 0) + NUDGE_STEP); renderPreview(); });
+            // ---- Move text on the main scene: click ✥ (or hold Ctrl) and drag; green guides + snap to centre; never leaves the screen ----
+            (function () {
+                const cv = document.getElementById('liveCanvas'), btn = document.getElementById('moveTextBtn'), rst = document.getElementById('moveTextResetBtn');
+                if (!cv || !btn) return;
+                const host = cv.parentElement; if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+                const g = document.createElement('div'); g.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:9;display:none';
+                g.innerHTML = '<div class="mg-v" style="position:absolute;width:1px"></div><div class="mg-h" style="position:absolute;height:1px"></div><div class="mg-b" style="position:absolute;border-radius:4px"></div>';
+                host.appendChild(g);
+                const gv = g.querySelector('.mg-v'), gh = g.querySelector('.mg-h'), gb = g.querySelector('.mg-b');
+                let on = false, ctrl = false, drag = null, raf = 0, hideT = 0;
+                const active = () => on || ctrl;
+                const refresh = () => { btn.classList.toggle('toggle-active', on); cv.style.cursor = active() ? 'move' : ''; };
+                btn.addEventListener('click', () => { on = !on; refresh(); });
+                rst.addEventListener('click', () => { previewState.textNudgeX = 0; previewState.textNudgeY = 0; renderPreview(); });
+                window.addEventListener('keydown', e => { if ((e.key === 'Control' || e.key === 'Meta') && !ctrl) { ctrl = true; refresh(); } }, true);
+                window.addEventListener('keyup', e => { if (e.key === 'Control' || e.key === 'Meta') { ctrl = false; refresh(); } }, true);
+                window.addEventListener('blur', () => { ctrl = false; refresh(); });
+                function bounds() {
+                    const out = cv.querySelector('.ltt') || cv.querySelector('.text-out'); if (!out || !out.textContent.trim()) return null;
+                    let r; if (out.classList.contains('ltt')) r = out.getBoundingClientRect(); else { const rg = document.createRange(); rg.selectNodeContents(out); r = rg.getBoundingClientRect(); }
+                    if (r.width < 2) return null;
+                    let L = r.left, T = r.top, R = r.right, B = r.bottom; const rf = cv.querySelector('.ref-out');
+                    if (rf && rf.textContent.trim() && rf.offsetParent) { const q = rf.getBoundingClientRect(); L = Math.min(L, q.left); T = Math.min(T, q.top); R = Math.max(R, q.right); B = Math.max(B, q.bottom); }
+                    return { left: L, top: T, right: R, bottom: B, width: R - L, height: B - T };
+                }
+                function draw(m, c) {
+                    if (!m) { g.style.display = 'none'; return; }
+                    const h = host.getBoundingClientRect(), dx = (m.left + m.width / 2) - (c.left + c.width / 2), dy = (m.top + m.height / 2) - (c.top + c.height / 2), hx = Math.abs(dx) < 1.5, hy = Math.abs(dy) < 1.5;
+                    const col = (hit) => hit ? '#22c55e' : 'rgba(74,222,128,.4)';
+                    gv.style.cssText = `position:absolute;width:1px;left:${c.left - h.left + c.width / 2}px;top:${c.top - h.top}px;height:${c.height}px;background:${col(hx)};${hx ? 'box-shadow:0 0 7px #22c55e' : ''}`;
+                    gh.style.cssText = `position:absolute;height:1px;top:${c.top - h.top + c.height / 2}px;left:${c.left - h.left}px;width:${c.width}px;background:${col(hy)};${hy ? 'box-shadow:0 0 7px #22c55e' : ''}`;
+                    gb.style.cssText = `position:absolute;border-radius:4px;left:${m.left - h.left - 4}px;top:${m.top - h.top - 4}px;width:${m.width + 8}px;height:${m.height + 8}px;border:${(hx || hy) ? '2px solid #22c55e' : '1px dashed rgba(74,222,128,.8)'}`;
+                    g.style.display = 'block';
+                }
+                function place(m0, c, sx, sy) {   // keep the text inside the screen, snap to the centre lines, then draw the guides
+                    const mg = c.width * 0.01;
+                    if (m0.width < c.width - 2 * mg) sx = Math.max(c.left + mg - m0.left, Math.min(c.right - mg - m0.right, sx));
+                    if (m0.height < c.height - 2 * mg) sy = Math.max(c.top + mg - m0.top, Math.min(c.bottom - mg - m0.bottom, sy));
+                    const cx0 = m0.left + m0.width / 2 - (c.left + c.width / 2), cy0 = m0.top + m0.height / 2 - (c.top + c.height / 2);
+                    if (Math.abs(cx0 + sx) < 6) sx = -cx0; if (Math.abs(cy0 + sy) < 6) sy = -cy0;
+                    const r = { left: m0.left + sx, top: m0.top + sy, right: m0.right + sx, bottom: m0.bottom + sy, width: m0.width, height: m0.height };
+                    draw(r, c); return [sx, sy];
+                }
+                cv.addEventListener('pointerdown', e => {
+                    if (!active() || e.button !== 0) return;
+                    const c = cv.getBoundingClientRect();
+                    drag = { x: e.clientX, y: e.clientY, nx: previewState.textNudgeX || 0, ny: previewState.textNudgeY || 0, w: c.width || 1, c, m0: bounds(), moved: false };
+                    try { cv.setPointerCapture(e.pointerId); } catch (x) {}
+                });
+                cv.addEventListener('pointermove', e => {
+                    if (!drag) return; let dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+                    if (!drag.moved && Math.hypot(dx, dy) < 4) return; drag.moved = true; clearTimeout(hideT);
+                    previewState.nudgeAny = true;
+                    drag.last = [dx, dy];
+                    if (!raf) raf = requestAnimationFrame(() => {
+                        raf = 0; if (!drag) return; let [sx, sy] = drag.last;
+                        if (drag.m0) [sx, sy] = place(drag.m0, drag.c, sx, sy);
+                        previewState.textNudgeX = +(drag.nx + sx / drag.w * 100).toFixed(2); previewState.textNudgeY = +(drag.ny + sy / drag.w * 100).toFixed(2);
+                        renderPreview();
+                    });
+                });
+                const end = () => { if (drag && drag.moved) { hideT = setTimeout(() => { g.style.display = 'none'; }, 400); previewState.textNudgeX = +previewState.textNudgeX.toFixed(2); previewState.textNudgeY = +previewState.textNudgeY.toFixed(2); } drag = null; };
+                cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+                // Press E while Move-text is on: re-centre the text on the scene (sideways always; up/down too unless it's a lower third, which keeps its bottom/top position)
+                window.addEventListener('keydown', e => {
+                    if (!on || e.ctrlKey || e.metaKey || e.altKey || String(e.key).toLowerCase() !== 'e') return;
+                    const t = e.target; if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+                    e.preventDefault(); previewState.nudgeAny = true;
+                    for (let i = 0; i < 3; i++) {   // measure -> shift -> re-measure, so the result lands exactly on the centre
+                        const m = bounds(), c = cv.getBoundingClientRect(); if (!m || !c.width) break;
+                        const dx = (c.left + c.width / 2) - (m.left + m.width / 2), dy = (c.top + c.height / 2) - (m.top + m.height / 2);
+                        const doY = previewState.layout !== 'mode-lowerthird';
+                        if (Math.abs(dx) < 0.5 && (!doY || Math.abs(dy) < 0.5)) break;
+                        previewState.textNudgeX = +((previewState.textNudgeX || 0) + dx / c.width * 100).toFixed(2);
+                        if (doY) previewState.textNudgeY = +((previewState.textNudgeY || 0) + dy / c.width * 100).toFixed(2);
+                        renderPreview(); cv.getBoundingClientRect();
+                    }
+                    draw(null);
+                }, true);
+                cv.addEventListener('dblclick', e => { if (active()) { previewState.textNudgeX = 0; previewState.textNudgeY = 0; renderPreview(); } });
+                
+            })();
             document.getElementById('nudgeResetBtn').addEventListener('click', () => { previewState.textNudgeX = 0; previewState.textNudgeY = 0; renderPreview(); });
 
             document.getElementById('fontSizeInput').addEventListener('change', () => {
@@ -2678,6 +2932,7 @@ function songTabIsActive() {
             document.getElementById('bgTransparentCheckbox').addEventListener('change', (e) => { previewState.bgTransparent = e.target.checked; renderPreview(); });
             document.getElementById('textColorPicker').addEventListener('input', () => { previewState.textColor = document.getElementById('textColorPicker').value; renderPreview(); });
             document.getElementById('refColorPicker').addEventListener('input', () => { previewState.refColor = document.getElementById('refColorPicker').value; renderPreview(); });
+            { const rp = document.getElementById('refPosSelector'); if (rp) rp.addEventListener('change', () => { previewState.refPos = rp.value; renderPreview(); }); }
             document.getElementById('refEyeToggleBtn').addEventListener('click', () => {
                 previewState.refVisible = previewState.refVisible === false;
                 updateLowerThirdControlsVisibility();
@@ -2932,6 +3187,15 @@ function songTabIsActive() {
                 displayTransitionStyle = displayTransitionSelectorEl.value;
                 try { localStorage.setItem('ebp_display_transition', displayTransitionStyle); } catch (e) {}
             });
+            const displayTransitionMsEl = document.getElementById('displayTransitionMs');
+            if (displayTransitionMsEl) {
+                displayTransitionMsEl.value = String(displayTransitionMs);
+                displayTransitionMsEl.addEventListener('change', () => {
+                    displayTransitionMs = parseInt(displayTransitionMsEl.value, 10) || 0;
+                    try { localStorage.setItem('ebp_display_transition_ms', String(displayTransitionMs)); } catch (e) {}
+                    previewState.transitionMs = displayTransitionMs;
+                });
+            }
 
             // Appearance: Chapters/Songs/Word Search panel side (left or right)
             const sidebarPositionSelectorEl = document.getElementById('sidebarPositionSelector');
@@ -3260,9 +3524,9 @@ function songTabIsActive() {
                         @keyframes ebpTransFade { from { opacity: 0; } to { opacity: 1; } }
                         @keyframes ebpTransSlide { from { opacity: 0; transform: translateX(18%); } to { opacity: 1; transform: translateX(0); } }
                         @keyframes ebpTransZoom { from { opacity: 0; transform: scale(0.72); } to { opacity: 1; transform: scale(1); } }
-                        .ebp-transition-fade { animation: ebpTransFade 0.85s ease both; }
-                        .ebp-transition-slide { animation: ebpTransSlide 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; }
-                        .ebp-transition-zoom { animation: ebpTransZoom 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+                        .ebp-transition-fade { animation: ebpTransFade 0.85s ease both; animation-duration: var(--ebp-tms, 0.85s); }
+                        .ebp-transition-slide { animation: ebpTransSlide 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; animation-duration: var(--ebp-tms, 0.75s); }
+                        .ebp-transition-zoom { animation: ebpTransZoom 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; animation-duration: var(--ebp-tms, 0.7s); }
                         @keyframes ebpSlFade { from { opacity: 0; } to { opacity: 1; } }
                         @keyframes ebpSlLeft { from { transform: translateX(100%); } to { transform: translateX(0); } }
                         @keyframes ebpSlRight { from { transform: translateX(-100%); } to { transform: translateX(0); } }
@@ -3272,15 +3536,15 @@ function songTabIsActive() {
                         @keyframes ebpSlBlur { from { opacity: 0; filter: blur(28px); } to { opacity: 1; filter: blur(0); } }
                         @keyframes ebpSlFlip { from { opacity: 0; transform: perspective(1400px) rotateY(88deg); } to { opacity: 1; transform: perspective(1400px) rotateY(0); } }
                         @keyframes ebpSlWipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
-                        .ebp-sl-fade { animation: ebpSlFade 0.9s ease both; }
-                        .ebp-sl-left { animation: ebpSlLeft 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-                        .ebp-sl-right { animation: ebpSlRight 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-                        .ebp-sl-up { animation: ebpSlUp 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-                        .ebp-sl-zoomin { animation: ebpSlZoomIn 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-                        .ebp-sl-zoomout { animation: ebpSlZoomOut 0.8s cubic-bezier(0.22,1,0.36,1) both; }
-                        .ebp-sl-blur { animation: ebpSlBlur 0.9s ease both; }
-                        .ebp-sl-flip { animation: ebpSlFlip 0.9s ease both; }
-                        .ebp-sl-wipe { animation: ebpSlWipe 0.8s ease both; }
+                        .ebp-sl-fade { animation: ebpSlFade 0.9s ease both; animation-duration: var(--ebp-tms, 0.9s); }
+                        .ebp-sl-left { animation: ebpSlLeft 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+                        .ebp-sl-right { animation: ebpSlRight 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+                        .ebp-sl-up { animation: ebpSlUp 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+                        .ebp-sl-zoomin { animation: ebpSlZoomIn 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+                        .ebp-sl-zoomout { animation: ebpSlZoomOut 0.8s cubic-bezier(0.22,1,0.36,1) both; animation-duration: var(--ebp-tms, 0.8s); }
+                        .ebp-sl-blur { animation: ebpSlBlur 0.9s ease both; animation-duration: var(--ebp-tms, 0.9s); }
+                        .ebp-sl-flip { animation: ebpSlFlip 0.9s ease both; animation-duration: var(--ebp-tms, 0.9s); }
+                        .ebp-sl-wipe { animation: ebpSlWipe 0.8s ease both; animation-duration: var(--ebp-tms, 0.8s); }
                         .canvas-video-bg-node { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 1; pointer-events: none; }
                         .media-layer-node { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; background: #000; pointer-events: none; object-fit: contain; }
                         .canvas-video-bg-node.media-layer-node { z-index: 3; }
@@ -3456,7 +3720,7 @@ function songTabIsActive() {
 
         function syncLiveStateToRemoteChannels() {
             // Channel 1: BroadcastChannel (Instant Offline Sync)
-            const stateSync = { liveState: liveState, cachedLogoDataUrl: cachedLogoDataUrl, overlay: (typeof ovPayload === 'function') ? ovPayload() : undefined };
+            const stateSync = { liveState: effLive(), cachedLogoDataUrl: cachedLogoDataUrl, obsFeed: obsFeedPayload(), overlay: (typeof ovPayload === 'function') ? ovPayload() : undefined };
             obsBroadcastChannel.postMessage({ type: "SYSTEM_SYNC_STATE", ...stateSync });
 
             // Channel 2: Remote WebRTC connections
@@ -3507,8 +3771,12 @@ function songTabIsActive() {
             const outContentSig = computeSceneContentSig(stateObject);
             const outContentChanged = container.dataset.contentSig !== outContentSig;
             container.dataset.contentSig = outContentSig;
-            const outTransitionClass = outContentChanged ? getDisplayTransitionClass() : '';
+            // A hotkey (arrow keys etc.) renders the same slide twice in a row; the 2nd render used to wipe the
+            // running transition. Keep playing it while the animation window (1s) is still open.
+            if (outContentChanged) container.dataset.transUntil = String(Date.now() + 1000);
+            const outTransitionClass = (outContentChanged || Date.now() < Number(container.dataset.transUntil || 0)) ? getDisplayTransitionClass() : '';
             const outReusableLayers = takeReusableLayers(container);
+            if (stateObject.transitionMs) container.style.setProperty('--ebp-tms', stateObject.transitionMs + 'ms'); else container.style.removeProperty('--ebp-tms');
             container.style.transition = outTransitionClass ? 'background-color 0.5s ease' : 'none';
 
             let contentNode = stateObject.text || '';
@@ -3519,7 +3787,7 @@ function songTabIsActive() {
             const boxBgStyleString = stateObject.textBgUrl ? `--box-bg-image: url('${stateObject.textBgUrl}'); --box-bg-opacity: ${bgOpacity / 100};` : '--box-bg-image: none;';
             // Nudge only applies in Lower Third. Uses the CSS "translate" property in canvas-width units (cqw), applied
             // identically to the text AND the reference so they always move together, with no limit on distance.
-            const nudgeIsActive = stateObject.layout === 'mode-lowerthird' && (stateObject.textNudgeX || stateObject.textNudgeY);
+            const nudgeIsActive = (stateObject.layout === 'mode-lowerthird' || stateObject.nudgeAny) && (stateObject.textNudgeX || stateObject.textNudgeY);
             const nudgeTransformStyle = nudgeIsActive ? `translate: ${stateObject.textNudgeX || 0}cqw ${stateObject.textNudgeY || 0}cqw;` : '';
             const textHiddenClass = (stateObject.timerVisible && stateObject.timerSolo) ? 'display: none !important;' : '';
             const flierOnlyTextHide = (stateObject.layout === 'mode-flieronly' || (stateObject.displayMode === 'media' && stateObject.mediaUrl)) ? 'display: none !important;' : '';
@@ -3548,19 +3816,20 @@ function songTabIsActive() {
                 <div class="canvas-announcement-banner ${announcementActive ? 'announcement-visible' : ''} ${announcementPosClass} ${announcementEffectClass}" style="${videoAloneHide} background: ${stateObject.announcementBgColor || '#b45309'};">${announcementInner}</div>
             `;
 
-            container.innerHTML = `
+            ovSetCanvasHtml(container, `
                 <div class="text-display-box-container ${outTransitionClass} ${backingPanelClass}" style="${boxBgStyleString} ${nudgeTransformStyle} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide}">
                     <div class="text-out ${gradientGlowClass}" style="width:100%; ${dynamicColorVar} color: ${stateObject.textColor || '#ffffff'}; text-shadow: ${customShadow}; font-size: calc(var(--canvas-font-size) * ${autoFontScale}); font-family: ${customFontFamily}; font-weight: ${customFontWeight}; font-style: ${customFontStyle};">${contentNode}</div>
                 </div>
-                <div class="ref-out ${outTransitionClass}" style="${nudgeTransformStyle} ${stateObject.refVisible === false ? 'display: none !important;' : ''} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
+                <div class="ref-out ${outTransitionClass}" style="${nudgeTransformStyle} ${refPosStyle(stateObject)} ${stateObject.refVisible === false ? 'display: none !important;' : ''} ${textHiddenClass} ${flierOnlyTextHide} ${videoAloneHide} text-shadow: ${customShadow}; font-family: ${customFontFamily}; ${stateObject.refColor ? `color: ${stateObject.refColor};` : ''}">${stateObject.ref || ''}</div>
                 <div class="canvas-timer-node" id="${containerId}OverlayTimer">00:00</div>
                 ${nameBarHtml}
                 ${announcementHtml}
-            `;
+            `);
 
             restoreAnnouncementBanner(container, outReusableLayers, announcementHtml.trim());
             try { lttApply(container, stateObject, cachedLogoDataUrl, outTransitionClass); } catch (e) { console.warn('Lower third template:', e); }
             try { ovSceneApply(container, stateObject); } catch (e) {}
+            try { applyTimeUpLayer(container, stateObject); } catch (e) {}
 
             autoFitVerseText(container);
 
@@ -3915,7 +4184,9 @@ function songTabIsActive() {
 
         function exportProfileToFile() {
             const profilePackage = {
-                generator: "EXPRESS BIBLE PRESENTER", timestamp: Date.now(), version: document.getElementById('versionSelector').value, bookCode: currentBookCode, bookName: currentBookName, chapter: currentChapter, verse: currentVerse, assetsLibraryCache: importedAssetsLibrary, cachedLogoBlobData: cachedLogoDataUrl, savedPreviewState: previewState, savedLiveState: liveState, historyLogSnapshot: executionDisplayHistory
+                generator: "EXPRESS BIBLE PRESENTER", timestamp: Date.now(), version: document.getElementById('versionSelector').value, bookCode: currentBookCode, bookName: currentBookName, chapter: currentChapter, verse: currentVerse, assetsLibraryCache: importedAssetsLibrary, cachedLogoBlobData: cachedLogoDataUrl, savedPreviewState: previewState, savedLiveState: liveState, historyLogSnapshot: executionDisplayHistory,
+                slideStudio: (typeof ebpStudioExport === 'function' ? ebpStudioExport() : undefined),
+                lyricsStudio: (typeof ebpLyricsExport === 'function' ? ebpLyricsExport() : undefined)
             };
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(profilePackage));
             const downloadAnchor = document.createElement('a');
@@ -3942,6 +4213,8 @@ function songTabIsActive() {
                         ? importedData.savedLiveState
                         : (importedData.savedPreviewState || importedData.savedLiveState || previewState);
                     Object.assign(previewState, restoredState);
+                    if (importedData.slideStudio && typeof ebpStudioImport === 'function') ebpStudioImport(importedData.slideStudio);
+                    if (importedData.lyricsStudio && typeof ebpLyricsImport === 'function') ebpLyricsImport(importedData.lyricsStudio);
                     liveState = previewState;
                     try { lttSyncUI(); } catch (e) {}
                     document.getElementById('layoutSelector').value = previewState.layout; document.getElementById('lowerThirdPositionSelector').value = previewState.lowerThirdPosition || 'bottom'; updateLowerThirdControlsVisibility(); document.getElementById('fontSizeInput').value = previewState.fontSize; document.getElementById('bgColorPicker').value = previewState.bgColor; document.getElementById('bgPresetSelector').value = previewState.bgPreset || ""; document.getElementById('textColorPicker').value = previewState.textColor || '#ffffff'; document.getElementById('assetLibraryDropdown').value = previewState.flierId || ""; document.getElementById('logoPositionSelector').value = previewState.logoPosition || ""; document.getElementById('fontStyleOverrideSelector').value = previewState.fontFamilyOverride || "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"; document.getElementById('textShadowSelector').value = previewState.textShadowStyle != null ? previewState.textShadowStyle : "0 4px 12px rgba(0,0,0,0.98)"; document.getElementById('fontBoldToggleBtn').classList.toggle('toggle-active', !!previewState.fontBold); document.getElementById('fontItalicToggleBtn').classList.toggle('toggle-active', !!previewState.fontItalic);
@@ -3968,6 +4241,19 @@ function songTabIsActive() {
                 const m = u => (u && obsMediaMap.get(u)) || u;
                 return Object.assign({}, st, { mediaUrl: m(st.mediaUrl), slidePrevUrl: m(st.slidePrevUrl) });
             }
+            // "Always lower third" feed: draw this page's copy of the scene as a transparent lower third (the projector is never touched)
+            function obsFeedState(st, f) {
+                if (!st || !f || f.mode !== 'lt') return st;
+                const showText = st.displayMode !== 'media' && !(st.timerVisible && st.timerSolo);
+                return Object.assign({}, st, {
+                    layout: 'mode-lowerthird', bgTransparent: true, flierId: null, textBgUrl: '', bgPreset: '', bgOpacity: 100,
+                    displayMode: 'text', mediaUrl: null, slidePrevUrl: '', slideTransition: '',
+                    timerVisible: false, timerSolo: false, announcementVisible: st.announcementVisible,
+                    text: showText ? st.text : '', ref: showText ? st.ref : '',
+                    lowerThirdPosition: f.pos || 'bottom', fontSize: f.fs || 'medium', textNudgeX: f.nx || 0, textNudgeY: f.ny || 0, nudgeAny: true,
+                    ltTemplate: f.tpl || 'none', ltStyle: f.style || {}
+                });
+            }
             function obsAttachStream(st) {
                 if (!obsStream || !st || st.displayMode !== 'media' || st.mediaKind !== 'video') return;
                 const v = obsCanvas.querySelector('video.media-layer-node');
@@ -3984,13 +4270,13 @@ function songTabIsActive() {
                 if (data && data.liveState) {
                     obsLastData = data;
                     if (Array.isArray(data.importedAssetsLibrary) && data.importedAssetsLibrary.length) obsAssets = data.importedAssetsLibrary;
-                    buildCanvasDOM(obsCanvas, obsMapMedia(data.liveState), obsAssets, data.cachedLogoDataUrl, true);
+                    buildCanvasDOM(obsCanvas, obsFeedState(obsMapMedia(data.liveState), data.obsFeed), obsAssets, data.cachedLogoDataUrl, true);
                     obsAttachStream(data.liveState);
                     try { ovObsApply(data); } catch (e) {}
                     
                     const innerTimer = obsCanvas.querySelector('.canvas-timer-node');
                     if (innerTimer) {
-                        innerTimer.className = `canvas-timer-node ${data.liveState.timerPosition} ${data.liveState.timerSize} ${data.liveState.timerVisible ? 'timer-visible' : ''}`;
+                        innerTimer.className = `canvas-timer-node ${data.liveState.timerPosition} ${data.liveState.timerSize} ${(data.liveState.timerVisible && !(data.obsFeed && data.obsFeed.mode === 'lt')) ? 'timer-visible' : ''}`;
                         innerTimer.innerText = data.liveState.timerText || "00:00";
                         
                         const originStr = data.liveState.timerPosition === 'timer-center' ? 'center' : (data.liveState.timerPosition.includes('left') ? 'left' : 'right');
@@ -5274,7 +5560,10 @@ var LTT = {
     church: { name: 'Classic Gold', nameAcc: 'c2', uses: ['c1', 'c1b', 'c2', 'c3', 'c5', 'c6'], d: { c1: '#1a1f33', c1b: '#0e1220', c2: '#d4af37', c3: '#ffffff', c5: '#d4af37', c6: '#d4af37' },
         html: c => `<div class="q-panel"><div class="q-in"><div class="ltt-verse">${c.v}</div>${c.r ? `<div class="q-rule"></div><div class="ltt-ref">${c.r}</div>` : ''}</div></div>` }
 };
-LTT_ORDER.forEach(id => { LTT[id].d = Object.assign({}, LTT_BASE, LTT[id].d); });
+// Plain bar — a simple solid (or picture) strip; used by the Lyrics Studio ("Plain background"), kept out of the main template grid
+LTT.plain = { name: 'Plain background', nameAcc: 'c2', uses: ['c1', 'c3', 'c5'], d: { c1: '#0b3a66', c3: '#ffffff', c5: '#ffffff', grad: false, opacity: 100, showRef: true, showLogo: false },
+    html: c => { const s = c.s || {}; const im = s.img ? `background-image:linear-gradient(rgba(0,0,0,${(s.imgDim || 0) / 100}),rgba(0,0,0,${(s.imgDim || 0) / 100})),url('${String(s.img).replace(/'/g, '%27')}');background-size:cover;background-position:center;` : ''; const pc = (!im && s.presetCss) ? `background-image:${s.presetCss};` : ''; return `<div class="q-plain" style="${im}${pc}"><div class="ltt-verse">${c.v}</div>${c.r ? `<div class="ltt-ref">${c.r}</div>` : ''}</div>`; } };
+LTT_ORDER.concat(['plain']).forEach(id => { LTT[id].d = Object.assign({}, LTT_BASE, LTT[id].d); });
 
 var LTT_CSS = `
 .ltt{position:absolute;left:5%;right:5%;bottom:7%;z-index:5;box-sizing:border-box;color:var(--t)}
@@ -5315,6 +5604,8 @@ var LTT_CSS = `
 .tpl-wave .ltt-verse{font-size:calc(var(--canvas-font-size,4.8cqw)*.7)}
 .tpl-glass .q-glass{background:var(--f);border-left:1.1cqw solid var(--a);padding:1.6cqw 3cqw;border-radius:0 1cqw 1cqw 0;box-shadow:0 .6cqw 1.6cqw rgba(0,0,0,.55);backdrop-filter:blur(4px)}
 .tpl-glass .ltt-ref{margin-top:.6cqw}
+.tpl-plain .q-plain{background-color:var(--f);padding:2cqw 4cqw;text-align:center;border-radius:.8cqw;box-shadow:0 .5cqw 1.6cqw rgba(0,0,0,.4)}
+.tpl-plain .ltt-ref{margin-top:.8cqw;color:var(--rt);font-weight:700;opacity:.95}
 .tpl-outline .q-wrap{position:relative;padding-bottom:1.6cqw}
 .tpl-outline .q-box{background:var(--f);border:.3cqw solid var(--b);padding:1.6cqw 3cqw;text-align:center}
 .tpl-outline .q-tab2{position:absolute;right:3cqw;bottom:0;background:var(--s);padding:.4cqw 1.6cqw;box-shadow:0 .3cqw .8cqw rgba(0,0,0,.4)}
@@ -5551,7 +5842,7 @@ var NT_CSS = `
 .ntu-sep{height:1px;background:var(--bg-accent);margin:4px 0}
 `;
 LTT_CSS += NT_CSS;
-var ntState = { tpl: 'broadcast', pos: 'bottom', scale: 100 };
+var ntState = { tpl: 'broadcast', pos: 'bottom', scale: 100, motion: 'none', speed: 'normal' };
 var ntCustom = {};
 var ntTargets = { projector: false, slots: {} };
 var NT_ROWS = [['c1', 'Name background colour'], ['c1b', 'Gradient end colour'], ['ACC', 'Role label colour'], ['rt', 'Role text colour'], ['nt', 'Name text colour'], ['c6', 'Border colour']];
@@ -5669,6 +5960,9 @@ function initNameTagOverlay() {
     styleBtn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.remove('open'); ntBuildStylePanel(); ntSyncPanel(); dd.classList.toggle('open'); });
     dd.addEventListener('click', (e) => e.stopPropagation());
     document.getElementById('ntPosition').addEventListener('change', (e) => { ntState.pos = e.target.value; ntSaveAll(); ntRefreshAll(); });
+    { const mo = document.getElementById('ntMotion'), sp = document.getElementById('ntSpeed');
+      if (mo) { mo.innerHTML = Object.keys(NT_MOTIONS).map(k => `<option value="${k}">${NT_MOTIONS[k]}</option>`).join(''); mo.value = NT_MOTIONS[ntState.motion] ? ntState.motion : 'none'; mo.addEventListener('change', () => { ntState.motion = mo.value; ntSaveAll(); ntRefreshAll(); }); }
+      if (sp) { sp.value = ntState.speed || 'normal'; sp.addEventListener('change', () => { ntState.speed = sp.value; ntSaveAll(); ntRefreshAll(); }); } }
     const size = d => { ntState.scale = Math.max(50, Math.min(250, ntState.scale + d)); ntSaveAll(); ntRefreshAll(); };
     document.getElementById('ntSizeDec').addEventListener('click', () => size(-10));
     document.getElementById('ntSizeInc').addEventListener('click', () => size(10));
@@ -5691,6 +5985,45 @@ function initNameTagOverlay() {
 // any extra output window, the OBS browser source (over its verse scene) and the OBS overlay-only source (transparent,
 // nothing else). The name tag can also be sent "with the scene" (drawn inside the verse scene, reaching every screen).
 // Later definitions below intentionally replace the first-version name-tag helpers above.
+// Name-tag entrance motions (+ two looping ones). They use the individual translate/scale/opacity/filter/clip-path properties
+// so they never fight with the template's own transforms. The motion plays each time the tag is sent.
+var NT_MOTIONS = { none: 'No motion', slideLeft: 'Slide in from left', slideRight: 'Slide in from right', slideUp: 'Slide up', dropIn: 'Drop down', zoom: 'Zoom in', pop: 'Pop (bounce)', unfold: 'Unfold', wipe: 'Wipe reveal', blur: 'Blur focus', rise: 'Fade rise', float: 'Rise + gentle float', glow: 'Fade + glow pulse' };
+var NTM_CSS = `
+@keyframes ntmSL{from{translate:-130% 0;opacity:0}to{translate:0 0;opacity:1}}
+@keyframes ntmSR{from{translate:130% 0;opacity:0}to{translate:0 0;opacity:1}}
+@keyframes ntmSU{from{translate:0 160%;opacity:0}to{translate:0 0;opacity:1}}
+@keyframes ntmDR{from{translate:0 -160%;opacity:0}to{translate:0 0;opacity:1}}
+@keyframes ntmZM{from{scale:.3;opacity:0}to{scale:1;opacity:1}}
+@keyframes ntmPOP{0%{scale:0;opacity:0}60%{scale:1.14;opacity:1}80%{scale:.96}100%{scale:1}}
+@keyframes ntmUF{from{scale:1 0;opacity:0}to{scale:1 1;opacity:1}}
+@keyframes ntmWP{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
+@keyframes ntmBL{from{filter:blur(18px);opacity:0;scale:1.08}to{filter:blur(0);opacity:1;scale:1}}
+@keyframes ntmRI{from{translate:0 40px;opacity:0}to{translate:0 0;opacity:1}}
+@keyframes ntmFL{0%,100%{translate:0 0}50%{translate:0 -.35cqw}}
+@keyframes ntmGL{0%,100%{filter:drop-shadow(0 0 0 rgba(255,255,255,0))}50%{filter:drop-shadow(0 0 1.1cqw rgba(255,255,255,.75))}}
+.ntm-slideLeft .canvas-namebar-node{animation:ntmSL var(--ntm-d,.75s) cubic-bezier(.2,.8,.2,1) both}
+.ntm-slideRight .canvas-namebar-node{animation:ntmSR var(--ntm-d,.75s) cubic-bezier(.2,.8,.2,1) both}
+.ntm-slideUp .canvas-namebar-node{animation:ntmSU var(--ntm-d,.75s) cubic-bezier(.2,.8,.2,1) both}
+.ntm-dropIn .canvas-namebar-node{animation:ntmDR var(--ntm-d,.75s) cubic-bezier(.2,.8,.2,1) both}
+.ntm-zoom .canvas-namebar-node{animation:ntmZM var(--ntm-d,.75s) cubic-bezier(.2,.8,.2,1) both}
+.ntm-pop .canvas-namebar-node{animation:ntmPOP var(--ntm-d,.75s) ease-out both}
+.ntm-unfold .canvas-namebar-node{animation:ntmUF var(--ntm-d,.75s) cubic-bezier(.2,.8,.2,1) both;transform-origin:50% 100%}
+.ntm-wipe .canvas-namebar-node{animation:ntmWP var(--ntm-d,.75s) cubic-bezier(.65,0,.35,1) both}
+.ntm-blur .canvas-namebar-node{animation:ntmBL var(--ntm-d,.75s) ease-out both}
+.ntm-rise .canvas-namebar-node{animation:ntmRI var(--ntm-d,.75s) ease-out both}
+.ntm-float .canvas-namebar-node{animation:ntmRI var(--ntm-d,.75s) ease-out both,ntmFL 3.2s ease-in-out var(--ntm-d,.75s) infinite}
+.ntm-glow .canvas-namebar-node{animation:ntmRI var(--ntm-d,.75s) ease-out both,ntmGL 2.6s ease-in-out var(--ntm-d,.75s) infinite}
+@keyframes ovSlideB{from{translate:0 105%}to{translate:0 0}}
+@keyframes ovSlideT{from{translate:0 -105%}to{translate:0 0}}
+@keyframes ovFlash{0%,40%,80%{filter:brightness(1)}20%,60%,100%{filter:brightness(2.1)}}
+@keyframes ovBounce{0%{scale:.6;opacity:0}55%{scale:1.06;opacity:1}75%{scale:.98}100%{scale:1}}
+.ov-eff-slide.ov-ann-bottom{animation:ovSlideB .7s cubic-bezier(.2,.8,.2,1) both}
+.ov-eff-slide.ov-ann-top{animation:ovSlideT .7s cubic-bezier(.2,.8,.2,1) both}
+.ov-eff-slide.ov-ann-center{animation:ovBounce .7s ease-out both}
+.ov-eff-flash{animation:ovFlash 1.2s ease-in-out 1 both}
+.ov-eff-bounce{animation:ovBounce .8s ease-out both}
+`;
+LTT_CSS += NTM_CSS;
 var OV_CSS = `
 .ntl-solid{background:#000}
 html.ov-alone,html.ov-alone body{background:transparent!important}
@@ -5698,6 +6031,8 @@ html.ov-alone body > :not(#ebpNtLayer){display:none!important}
 html.ov-alone #outputCanvas,html.ov-alone #directProjectorCanvas,html.ov-alone #obsCanvas,html.ov-alone #outputCanvasOverlayTimer{visibility:hidden!important}
 .ov-scene{position:absolute!important;z-index:9}
 .ov-scene .ntl-frame{width:100%}
+.ov-monitor{position:absolute!important;z-index:9}
+.ov-monitor .ntl-frame{width:100%}
 .ov-ann{position:absolute;left:0;right:0;color:#fff8e7;font-weight:800;font-size:calc(var(--canvas-font-size,4.8cqw)*.5);padding:.45em 1em;text-align:center;text-shadow:0 2px 6px rgba(0,0,0,.8);overflow:hidden;white-space:nowrap;box-shadow:0 0 16px rgba(0,0,0,.4);pointer-events:none}
 .ov-ann-top{top:0}.ov-ann-bottom{bottom:0}
 .ov-ann-center{top:50%;transform:translateY(-50%);left:4%;right:4%;border-radius:8px}
@@ -5727,17 +6062,20 @@ function ovAnnData() {
     return { text: ((g('announcementInput') || {}).value || '').trim(), eff: (g('announcementEffectSelector') || {}).value || 'none', pos: (g('announcementPositionSelector') || {}).value || 'bottom', color: (g('announcementColorPicker') || {}).value || '#b45309' };
 }
 function ovTagPart() {
-    return `<div class="ntl-pos ntl-${ntState.pos}">${ntTagHtml(ntState.tpl, ntStyle(), previewState.lowerThirdRole, previewState.lowerThirdName)}</div>`;
+    const mo = NT_MOTIONS[ntState.motion] && ntState.motion !== 'none' ? ' ntm-' + ntState.motion : '', md = { slow: 1.3, normal: 0.75, fast: 0.4 }[ntState.speed] || 0.75;
+    return `<div class="ntl-pos ntl-${ntState.pos}${mo}" style="--ntm-d:${md}s">${ntTagHtml(ntState.tpl, ntStyle(), previewState.lowerThirdRole, previewState.lowerThirdName)}</div>`;
 }
 function ovAnnPart() {
     const a = ovAnnData(); if (!a.text) return '';
     const esc = a.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
     const inner = a.eff === 'scroll' ? `<span class="ov-tick">${esc}</span>` : esc;
-    const eff = (a.eff === 'breathing' || a.eff === 'fade') ? ' ov-eff-' + a.eff : '';
+    const eff = ['breathing', 'fade', 'slide', 'flash', 'bounce'].includes(a.eff) ? ' ov-eff-' + a.eff : '';
     return `<div class="ov-ann ov-ann-${a.pos}${eff}" style="background:${a.color}">${inner}</div>`;
 }
+var ovNonce = 0;   // bump to make the overlays play their entrance motion again (a re-send / Replay)
+function ovReplay() { ovNonce++; }
 function ovWrap(parts, cls, solid) {
-    return parts ? `<div class="ntl ntw ${cls || ''}${solid ? ' ntl-solid' : ''}" ${cls ? '' : 'id="ebpNtLayer"'}><div class="ntl-frame" style="--nt-s:${ntState.scale / 100}">${parts}</div></div>` : '';
+    return parts ? `<div class="ntl ntw ${cls || ''}${solid ? ' ntl-solid' : ''}" data-n="${ovNonce}" ${cls ? '' : 'id="ebpNtLayer"'}><div class="ntl-frame" style="--nt-s:${ntState.scale / 100}">${parts}</div></div>` : '';
 }
 function ovAnnActive() { return ovCh.ann.mode === 'scene' ? ovCh.ann.scene : ovAnyTarget(ovCh.ann); }
 function ovAloneFor(key) {
@@ -5758,12 +6096,17 @@ function ovHtmlFor(key) {
 function ovApplyToWindow(win, key) {
     try {
         if (!win || win.closed) return;
+        if (typeof isLiveFrozen !== 'undefined' && isLiveFrozen) return;     // Freeze locks the screens: banner / name tag stay exactly as they are until unfreeze
         const doc = win.document; const html = ovHtmlFor(key);
-        const old = doc.getElementById('ebpNtLayer'); if (old) old.remove();
+        const old = doc.getElementById('ebpNtLayer');
         lttEnsureStyle(doc);
         doc.documentElement.classList.toggle('ov-alone', !!html && ovAloneFor(key));
+        // unchanged overlay + still on the page -> leave it alone, so its entrance motion does not replay every time the verse changes
+        if (old && html && old.__ebpSig === html) return;
+        if (old) old.remove();
         if (!html) return;
         doc.body.insertAdjacentHTML('beforeend', html);
+        const nw = doc.getElementById('ebpNtLayer'); if (nw) nw.__ebpSig = html;
     } catch (e) {}
 }
 // OBS pages: called from the OBS sync handler
@@ -5791,16 +6134,43 @@ function ovObsApply(data) {
     } catch (e) {}
 }
 // "With the scene" name tag: lives inside the scene state, so every canvas that draws the scene gets it
+// Dashboard monitor: whatever banner / name tag is on air (Overlay-only or On-top mode) is also drawn on the dashboard's own live preview,
+// so the operator can see it even when no projector / OBS is connected. Never sent to any output.
+var ovMonSig = '';
+function ovMonitorHtml() {
+    let parts = '';
+    try {
+        if (ovCh.nt.mode !== 'scene' && ovAnyTarget(ovCh.nt) && ovHasTag()) parts += ovTagPart();
+        if (ovCh.ann.mode !== 'scene' && ovAnyTarget(ovCh.ann) && ovAnnData().text) parts += ovAnnPart();
+    } catch (e) {}
+    return parts ? ovWrap(parts, 'ov-monitor') : '';
+}
+function ovMonitorApply() {
+    try {
+        const cv = document.getElementById('liveCanvas'); if (!cv) return;
+        const html = ovMonitorHtml(), old = cv.querySelector(':scope > .ov-monitor');
+        if (old && html && old.__sig === html) return;
+        if (old) old.remove();
+        if (!html) return;
+        const t = document.createElement('div'); t.innerHTML = html; const el = t.firstElementChild;
+        if (el) { el.__sig = html; el.style.pointerEvents = 'none'; cv.appendChild(el); }
+    } catch (e) {}
+}
 function ovSceneApply(canvas, state) {
     try {
         if (!canvas) return;
-        const old = canvas.querySelector(':scope > .ov-scene'); if (old) old.remove();
+        if (canvas.id === 'liveCanvas') ovMonitorApply();
+        const old = canvas.querySelector(':scope > .ov-scene');
+        if (old && state && state.ovScene && old.__sig === state.ovScene) return;      // unchanged: leave the running overlay alone
+        if (old) old.remove();
         if (!state || !state.ovScene) return;
         const t = document.createElement('div'); t.innerHTML = state.ovScene;
-        const el = t.firstElementChild; if (el) canvas.appendChild(el);
+        const el = t.firstElementChild; if (el) { el.__sig = state.ovScene; canvas.appendChild(el); }
     } catch (e) {}
 }
-function ovPayload() { return { obs: ovHtmlFor('obs'), alone: ovAloneFor('obs') }; }
+var ovFrozenOv = null;   // copy of what OBS was showing when Freeze was switched on
+function ovPayloadLive() { return { obs: ovHtmlFor('obs'), alone: ovAloneFor('obs') }; }
+function ovPayload() { return (typeof isLiveFrozen !== 'undefined' && isLiveFrozen && ovFrozenOv) ? ovFrozenOv : ovPayloadLive(); }
 function ntAnyActive() { return ovCh.nt.mode === 'scene' ? ovCh.nt.scene : ovAnyTarget(ovCh.nt); }
 function ovRefreshAll() {
     try { ovApplyToWindow(projectorWindowRef, 'projector'); } catch (e) {}
@@ -5811,6 +6181,7 @@ function ovRefreshAll() {
         try { renderPreview(); } catch (e) {}
     }
     try { ovAnnSceneSync(); } catch (e) {}
+    try { ovMonitorApply(); } catch (e) {}
     try { transmitStatePacketToRemoteClients(); } catch (e) {}
     ntSyncUI();
 }
@@ -5870,6 +6241,8 @@ function ntSyncUI() {
     ovSyncBtn('annSendBtn', ovAnnActive(), 'Banner');
     const sb = document.getElementById('ntStyleBtn'); if (sb) sb.innerText = 'NAME TAG: ' + LTT[ntState.tpl].name.toUpperCase() + ' ▾';
     const pos = document.getElementById('ntPosition'); if (pos) pos.value = ntState.pos;
+    const mot = document.getElementById('ntMotion'); if (mot) mot.value = NT_MOTIONS[ntState.motion] ? ntState.motion : 'none';
+    const spd = document.getElementById('ntSpeed'); if (spd) spd.value = ntState.speed || 'normal';
     const sv = document.getElementById('ntSizeVal'); if (sv) sv.innerText = ntState.scale + '%';
     const prev = document.getElementById('ntPrev'); if (prev) prev.innerHTML = ntTagHtml(ntState.tpl, ntStyle(), previewState.lowerThirdRole || 'Ministering', previewState.lowerThirdName || 'Pastor Ade');
 }
@@ -6116,11 +6489,11 @@ const RC_CMDS = {
     slides_prev() { rcEl('slidesPrevBtn').click(); },
     slides_next() { rcEl('slidesNextBtn').click(); },
     slides_play() { rcEl('slidesPlayBtn').click(); },
-    slides_toggle() { rcEl('slidesEyeBtn').click(); },
+    slides_toggle() { const b = document.getElementById('slidesEyeBtn'); if (b) b.click(); },
     ann_stage(a) {
         const t = rcEl('announcementInput');
         if (a.text != null) { t.value = String(a.text).slice(0, 200); rcFire(t, 'input'); }
-        ['effect:announcementEffectSelector:none,scroll,breathing,fade', 'pos:announcementPositionSelector:bottom,top,center'].forEach(spec => {
+        ['effect:announcementEffectSelector:none,scroll,breathing,fade,slide,flash,bounce', 'pos:announcementPositionSelector:bottom,top,center'].forEach(spec => {
             const [k, id, list] = spec.split(':'); if (a[k] && list.split(',').includes(a[k])) { const s = rcEl(id); s.value = a[k]; rcFire(s, 'change'); }
         });
         rcEl('stageAnnouncementBtn').click();
@@ -6412,4 +6785,57 @@ Object.assign(RC_CMDS, {
     ov.addEventListener('click', e => { if (e.target === ov) close(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && ov.classList.contains('open')) { close(); e.stopPropagation(); } }, true);
     document.querySelectorAll('[data-lgl]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); open(a.dataset.lgl); }));
+})();
+
+
+// ===================== OBS FEED SETTINGS (Integrations -> OBS Browser Source) =====================
+(function () {
+    function init() {
+        const m = document.getElementById('obsFeedMode'); if (!m) return;
+        const tplSel = document.getElementById('obsFeedTpl'), prev = document.getElementById('obsFeedPrev');
+        tplSel.innerHTML = '<option value="dash">Same as the dashboard</option><option value="none">Plain transparent text</option>' + LTT_ORDER.map(id => `<option value="${id}">${LTT[id].name}</option>`).join('');
+        tplSel.value = obsFeedCfg.tpl || 'dash';
+        const drawPrev = () => {
+            try {
+                lttEnsureStyle(document);
+                const id = tplSel.value === 'dash' ? (lttLoad('ebpLtLast', 'none')) : tplSel.value;
+                if (!id || id === 'none' || !LTT[id]) { prev.innerHTML = `<div style="position:absolute;left:5%;right:5%;bottom:10%;color:#fff;font-weight:800;font-size:5cqw;text-shadow:0 2px 6px #000">${LTT_SAMPLE_V}</div>`; return; }
+                prev.innerHTML = lttMarkup(id, Object.assign({}, LTT[id].d, lttCustom[id] || {}), LTT_SAMPLE_V, LTT_SAMPLE_R, '');
+            } catch (e) {}
+        };
+        const fsSel = document.getElementById('obsFeedFs'), pos = document.getElementById('obsFeedPos'), nx = document.getElementById('obsFeedNx'), ny = document.getElementById('obsFeedNy'), opts = document.getElementById('obsFeedLtOpts');
+        const show = () => { opts.style.display = obsFeedCfg.mode === 'lt' ? 'flex' : 'none'; drawPrev(); };
+        fsSel.value = obsFeedCfg.fs || 'medium'; m.value = obsFeedCfg.mode; pos.value = obsFeedCfg.pos; nx.value = obsFeedCfg.nx; ny.value = obsFeedCfg.ny; show();
+        const apply = () => {
+            obsFeedCfg = { mode: m.value, pos: pos.value, nx: parseFloat(nx.value) || 0, ny: parseFloat(ny.value) || 0, tpl: tplSel.value, fs: fsSel.value };
+            try { localStorage.setItem('ebp_obs_feed', JSON.stringify(obsFeedCfg)); } catch (e) {}
+            show();
+            try { syncLiveStateToRemoteChannels(); } catch (e) {}
+        };
+        [m, pos, nx, ny, tplSel, fsSel].forEach(e => e.addEventListener('change', apply));
+        nx.addEventListener('input', apply); ny.addEventListener('input', apply);
+        apply();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+
+
+// ===================== CTRL+F = FIT TO SCREEN (works in the main dashboard, Slide Studio and Lyrics Studio) =====================
+// Switches what is on screen between "fit the whole picture" and "fill the screen", instead of the browser's find box.
+(function () {
+    let tEl = null, tT = 0;
+    function say(msg) {
+        if (!tEl) { tEl = document.createElement('div'); tEl.style.cssText = 'position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:2147483000;background:#0b1324;color:#fff;border:1px solid #38bdf8;border-radius:10px;padding:8px 16px;font:600 13px system-ui,sans-serif;pointer-events:none;opacity:0;transition:opacity .2s'; document.body.appendChild(tEl); }
+        tEl.textContent = msg; tEl.style.opacity = '1'; clearTimeout(tT); tT = setTimeout(() => { tEl.style.opacity = '0'; }, 1600);
+    }
+    window.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || String(e.key).toLowerCase() !== 'f') return;
+        e.preventDefault();
+        const media = previewState.displayMode === 'media' && previewState.mediaUrl;
+        const now = previewState.mediaFit === 'cover' ? 'cover' : 'contain', next = now === 'cover' ? 'contain' : 'cover';
+        previewState.mediaFit = next;
+        const sel = document.getElementById('mediaFitSelector'); if (sel) sel.value = next;
+        try { renderPreview(); } catch (x) {}
+        say(next === 'cover' ? 'Fit to screen: FILL the screen (edges may crop)' : 'Fit to screen: WHOLE picture visible' + (media ? '' : ' (applies to the next slide / picture)'));
+    }, true);
 })();
