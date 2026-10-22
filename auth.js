@@ -141,7 +141,7 @@ function runAuthModule(firebaseConfig) {
             #ebpMaintenanceOverlay h2 { margin:.2rem 0 .6rem; font-size:1.15rem; }
             #ebpMaintenanceOverlay p { margin:0 0 1.2rem; color:#94a3b8; font-size:.88rem; line-height:1.5; white-space:pre-wrap; }
             #ebpMaintenanceOverlay button { background:#475569; border:1px solid #64748b; color:#fff; border-radius:8px; padding:.5rem 1.1rem; cursor:pointer; font-size:.85rem; }
-            #ebpBroadcastBanner { display:none; position:fixed; right:16px; bottom:16px; z-index:999997; max-width:380px; gap:.7rem;
+            #ebpBroadcastBanner { display:none; position:fixed; right:16px; bottom:76px; z-index:999997; max-width:380px; gap:.7rem;
                 align-items:flex-start; background:#0f172a; color:#f8fafc; border:1px solid #d97706; border-radius:12px;
                 padding:.85rem 1rem; box-shadow:0 12px 40px rgba(0,0,0,.5); font-size:.85rem; line-height:1.45; }
             #ebpBroadcastBanner .text { flex:1; white-space:pre-wrap; }
@@ -151,8 +151,8 @@ function runAuthModule(firebaseConfig) {
 
         const maint = document.createElement('div');
         maint.id = 'ebpMaintenanceOverlay';
-        maint.innerHTML = `<div class="box"><div class="icon">🛠</div><h2>Bible Presenter is temporarily unavailable</h2>
-            <p id="ebpMaintenanceMsg"></p><button id="ebpMaintenanceSignOut" type="button">Sign out</button></div>`;
+        maint.innerHTML = `<div class="box"><div class="icon">🛠</div><h2>Express Bible Presenter is temporarily unavailable</h2>
+            <p id="ebpMaintenanceMsg"></p></div>`;
         document.body.appendChild(maint);
 
         const banner = document.createElement('div');
@@ -161,7 +161,6 @@ function runAuthModule(firebaseConfig) {
             <button id="ebpBroadcastClose" type="button" title="Dismiss">✕</button>`;
         document.body.appendChild(banner);
 
-        $('ebpMaintenanceSignOut').addEventListener('click', () => doSignOut());
         $('ebpBroadcastClose').addEventListener('click', () => {
             if (shownBroadcastId) window.localStorage.setItem(BROADCAST_DISMISSED_KEY, shownBroadcastId);
             $('ebpBroadcastBanner').style.display = 'none';
@@ -169,8 +168,24 @@ function runAuthModule(firebaseConfig) {
     }
 
     // Applies the admin-controlled settings (maintenance lock + broadcast message).
+    // Telegram community button: the link is set by the admin (settings/app.telegramUrl). Only telegram links are accepted; no link = no button.
+    const TG_KEY = 'ebp_telegram_url';
+    function showTelegram(url) {
+        const ok = typeof url === 'string' && /^https:\/\/(t\.me|telegram\.me)\/\S+$/i.test(url.trim());
+        const u = ok ? url.trim() : '';
+        const link = document.getElementById('ebpTelegramLink'), fl = document.getElementById('ebpTelegramFloat'), fa = document.getElementById('ebpTelegramFloatLink');
+        if (link) { if (ok) { link.href = u; link.style.display = ''; } else { link.style.display = 'none'; link.removeAttribute('href'); } }
+        let hidden = false; try { hidden = window.sessionStorage.getItem('ebp_tg_hidden') === '1'; } catch (e) {}
+        if (fl && fa) { if (ok && !hidden) { fa.href = u; fl.style.display = 'inline-flex'; } else { fl.style.display = 'none'; if (!ok) fa.removeAttribute('href'); } }
+    }
+    (function () { const x = document.getElementById('ebpTelegramFloatClose'); if (x) x.addEventListener('click', () => { try { window.sessionStorage.setItem('ebp_tg_hidden', '1'); } catch (e) {} const fl = document.getElementById('ebpTelegramFloat'); if (fl) fl.style.display = 'none'; }); })();
+    try { showTelegram(window.localStorage.getItem(TG_KEY) || ''); } catch (e) {}
     function applySettings(settings) {
         ensureExtras();
+        try {
+            const tg = typeof settings.telegramUrl === 'string' ? settings.telegramUrl.trim() : '';
+            window.localStorage.setItem(TG_KEY, tg); showTelegram(tg);
+        } catch (e) {}
         const locked = settings.maintenanceMode === true && !currentIsAdmin;
         $('ebpMaintenanceMsg').textContent = settings.maintenanceMessage || 'The presenter is undergoing maintenance. Please try again shortly.';
         $('ebpMaintenanceOverlay').style.display = locked ? 'flex' : 'none';
