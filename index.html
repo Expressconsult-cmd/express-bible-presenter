@@ -18,7 +18,7 @@
 </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EXPRESS BIBLE PRESENTER V2 - PRODUCTION SUITE</title>
+    <title>EXPRESS BIBLE PRESENTER V2.1 - PRODUCTION SUITE</title>
     <!-- APP ICON — upload the icons/ folder alongside index.html -->
     <link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png?v=2">
     <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2">
@@ -35,7 +35,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <link rel="stylesheet" href="styles.css?v=10">
     <!-- SIGN-IN: Firebase passwordless magic-link authentication (see auth.js) -->
-    <script type="module" src="auth.js"></script>
+    <script type="module" src="auth.js?v=4"></script>
 </head>
 <body>
 
@@ -98,7 +98,7 @@
             <div class="panel-tabs-bar">
                 <button class="panel-tab-btn active" onclick="switchTab('chapters-tab')">Chapters</button>
                 <button class="panel-tab-btn" onclick="switchTab('search-tab')">Word Search</button>
-                <button class="panel-tab-btn" onclick="switchTab('lyrics-tab')" style="color: #a78bfa;">Song Lyrics</button>
+                <button class="panel-tab-btn" onclick="switchTab('lyrics-tab')" style="color: #a78bfa; display:none;" hidden>Song Lyrics</button>
             </div>
 
             <!-- TAB 1: CHAPTERS INDEX -->
@@ -115,7 +115,7 @@
                     <div id="wordSearchResultCount" style="font-size: 0.65rem; color: var(--accent-primary); font-weight: 800;">Type at least 3 characters...</div>
                 </div>
 
-                <div style="padding: 0.65rem; border-bottom: 1px solid var(--bg-accent); display: flex; flex-direction: column; gap: 0.5rem; background: rgba(139,92,246,0.06);">
+                <div style="display:none; padding: 0.65rem; border-bottom: 1px solid var(--bg-accent); display: flex; flex-direction: column; gap: 0.5rem; background: rgba(139,92,246,0.06);">
                     <label style="font-size: 0.65rem; color: #a78bfa; text-transform: uppercase; font-weight:700;">🎵 Search Song Lyrics Online</label>
                     <div style="display:flex; gap:0.4rem;">
                         <input type="text" id="lyricsWebSearchInput" placeholder="e.g. Way Maker Nathaniel Bassey" style="flex:1; padding:0.45rem;">
@@ -131,7 +131,7 @@
 
             <!-- TAB 3: SONG LYRICS MANAGER -->
             <div id="lyrics-tab" class="panel-tab-content">
-                <div class="panel-header">Paste & Generate Lyric Slides</div>
+                <div class="panel-header">Paste & Generate Lyric Slides <button id="ebpLyricsStudioBtn2" type="button" class="btn" style="float:right; padding:0.15rem 0.6rem; font-size:0.72rem; background:#0e7490; border-color:#06b6d4;" title="Open the full Lyrics Studio">🎵 Open Lyrics Studio</button></div>
                 <div style="padding: 0.9rem; border-bottom: 1px solid var(--bg-accent); display: flex; flex-direction: column; gap: 0.75rem;">
 
                     <div style="display:flex; flex-direction:column; gap:0.4rem; background: rgba(109,40,217,0.08); border:1px solid rgba(109,40,217,0.25); border-radius:6px; padding:0.6rem;">
@@ -181,7 +181,7 @@
             <div class="top-row">
                 <div class="brand-container">
                     <svg class="brand-cross" viewBox="0 0 24 24" fill="currentColor"><path d="M11 2h2v6h6v2h-6v12h-2v-12h-6v-2h6V2z"/></svg>
-                    <h1>EXPRESS BIBLE PRESENTER <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); margin-left: 0.2rem; vertical-align: baseline; letter-spacing: normal; text-transform: none;">V2</span></h1>
+                    <h1>EXPRESS BIBLE PRESENTER <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted); margin-left: 0.2rem; vertical-align: baseline; letter-spacing: normal; text-transform: none;">V2.1</span></h1>
                 </div>
 
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
@@ -201,7 +201,9 @@
                 <button class="ribbon-tab-btn active" data-ribbon-tab="ribbon-text">📝 Text</button>
                 <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-background">🖼 Background</button>
                 <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-media">🎞 Media</button>
-                <button class="ribbon-tab-btn" data-ribbon-tab="ribbon-message">💬 Message</button>
+                <button class="ribbon-tab-btn" id="ebpMessageStudioBtn" type="button" title="Banners, name tags and the timer — opens the Message dashboard">💬 Message</button>
+                <button class="ribbon-tab-btn" id="ebpSlideStudioBtn" type="button" title="Create, edit and present your own slides">🎬 Slides</button>
+                <button class="ribbon-tab-btn" id="ebpLyricsStudioBtn" type="button" title="Edit songs on a live scene and project them" style="margin-left:4px">🎵 Lyrics</button>
                 <div class="file-menu-wrapper">
                     <button class="ribbon-tab-btn" id="fileMenuTabBtn" type="button">📁 File ▾</button>
                     <div id="fileMenuDropdown" class="file-menu-dropdown">
@@ -294,7 +296,7 @@
 
                 <div class="control-group"><label for="textColorPicker">Text Colour:</label><input type="color" id="textColorPicker" value="#ffffff"></div>
 
-                <div class="control-group"><label for="refColorPicker" title="Colour of the Bible name/version reference shown under the text">Ref. Colour:</label><input type="color" id="refColorPicker" value="#38bdf8"><button id="refEyeToggleBtn" class="btn toggle-active" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" type="button" title="Show/hide the Bible name/version reference (text stays on screen)">👁</button></div>
+                <div class="control-group"><label for="refColorPicker" title="Colour of the Bible name/version reference shown under the text">Ref. Colour:</label><input type="color" id="refColorPicker" value="#38bdf8"><button id="refEyeToggleBtn" class="btn toggle-active" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" type="button" title="Show/hide the Bible name/version reference (text stays on screen)">👁</button><select id="refPosSelector" title="Where the Bible reference sits: above or below the verse, left, centre or right" style="padding:0.3rem; font-size:0.75rem; max-width:150px;"><option value="below-center">Below · Centre</option><option value="below-left">Below · Left</option><option value="below-right">Below · Right</option><option value="above-center">Above · Centre</option><option value="above-left">Above · Left</option><option value="above-right">Above · Right</option></select><button id="moveTextBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" type="button" title="Move text: click this (or hold Ctrl), then drag the text on the screen. Green guides show when it is centred. Double-click the text to put it back.">✥</button><button id="moveTextResetBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.75rem;" type="button" title="Put the text back in its default position">↺</button></div>
 
                 <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; position: relative;">
                     <button id="textStyleToggleBtn" type="button" class="btn" style="background:#4c1d95; border-color:#6d28d9; padding: 0.4rem 0.75rem; font-size: 0.75rem;">TEXT STYLE ▾</button>
@@ -307,6 +309,16 @@
                                     <option value="fade">Fade</option>
                                     <option value="slide">Slide</option>
                                     <option value="zoom">Zoom</option>
+                                </select>
+                                <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-top:0.35rem;">Transition Speed</label>
+                                <select id="displayTransitionMs" style="width: 100%; padding:0.35rem; font-size:0.75rem;" title="How long the fade / slide / zoom takes (also used by slide transitions)">
+                                    <option value="0" selected>Default</option>
+                                    <option value="150">Very fast (150 ms)</option>
+                                    <option value="300">Fast (300 ms)</option>
+                                    <option value="500">Medium (500 ms)</option>
+                                    <option value="800">Slow (800 ms)</option>
+                                    <option value="1200">Slower (1200 ms)</option>
+                                    <option value="2000">Very slow (2000 ms)</option>
                                 </select>
                             </div>
                             <div style="display:flex; flex-direction:column; gap:0.25rem;">
@@ -390,6 +402,22 @@
                         <option value="aurora">Northern Lights</option>
                         <option value="cosmic">Cosmic Night</option>
                         <option value="ember">Warm Ember</option>
+                        <option value="bokehPurple">Bokeh · Purple</option>
+                        <option value="bokehGold">Bokeh · Gold</option>
+                        <option value="bokehBlue">Bokeh · Blue</option>
+                        <option value="bokehRose">Bokeh · Rose</option>
+                        <option value="smokePurple">Smoke · Purple</option>
+                        <option value="smokeTeal">Smoke · Teal</option>
+                        <option value="smokeFire">Smoke · Fire</option>
+                        <option value="lightRays">Light Rays</option>
+                        <option value="heaven">Heavenly Glow</option>
+                        <option value="neonGrid">Neon Grid</option>
+                        <option value="orbs3d">3D · Glass Orbs</option>
+                        <option value="sphere3d">3D · Gold Sphere</option>
+                        <option value="crystal3d">3D · Crystal</option>
+                        <option value="tunnel3d">3D · Tunnel</option>
+                        <option value="waves3d">3D · Silk Waves</option>
+                        <option value="carbon">Carbon Dark</option>
                     </select>
                 </div>
 
@@ -467,67 +495,15 @@
                     <button id="mediaPdfPrevBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Previous PDF page">◀ Prev Page</button>
                     <span id="mediaPdfPageIndicator" style="font-size:0.7rem; color: var(--text-muted); min-width: 70px; text-align:center; display:inline-block;">Page — / —</span>
                     <button id="mediaPdfNextBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Next PDF page">Next Page ▶</button>
-                </div>
-                <!-- SLIDES DISPLAY: several images shown one after another with transitions and timing -->
-                <div class="control-group" style="border-left: 2px solid var(--bg-accent); padding-left: 1rem; position: relative;" id="slidesGroup">
-                    <button id="slidesToggleBtn" type="button" class="btn" style="background:#0e7490; border-color:#0891b2; padding: 0.4rem 0.75rem; font-size: 0.75rem;">🖼 Slides Display ▾</button>
-                    <button id="slidesEyeBtn" type="button" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.9rem;" title="Show / hide the slides on the output (eye open = slides are on screen)">👁</button>
-                    <span id="slidesStatus" style="font-size:0.7rem; color: var(--text-muted);">No slides yet</span>
-                    <div id="slidesDropdown" class="bg-text-effect-dropdown" style="width: 400px;">
-                        <div style="display:flex; flex-direction:column; gap:0.7rem;">
-                            <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
-                                <input type="file" id="slidesFilePicker" accept="image/*" multiple class="hidden-file-input">
-                                <button id="slidesAddBtn" type="button" class="btn" style="padding:0.35rem 0.6rem; font-size:0.75rem;">＋ Add images</button>
-                                <select id="slidesLibrarySelect" style="flex:1; min-width:120px; padding:0.35rem; font-size:0.75rem;"><option value="">Add from saved media…</option></select>
-                                <button id="slidesClearBtn" type="button" class="btn" style="padding:0.35rem 0.6rem; font-size:0.72rem; background:#7f1d1d; border-color:#991b1b;">Clear all</button>
-                            </div>
-                            <div id="slidesList" style="display:flex; flex-direction:column; gap:0.35rem; max-height:220px; overflow-y:auto;"></div>
-                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.6rem;">
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Transition</label>
-                                    <select id="slidesTransitionSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
-                                        <option value="cut">Instant Cut</option>
-                                        <option value="fade" selected>Fade</option>
-                                        <option value="left">Slide from Right</option>
-                                        <option value="right">Slide from Left</option>
-                                        <option value="up">Slide Up</option>
-                                        <option value="zoomin">Zoom In</option>
-                                        <option value="zoomout">Zoom Out</option>
-                                        <option value="blur">Blur In</option>
-                                        <option value="flip">Flip</option>
-                                        <option value="wipe">Wipe</option>
-                                    </select>
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Time per slide (seconds)</label>
-                                    <input type="number" id="slidesIntervalInput" min="1" max="600" step="1" value="6" style="width:100%; padding:0.35rem; font-size:0.75rem;">
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.25rem;">
-                                    <label style="font-size:0.65rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Picture fit</label>
-                                    <select id="slidesFitSelect" style="width:100%; padding:0.35rem; font-size:0.75rem;">
-                                        <option value="contain">Fit whole picture</option>
-                                        <option value="cover">Fill screen (may crop)</option>
-                                    </select>
-                                </div>
-                                <div style="display:flex; flex-direction:column; gap:0.35rem; justify-content:flex-end;">
-                                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--text-muted);"><input type="checkbox" id="slidesAutoCheck" checked> Auto-advance</label>
-                                    <label style="display:flex; align-items:center; gap:0.4rem; font-size:0.78rem; color:var(--text-muted);"><input type="checkbox" id="slidesLoopCheck" checked> Loop</label>
-                                </div>
-                            </div>
-                            <div style="display:flex; gap:0.4rem; align-items:center; border-top:1px solid var(--bg-accent); padding-top:0.6rem;">
-                                <button id="slidesPrevBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">⏮ Prev</button>
-                                <button id="slidesPlayBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">⏸ Pause</button>
-                                <button id="slidesNextBtn" type="button" class="btn" style="padding:0.3rem 0.6rem; font-size:0.75rem;">Next ⏭</button>
-                                <span id="slidesCounter" style="font-size:0.72rem; color:var(--text-muted); margin-left:auto;">— / —</span>
-                            </div>
-                        </div>
-                    </div>
+                    <input type="text" id="mediaPageRange" placeholder="Pages: 3 or 1,3,5-9" style="width:130px; padding:0.3rem; font-size:0.72rem;" title="Type a page number to start from it (e.g. 3), or a list like 1,3,5-9 to show only those pages. Press Enter.">
+                    <button id="mediaPageGoBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Go to / apply these pages">Go</button>
+                    <button id="mediaPageClearBtn" class="btn" style="padding: 0.3rem 0.5rem; font-size: 0.7rem;" title="Show all pages again">All</button>
                 </div>
                 <span style="font-size: 0.65rem; color: var(--text-muted); flex-basis: 100%;">Everything you upload is kept in the dropdown for next time — PDFs and PowerPoint (.pptx) files display page/slide by page. PowerPoint slides show their text and images, not the exact PowerPoint design — for a pixel-perfect match, export to PDF from PowerPoint first. Double-click any verse, song slide or search result and the screen switches back to text automatically.</span>
             </div>
 
             <!-- RIBBON PANEL: MESSAGE -->
-            <div id="ribbon-message" class="ribbon-panel">
+            <div id="ribbon-message" class="ribbon-panel" style="display:none!important" aria-hidden="true"><!-- controls kept here, driven by the Message dashboard (messagestudio.js) -->
                 <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap: wrap; background: rgba(217,119,6,0.1); border:1px solid rgba(217,119,6,0.25); padding: 0.4rem 0.5rem; border-radius:6px;">
                     <input type="text" id="announcementInput" placeholder="Type announcement text..." style="min-width:160px; padding:0.35rem; border-color:rgba(217,119,6,0.3);">
                     <select id="announcementEffectSelector" style="padding:0.35rem; font-size:0.75rem;" title="Display effect">
@@ -535,6 +511,9 @@
                         <option value="scroll">Scroll</option>
                         <option value="breathing">Breathing (pulse)</option>
                         <option value="fade">Fade In/Out</option>
+                        <option value="slide">Slide in</option>
+                        <option value="flash">Flash</option>
+                        <option value="bounce">Bounce in</option>
                     </select>
                     <select id="announcementPositionSelector" style="padding:0.35rem; font-size:0.75rem;" title="Where the banner appears">
                         <option value="bottom">Bottom</option>
@@ -574,6 +553,8 @@
                         <option value="center">Centered</option>
                         <option value="top">Top</option>
                     </select>
+                    <select id="ntMotion" title="Motion when the name tag appears" style="padding:0.4rem; font-size:0.75rem;"></select>
+                    <select id="ntSpeed" title="Motion speed" style="padding:0.4rem; font-size:0.75rem;"><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select>
                     <span style="display:inline-flex; align-items:center; gap:0.3rem; font-size:0.7rem;">Size
                         <button id="ntSizeDec" type="button" class="btn" style="padding:0.25rem 0.5rem;">−</button><b id="ntSizeVal">100%</b><button id="ntSizeInc" type="button" class="btn" style="padding:0.25rem 0.5rem;">+</button>
                     </span>
@@ -614,6 +595,26 @@
                     <label style="font-size:0.7rem; font-weight:700; color:#fbbf24; display:flex; align-items:center; gap:0.2rem; cursor:pointer; white-space:nowrap;" title="Hides normal text to show countdown solo over background">
                         <input type="checkbox" id="timerSoloCheck"> Solo Timer (No Text)
                     </label>
+                    <span style="display:inline-flex; align-items:center; gap:0.35rem; flex-wrap:wrap; border-left:1px solid var(--bg-accent); padding-left:0.6rem; font-size:0.7rem;">
+                        <label style="font-weight:700; color:#f87171; display:flex; align-items:center; gap:0.2rem; cursor:pointer; white-space:nowrap;" title="When the countdown reaches 00:00, show a bold message full screen on every output">
+                            <input type="checkbox" id="timeUpOnCheck" checked> Time's Up screen
+                        </label>
+                        <input type="text" id="timeUpTextInput" value="TIME'S UP" maxlength="30" title="Message shown at 00:00" style="width:110px; padding:0.25rem 0.4rem; font-size:0.75rem; font-weight:700;">
+                        <select id="timeUpBgPreset" title="Background of the Time's Up screen" style="padding:0.25rem; font-size:0.75rem; max-width:120px;">
+                            <option value="#dc2626">Red</option>
+                            <option value="#000000">Black</option>
+                            <option value="#1d4ed8">Blue</option>
+                            <option value="#15803d">Green</option>
+                            <option value="#ea580c">Orange</option>
+                            <option value="#7e22ce">Purple</option>
+                            <option value="#ffffff">White</option>
+                            <option value="linear-gradient(135deg,#7f1d1d,#dc2626)">Red gradient</option>
+                            <option value="linear-gradient(135deg,#0f172a,#1d4ed8)">Blue gradient</option>
+                            <option value="">Custom colour →</option>
+                        </select>
+                        <input type="color" id="timeUpBgColor" value="#dc2626" title="Pick any colour" style="width:30px; height:26px; padding:0; border:1px solid var(--bg-accent); background:none; cursor:pointer;">
+                        <button id="timeUpTestBtn" type="button" class="btn" style="padding:0.25rem 0.6rem; font-size:0.72rem; background:#334155; border-color:#475569;" title="Show / hide the Time's Up screen to test it. Reset also hides it.">Test</button>
+                    </span>
                 </div>
             </div>
 
@@ -839,6 +840,25 @@
                         <input type="text" id="obsBrowserSourceInput" readonly value="Session not initialized...">
                         <button class="btn-copy" onclick="copyIntegrationLink('obsBrowserSourceInput')">Copy</button>
                     </div>
+                    <div id="obsFeedBox" style="margin-top:0.6rem; padding:0.55rem 0.65rem; border:1px solid var(--bg-accent); border-radius:6px; display:flex; flex-wrap:wrap; gap:0.5rem; align-items:center;">
+                        <label style="font-size:0.75rem;">OBS feed:
+                            <select id="obsFeedMode" style="padding:0.3rem; font-size:0.75rem;">
+                                <option value="same">Same as the screen</option>
+                                <option value="lt">Always lower third (screen stays full)</option>
+                            </select></label>
+                        <span id="obsFeedLtOpts" style="display:none; gap:0.4rem; align-items:center; flex-wrap:wrap;">
+                            <label style="font-size:0.75rem;">Position:
+                                <select id="obsFeedPos" style="padding:0.3rem; font-size:0.75rem;"><option value="bottom">Bottom</option><option value="center">Middle</option><option value="top">Top</option></select></label>
+                            <label style="font-size:0.75rem;">Size:
+                                <select id="obsFeedFs" style="padding:0.3rem; font-size:0.75rem;"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="xlarge">Extra Large</option></select></label>
+                            <label style="font-size:0.75rem;">Lower third:
+                                <select id="obsFeedTpl" style="padding:0.3rem; font-size:0.75rem;"></select></label>
+                            <div id="obsFeedPrev" class="ltu-tc" style="width:230px; flex-basis:230px;"></div>
+                            <label style="font-size:0.75rem;">Move X <input type="number" id="obsFeedNx" step="0.5" value="0" style="width:60px; padding:0.25rem;"></label>
+                            <label style="font-size:0.75rem;">Y <input type="number" id="obsFeedNy" step="0.5" value="0" style="width:60px; padding:0.25rem;"></label>
+                        </span>
+                        <span style="font-size:0.65rem; color:var(--text-muted); flex-basis:100%;">"Always lower third": the projector keeps showing full screen, while this OBS source shows only the verse/lyrics as a transparent lower third using your lower-third template. Slides, videos and the timer stay off OBS. This changes only the OBS source.</span>
+                    </div>
                 </div>
 
                 <!-- Remote Control Card (phone / tablet) -->
@@ -916,10 +936,14 @@
                         <svg style="width:14px; height:14px;" fill="currentColor" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-32.6-16.3-54-29.1-75.5-66-5.7-9.8 5.7-9.1 16.3-30.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 35.2 15.2 49 16.5 66.6 13.9 10.7-1.6 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>
                         08162465923
                     </a>
+                    <a id="ebpTelegramLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M21.9 4.1a1.2 1.2 0 0 0-1.2-.2L2.9 10.8a1 1 0 0 0 .1 1.9l4.5 1.4 1.7 5.4a1 1 0 0 0 1.7.4l2.5-2.6 4.6 3.4a1.2 1.2 0 0 0 1.9-.7L22.1 5.3a1.2 1.2 0 0 0-.2-1.2zM9.6 13.6l8.2-5.1-6.6 6.3-.3 3.1z"/></svg>
+                        Join our Telegram
+                    </a>
                 </div>
             </div>
             <div class="lgl-strip">
-                <span>&copy; 2026 Express Consult Ltd. Express Bible Presenter. All rights reserved. &nbsp;&middot;&nbsp; Version 2</span>
+                <span>&copy; 2026 Express Consult Ltd. Express Bible Presenter. All rights reserved. &nbsp;&middot;&nbsp; Version 2.1</span>
                 <span><a data-lgl="bible">Legal &amp; Copyright</a> &nbsp;&middot;&nbsp; <a data-lgl="privacy">Privacy</a> &nbsp;&middot;&nbsp; <a data-lgl="terms">Terms of Use</a></span>
             </div>
         </div>
@@ -965,6 +989,13 @@
     <div class="lgl-foot"><span>Last updated: October 2026</span><button id="lglClose">Close</button></div>
 </div></div>
 <script src="qr.js?v=1"></script>
-    <script src="script.js?v=37"></script>
+    <script src="script.js?v=53"></script>
+    <script src="slidestudio.js?v=10"></script>
+    <script src="lyricsstudio.js?v=8"></script>
+    <script src="messagestudio.js?v=7"></script>
+<div id="ebpTelegramFloat" style="display:none; position:fixed; right:16px; bottom:16px; z-index:9990; align-items:center; gap:0.2rem; background:#229ED9; border-radius:999px; box-shadow:0 8px 24px rgba(0,0,0,.45); font-family:inherit;">
+    <a id="ebpTelegramFloatLink" href="#" target="_blank" rel="noopener noreferrer" title="Join our Telegram community" style="display:inline-flex; align-items:center; gap:0.45rem; color:#fff; text-decoration:none; font-weight:700; font-size:0.82rem; padding:0.55rem 0.5rem 0.55rem 0.95rem;"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M21.9 4.1a1.2 1.2 0 0 0-1.2-.2L2.9 10.8a1 1 0 0 0 .1 1.9l4.5 1.4 1.7 5.4a1 1 0 0 0 1.7.4l2.5-2.6 4.6 3.4a1.2 1.2 0 0 0 1.9-.7L22.1 5.3a1.2 1.2 0 0 0-.2-1.2zM9.6 13.6l8.2-5.1-6.6 6.3-.3 3.1z"/></svg><span>Join our Telegram</span></a>
+    <button id="ebpTelegramFloatClose" type="button" title="Hide for now" aria-label="Hide" style="background:transparent; border:none; color:#fff; opacity:.8; cursor:pointer; font-size:1.05rem; line-height:1; padding:0.5rem 0.75rem 0.5rem 0.25rem;">&times;</button>
+</div>
 </body>
 </html>
