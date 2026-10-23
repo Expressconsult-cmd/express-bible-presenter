@@ -1003,6 +1003,7 @@
 
         /* WELCOME SPLASH ANIMATION */
         #welcomeSplashScreen {
+            display: none !important; /* replaced by the sign-in welcome animation (welcomeintro.js) */
             position: fixed;
             inset: 0;
             z-index: 99999;
