@@ -33,9 +33,9 @@
     <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
     <!-- ZIP READING: PowerPoint (.pptx) files are ZIP archives internally — used to pull out slide text/images -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <link rel="stylesheet" href="styles.css?v=10">
+    <link rel="stylesheet" href="styles.css?v=11">
     <!-- SIGN-IN: Firebase passwordless magic-link authentication (see auth.js) -->
-    <script type="module" src="auth.js?v=4"></script>
+    <script type="module" src="auth.js?v=6"></script>
 </head>
 <body>
 
@@ -940,6 +940,10 @@
                         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M21.9 4.1a1.2 1.2 0 0 0-1.2-.2L2.9 10.8a1 1 0 0 0 .1 1.9l4.5 1.4 1.7 5.4a1 1 0 0 0 1.7.4l2.5-2.6 4.6 3.4a1.2 1.2 0 0 0 1.9-.7L22.1 5.3a1.2 1.2 0 0 0-.2-1.2zM9.6 13.6l8.2-5.1-6.6 6.3-.3 3.1z"/></svg>
                         Join our Telegram
                     </a>
+                    <a id="ebpTutorialLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;">
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2C0 8.1 0 12 0 12s0 3.9.5 5.8a3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1c.5-1.9.5-5.8.5-5.8s0-3.9-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z"/></svg>
+                        Watch EBP Tutorial
+                    </a>
                 </div>
             </div>
             <div class="lgl-strip">
@@ -993,9 +997,14 @@
     <script src="slidestudio.js?v=10"></script>
     <script src="lyricsstudio.js?v=8"></script>
     <script src="messagestudio.js?v=7"></script>
+    <script src="welcomeintro.js?v=1"></script>
 <div id="ebpTelegramFloat" style="display:none; position:fixed; right:16px; bottom:16px; z-index:9990; align-items:center; gap:0.2rem; background:#229ED9; border-radius:999px; box-shadow:0 8px 24px rgba(0,0,0,.45); font-family:inherit;">
     <a id="ebpTelegramFloatLink" href="#" target="_blank" rel="noopener noreferrer" title="Join our Telegram community" style="display:inline-flex; align-items:center; gap:0.45rem; color:#fff; text-decoration:none; font-weight:700; font-size:0.82rem; padding:0.55rem 0.5rem 0.55rem 0.95rem;"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M21.9 4.1a1.2 1.2 0 0 0-1.2-.2L2.9 10.8a1 1 0 0 0 .1 1.9l4.5 1.4 1.7 5.4a1 1 0 0 0 1.7.4l2.5-2.6 4.6 3.4a1.2 1.2 0 0 0 1.9-.7L22.1 5.3a1.2 1.2 0 0 0-.2-1.2zM9.6 13.6l8.2-5.1-6.6 6.3-.3 3.1z"/></svg><span>Join our Telegram</span></a>
     <button id="ebpTelegramFloatClose" type="button" title="Hide for now" aria-label="Hide" style="background:transparent; border:none; color:#fff; opacity:.8; cursor:pointer; font-size:1.05rem; line-height:1; padding:0.5rem 0.75rem 0.5rem 0.25rem;">&times;</button>
+</div>
+<div id="ebpTutorialFloat" style="display:none; position:fixed; right:16px; bottom:64px; z-index:9990; align-items:center; gap:0.2rem; background:#e62117; border-radius:999px; box-shadow:0 8px 24px rgba(0,0,0,.45); font-family:inherit;">
+    <a id="ebpTutorialFloatLink" href="#" target="_blank" rel="noopener noreferrer" title="Watch the EBP tutorial videos on YouTube" style="display:inline-flex; align-items:center; gap:0.45rem; color:#fff; text-decoration:none; font-weight:700; font-size:0.82rem; padding:0.55rem 0.5rem 0.55rem 0.95rem;"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.6 12 3.6 12 3.6s-7.5 0-9.4.5A3 3 0 0 0 .5 6.2C0 8.1 0 12 0 12s0 3.9.5 5.8a3 3 0 0 0 2.1 2.1c1.9.5 9.4.5 9.4.5s7.5 0 9.4-.5a3 3 0 0 0 2.1-2.1c.5-1.9.5-5.8.5-5.8s0-3.9-.5-5.8zM9.6 15.6V8.4l6.2 3.6-6.2 3.6z"/></svg><span>Watch EBP Tutorial</span></a>
+    <button id="ebpTutorialFloatClose" type="button" title="Hide for now" aria-label="Hide" style="background:transparent; border:none; color:#fff; opacity:.8; cursor:pointer; font-size:1.05rem; line-height:1; padding:0.5rem 0.75rem 0.5rem 0.25rem;">&times;</button>
 </div>
 </body>
 </html>
