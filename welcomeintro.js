@@ -1,6 +1,6 @@
 /* Express Bible Presenter - welcome animation (plays after sign-in).
    Self-contained: builds its own full-screen overlay, never touches the dashboards, projector, OBS or remote.
-   Full version once per day; a short version on later opens. Skipped for OBS / remote pages and "reduce motion". */
+   Always plays the full version, with no skip button. Not shown on OBS / remote pages or with "reduce motion". */
 (function () {
   'use strict';
   var q = location.search;
@@ -133,15 +133,13 @@
   window.ebpPlayWelcome = function () {
     if (played) return; played = true;
     try { if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch (e) {}
-    var full = lsGet(KEY) !== today();
-    if (full) lsSet(KEY, today());
+    var full = true; /* always the full animation, every time the app opens */
 
     var root = document.createElement('div');
     root.id = 'wiroot';
     root.style.cssText = 'position:fixed;inset:0;z-index:2000000;background:#02030a;display:flex;align-items:center;justify-content:center;overflow:hidden;opacity:1;transition:opacity .9s';
     root.innerHTML = '<style>' + CSS + '</style><div id="wibox"><canvas id="wistars"></canvas>' + SVG +
-      '<div id="wineb"></div><div id="wititle"><div id="wit1">WELCOME TO</div><div id="wiglowwrap"><div id="wit2">EXPRESS BIBLE<br>PRESENTER</div></div></div><div id="wibar"><i></i></div></div>' +
-      '<button id="wiskip" type="button" style="position:absolute;top:12px;right:14px;background:#ffffff18;color:#fff;border:1px solid #ffffff40;border-radius:8px;padding:7px 14px;font-size:13px;cursor:pointer">Skip ▸</button>';
+      '<div id="wineb"></div><div id="wititle"><div id="wit1">WELCOME TO</div><div id="wiglowwrap"><div id="wit2">EXPRESS BIBLE<br>PRESENTER</div></div></div><div id="wibar"><i></i></div></div>';
     document.body.appendChild(root);
     var $ = function (id) { return root.querySelector('#wi' + id); };
 
@@ -183,7 +181,6 @@
       root.style.opacity = 0;
       setTimeout(function () { cancelAnimationFrame(raf); window.removeEventListener('resize', fit); if (root.parentNode) root.remove(); }, 950);
     }
-    root.querySelector('#wiskip').addEventListener('click', function () { timers.forEach(clearTimeout); showTitle(); $('world').style.opacity = 0; $('verse').style.opacity = 0; at(500, finish); });
 
     $('stars').style.opacity = 1;
     if (!full) {                       /* short version, about 3 s */
