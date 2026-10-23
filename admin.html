@@ -101,6 +101,14 @@
     .chip { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: .2rem .55rem; font-size: .7rem; color: var(--muted); }
     .chip b { color: var(--text); }
     .chip.on b { color: var(--warn); }
+    .saved-msgs { display: flex; flex-direction: column; gap: .35rem; margin-top: .4rem; max-height: 260px; overflow-y: auto; }
+    .saved-msgs .sm { display: flex; align-items: center; gap: .4rem; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: .35rem .45rem .35rem .65rem; }
+    .saved-msgs .sm .t { flex: 1; min-width: 0; font-size: .78rem; cursor: pointer; white-space: pre-wrap; word-break: break-word; }
+    .saved-msgs .sm .t:hover { text-decoration: underline; }
+    .saved-msgs .sm button { border-radius: 6px; cursor: pointer; font-size: .72rem; padding: .25rem .6rem; }
+    .saved-msgs .sm .send { background: var(--accent, #3b82f6); color: #fff; border: none; font-weight: 600; }
+    .saved-msgs .sm .del { background: transparent; color: #f87171; border: 1px solid #f8717166; font-size: .95rem; line-height: 1; padding: .15rem .5rem; }
+    .saved-msgs .empty { font-size: .72rem; color: var(--muted); font-style: italic; }
     .now-sent { background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px; padding: .5rem .65rem; font-size: .75rem; color: var(--muted); margin-bottom: .6rem; white-space: pre-wrap; }
     #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: #0f172a; border: 1px solid var(--line);
         color: var(--text); border-radius: 10px; padding: .6rem 1rem; font-size: .82rem; opacity: 0; pointer-events: none; transition: .25s; z-index: 50; max-width: 90vw; }
@@ -240,8 +248,11 @@
                 <textarea id="ctlBroadcast" maxlength="300" placeholder="Type a message…"></textarea>
                 <div class="row" style="margin-top:.5rem">
                     <button id="sendBroadcastBtn" class="btn btn-primary" type="button">Send</button>
+                    <button id="saveMsgDraftBtn" class="btn" type="button">Save for later</button>
                     <button id="clearBroadcastBtn" class="btn" type="button">Clear current</button>
                 </div>
+                <div style="margin-top:.8rem; font-size:.72rem; color:var(--muted)">Saved messages <span id="savedMsgCount"></span> &mdash; click a message to load it, <b>Send</b> to send it straight away, <b>&times;</b> to delete it. Messages you send are saved here automatically (on this browser).</div>
+                <div id="savedMsgList" class="saved-msgs"></div>
             </div>
 
             <div class="ctl">
@@ -256,6 +267,17 @@
             </div>
 
             <div class="ctl">
+                <h3>YouTube tutorial link</h3>
+                <p>Shows a red "Watch EBP Tutorial" button in the presenter for everyone signed in, so members can open your YouTube page or a tutorial video. Paste your channel, playlist or video link (it must start with https://www.youtube.com/ or https://youtu.be/). Leave empty and save to hide the button. You can change it any time.</p>
+                <div class="row"><input type="url" id="ctlYoutubeUrl" placeholder="https://www.youtube.com/@yourchannel" style="flex:1; min-width:0"></div>
+                <div class="row" style="margin-top:.5rem">
+                    <button id="saveYoutubeBtn" class="btn btn-primary" type="button">Save link</button>
+                    <button id="testYoutubeBtn" class="btn" type="button">Test link</button>
+                    <button id="clearYoutubeBtn" class="btn" type="button">Remove button</button>
+                </div>
+            </div>
+
+            <div class="ctl">
                 <h3>Sign out everyone</h3>
                 <p>Immediately signs every person out on every device. They can sign straight back in. This also signs you out of the presenter if you have it open.</p>
                 <button id="signOutAllBtn" class="btn btn-danger" type="button">Sign out all users</button>
@@ -266,6 +288,6 @@
 </div>
 
 <div id="toast"></div>
-<script type="module" src="admin.js?v=3"></script>
+<script type="module" src="admin.js?v=5"></script>
 </body>
 </html>
