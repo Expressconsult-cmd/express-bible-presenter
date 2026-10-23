@@ -44,7 +44,13 @@ const BROADCAST_DISMISSED_KEY = 'ebp_broadcast_dismissed';
 
 const $ = (id) => document.getElementById(id);
 function showAuthOverlay() { const el = $('authOverlay'); if (el) el.style.display = 'flex'; }
-function hideAuthOverlay() { const el = $('authOverlay'); if (el) el.style.display = 'none'; }
+function hideAuthOverlay() {
+    const el = $('authOverlay');
+    if (!el) return;
+    // Welcome animation: start it BEFORE the sign-in screen goes away, so the dashboard never flashes (welcomeintro.js)
+    try { if (el.style.display !== 'none' && typeof window.ebpPlayWelcome === 'function') window.ebpPlayWelcome(); } catch (e) {}
+    el.style.display = 'none';
+}
 function setAuthStatus(message, isError) {
     const el = $('authStatusMsg');
     if (!el) return;
@@ -180,8 +186,24 @@ function runAuthModule(firebaseConfig) {
     }
     (function () { const x = document.getElementById('ebpTelegramFloatClose'); if (x) x.addEventListener('click', () => { try { window.sessionStorage.setItem('ebp_tg_hidden', '1'); } catch (e) {} const fl = document.getElementById('ebpTelegramFloat'); if (fl) fl.style.display = 'none'; }); })();
     try { showTelegram(window.localStorage.getItem(TG_KEY) || ''); } catch (e) {}
+    // YouTube tutorial button: link set by the admin (settings/app.youtubeUrl). Only youtube.com / youtu.be links are accepted; no link = no button.
+    const YT_KEY = 'ebp_youtube_url';
+    function showTutorial(url) {
+        const ok = typeof url === 'string' && /^https:\/\/((www|m)\.)?(youtube\.com|youtu\.be)\/\S+$/i.test(url.trim());
+        const u = ok ? url.trim() : '';
+        const link = document.getElementById('ebpTutorialLink'), fl = document.getElementById('ebpTutorialFloat'), fa = document.getElementById('ebpTutorialFloatLink');
+        if (link) { if (ok) { link.href = u; link.style.display = ''; } else { link.style.display = 'none'; link.removeAttribute('href'); } }
+        let hidden = false; try { hidden = window.sessionStorage.getItem('ebp_yt_hidden') === '1'; } catch (e) {}
+        if (fl && fa) { if (ok && !hidden) { fa.href = u; fl.style.display = 'inline-flex'; } else { fl.style.display = 'none'; if (!ok) fa.removeAttribute('href'); } }
+    }
+    (function () { const x = document.getElementById('ebpTutorialFloatClose'); if (x) x.addEventListener('click', () => { try { window.sessionStorage.setItem('ebp_yt_hidden', '1'); } catch (e) {} const fl = document.getElementById('ebpTutorialFloat'); if (fl) fl.style.display = 'none'; }); })();
+    try { showTutorial(window.localStorage.getItem(YT_KEY) || ''); } catch (e) {}
     function applySettings(settings) {
         ensureExtras();
+        try {
+            const yt = typeof settings.youtubeUrl === 'string' ? settings.youtubeUrl.trim() : '';
+            window.localStorage.setItem(YT_KEY, yt); showTutorial(yt);
+        } catch (e) {}
         try {
             const tg = typeof settings.telegramUrl === 'string' ? settings.telegramUrl.trim() : '';
             window.localStorage.setItem(TG_KEY, tg); showTelegram(tg);
