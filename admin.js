@@ -515,12 +515,14 @@ function startDashboard(config) {
         setIfIdle($('ctlMaxDevices'), maxDevices);
         setIfIdle($('ctlMaintenanceMsg'), settings.maintenanceMessage || '');
         setIfIdle($('ctlTelegramUrl'), settings.telegramUrl || '');
+        setIfIdle($('ctlYoutubeUrl'), settings.youtubeUrl || '');
         $('settingsSummary').innerHTML =
             `<span class="chip ${maintenance ? 'on' : ''}">Maintenance: <b>${maintenance ? 'LOCKED' : 'off'}</b></span>` +
             `<span class="chip ${signups ? '' : 'on'}">Sign-ups: <b>${signups ? 'open' : 'CLOSED'}</b></span>` +
             `<span class="chip">Devices per account: <b>${maxDevices}</b></span>` +
             `<span class="chip">Message: <b>${b && b.text ? 'showing' : 'none'}</b></span>` +
-            `<span class="chip ${settings.telegramUrl ? '' : 'on'}">Telegram button: <b>${settings.telegramUrl ? 'showing' : 'hidden'}</b></span>`;
+            `<span class="chip ${settings.telegramUrl ? '' : 'on'}">Telegram button: <b>${settings.telegramUrl ? 'showing' : 'hidden'}</b></span>` +
+            `<span class="chip ${settings.youtubeUrl ? '' : 'on'}">Tutorial button: <b>${settings.youtubeUrl ? 'showing' : 'hidden'}</b></span>`;
         const now = $('broadcastNow');
         if (b && b.text) { now.hidden = false; now.textContent = 'Currently showing: ' + b.text; } else { now.hidden = true; now.textContent = ''; }
     }
@@ -542,10 +544,51 @@ function startDashboard(config) {
     });
     $('clearTelegramBtn').addEventListener('click', () => { $('ctlTelegramUrl').value = ''; saveSettings({ telegramUrl: '' }, 'Telegram button hidden.'); });
     $('testTelegramBtn').addEventListener('click', () => { const u = $('ctlTelegramUrl').value.trim(); if (!tgOk(u)) { toast('Type a valid https://t.me/… link first.', true); return; } window.open(u, '_blank', 'noopener'); });
+    const ytOk = (u) => /^https:\/\/((www|m)\.)?(youtube\.com|youtu\.be)\/\S+$/i.test(u);
+    $('saveYoutubeBtn').addEventListener('click', () => {
+        const u = $('ctlYoutubeUrl').value.trim();
+        if (!u) { saveSettings({ youtubeUrl: '' }, 'Tutorial button hidden.'); return; }
+        if (!ytOk(u)) { toast('Use a YouTube link that starts with https://www.youtube.com/ or https://youtu.be/', true); return; }
+        saveSettings({ youtubeUrl: u }, 'Tutorial link saved. It shows in the presenter for everyone signed in.');
+    });
+    $('clearYoutubeBtn').addEventListener('click', () => { $('ctlYoutubeUrl').value = ''; saveSettings({ youtubeUrl: '' }, 'Tutorial button hidden.'); });
+    $('testYoutubeBtn').addEventListener('click', () => { const u = $('ctlYoutubeUrl').value.trim(); if (!ytOk(u)) { toast('Type a valid YouTube link first.', true); return; } window.open(u, '_blank', 'noopener'); });
+    // Saved messages: kept in this browser so the admin can pick one instead of retyping (newest first, max 40).
+    const SAVED_MSG_KEY = 'ebp_admin_saved_msgs';
+    const loadSavedMsgs = () => { try { const a = JSON.parse(localStorage.getItem(SAVED_MSG_KEY) || '[]'); return Array.isArray(a) ? a.filter(x => typeof x === 'string' && x.trim()) : []; } catch (e) { return []; } };
+    const storeSavedMsgs = (a) => { try { localStorage.setItem(SAVED_MSG_KEY, JSON.stringify(a.slice(0, 40))); } catch (e) {} };
+    function rememberMsg(text) { const a = loadSavedMsgs().filter(x => x !== text); a.unshift(text); storeSavedMsgs(a); renderSavedMsgs(); }
+    async function sendBroadcast(text) {
+        await saveSettings({ broadcast: { id: String(Date.now()), text, sentAt: serverTimestamp(), sentBy: adminUser.email } }, 'Message sent to everyone signed in.');
+        rememberMsg(text);
+    }
+    function renderSavedMsgs() {
+        const box = $('savedMsgList'); if (!box) return;
+        const a = loadSavedMsgs();
+        $('savedMsgCount').textContent = a.length ? '(' + a.length + ')' : '';
+        box.textContent = '';
+        if (!a.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nothing saved yet.'; box.appendChild(e); return; }
+        a.forEach((text) => {
+            const row = document.createElement('div'); row.className = 'sm';
+            const t = document.createElement('div'); t.className = 't'; t.textContent = text; t.title = 'Click to load into the box above';
+            t.addEventListener('click', () => { $('ctlBroadcast').value = text; $('ctlBroadcast').focus(); });
+            const s = document.createElement('button'); s.type = 'button'; s.className = 'send'; s.textContent = 'Send';
+            s.addEventListener('click', () => sendBroadcast(text));
+            const d = document.createElement('button'); d.type = 'button'; d.className = 'del'; d.textContent = '\u00d7'; d.title = 'Delete this saved message'; d.setAttribute('aria-label', 'Delete saved message');
+            d.addEventListener('click', () => { storeSavedMsgs(loadSavedMsgs().filter(x => x !== text)); renderSavedMsgs(); toast('Saved message deleted.'); });
+            row.append(t, s, d); box.appendChild(row);
+        });
+    }
+    renderSavedMsgs();
+    $('saveMsgDraftBtn').addEventListener('click', () => {
+        const text = $('ctlBroadcast').value.trim();
+        if (!text) { toast('Type a message first.', true); return; }
+        rememberMsg(text); toast('Saved. You can send it any time from the list below.');
+    });
     $('sendBroadcastBtn').addEventListener('click', async () => {
         const text = $('ctlBroadcast').value.trim();
         if (!text) { toast('Type a message first.', true); return; }
-        await saveSettings({ broadcast: { id: String(Date.now()), text, sentAt: serverTimestamp(), sentBy: adminUser.email } }, 'Message sent to everyone signed in.');
+        await sendBroadcast(text);
         $('ctlBroadcast').value = '';
     });
     $('clearBroadcastBtn').addEventListener('click', () => saveSettings({ broadcast: null }, 'Message cleared.'));
